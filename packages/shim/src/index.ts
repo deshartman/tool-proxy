@@ -17,6 +17,7 @@ async function main() {
   if (!apiKey) throw new Error("OPENAI_API_KEY env var is required");
   const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   const mainServerUrl = process.env.MAIN_SERVER_URL ?? "http://localhost:8080/tunnel";
+  const authToken = process.env.TUNNEL_AUTH_TOKEN;
 
   const config = loadConfig(configPath);
 
@@ -35,7 +36,7 @@ async function main() {
     shimId: config.shimId,
     procedures: [{ id: source.id, description: source.description }],
   };
-  const transport = new TunnelClientTransport(mainServerUrl, registerFrame);
+  const transport = new TunnelClientTransport(mainServerUrl, registerFrame, authToken);
 
   const emit = (level: "info" | "detail", message: string) =>
     transport.emitEvent(config.shimId, level, message);

@@ -2,11 +2,19 @@ node_modules
 dist
 *.log
 *.tsbuildinfo
+
+# Env files. Layered convention: <name>.env.<mode> where <mode> is dev|local|fly.
+# Example templates (committed) are *.env.example or *.env.<mode>.example.
 .env
 .env.*
-!.env.example
-# shim env files are named like `shim-a.env` (no leading dot) — exclude
-# anything ending in .env that isn't the .example template.
 *.env
+*.env.dev
+*.env.local
+*.env.fly
+!.env.example
 !*.env.example
+!*.env.dev.example
+!*.env.local.example
+!*.env.fly.example
+
 .DS_Store

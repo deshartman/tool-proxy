@@ -1,9 +1,31 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { RegisterFrame, TunnelFrame } from "@mcp-shim/shared";
 import { TunnelServerTransport } from "./tunnel-transport.js";
 import { registry, type PendingDocOp } from "./registry.js";
 import { eventBus } from "./event-bus.js";
+
+// Shared-secret tunnel auth.
+//
+// This is the registration / license / billing gate. In production the
+// shared secret would be a per-customer JWT (or similar), issued at
+// signup and validated here. The check happens at tunnel-open time, so
+// an unauthorized shim never registers itself and never gets queries.
+//
+// If TUNNEL_AUTH_TOKEN is unset we skip auth — that keeps the local-dev
+// flow zero-config. Production deployments MUST set the env var.
+function tokenAuthOk(req: IncomingMessage): boolean {
+  const expected = process.env.TUNNEL_AUTH_TOKEN;
+  if (!expected) return true;
+  const raw = req.headers["authorization"];
+  if (typeof raw !== "string") return false;
+  const m = /^Bearer\s+(.+)$/i.exec(raw);
+  if (!m) return false;
+  const got = m[1];
+  if (got.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(got), Buffer.from(expected));
+}
 
 // Accepts an inbound shim tunnel connection. The first NDJSON line on the
 // request body is expected to be a "register" frame. Everything after is
@@ -15,6 +37,12 @@ export async function handleTunnelConnection(
   if (req.method !== "POST") {
     res.statusCode = 405;
     res.end("tunnel endpoint requires POST");
+    return;
+  }
+  if (!tokenAuthOk(req)) {
+    res.statusCode = 401;
+    res.setHeader("www-authenticate", "Bearer");
+    res.end("unauthorized");
     return;
   }
 

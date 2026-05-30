@@ -1,0 +1,40 @@
+# fly.toml — main-server deployment.
+#
+# Deploy:   flyctl deploy
+# Secrets:  flyctl secrets set TUNNEL_AUTH_TOKEN=$(openssl rand -hex 32)
+#
+# Notes:
+# - The app name below is a placeholder; the flyio-deployer agent will set
+#   it (or `flyctl launch` will prompt). Update once the real app is created.
+# - auto_stop_machines is OFF: tunnels are persistent outbound POSTs from
+#   shims; if Fly suspended the machine, the tunnel would drop and the shim
+#   would have to reconnect. For a demo we keep it warm.
+# - Single region — fine for the POC. Multi-region would need shim-side
+#   awareness of which region holds the tunnel for a given query.
+
+app = "mcp-shim-poc"
+primary_region = "iad"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  # Health check the registry endpoint — it returns JSON 200 unconditionally,
+  # so it's a safe liveness probe even before any shim has dialed in.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "get"
+    path = "/registry"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpus = 1

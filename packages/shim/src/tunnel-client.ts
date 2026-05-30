@@ -5,6 +5,7 @@ import type {
 import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { EventFrame, RegisterFrame, RpcFrame, TokenFrame, TunnelFrame } from "@mcp-shim/shared";
 import { request as httpRequest, IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { URL } from "node:url";
 import { PassThrough } from "node:stream";
 
@@ -31,7 +32,11 @@ export class TunnelClientTransport implements Transport {
 
   constructor(
     private readonly mainServerUrl: string,
-    private readonly registerFrame: RegisterFrame
+    private readonly registerFrame: RegisterFrame,
+    // Optional shared-secret token. When set, sent as `Authorization: Bearer ...`
+    // on the tunnel POST. The main server validates this and returns 401 if
+    // it doesn't match. Required when dialing a public deployment.
+    private readonly authToken?: string
   ) {}
 
   async start(): Promise<void> {
@@ -39,18 +44,22 @@ export class TunnelClientTransport implements Transport {
     this.started = true;
 
     const url = new URL(this.mainServerUrl);
+    const isHttps = url.protocol === "https:";
+    const dial = isHttps ? httpsRequest : httpRequest;
+    const headers: Record<string, string> = {
+      "content-type": "application/x-ndjson",
+      "transfer-encoding": "chunked",
+    };
+    if (this.authToken) headers["authorization"] = `Bearer ${this.authToken}`;
 
     await new Promise<void>((resolveStart, rejectStart) => {
-      const req = httpRequest(
+      const req = dial(
         {
           method: "POST",
           hostname: url.hostname,
-          port: url.port || 80,
+          port: url.port || (isHttps ? 443 : 80),
           path: url.pathname + url.search,
-          headers: {
-            "content-type": "application/x-ndjson",
-            "transfer-encoding": "chunked",
-          },
+          headers,
         },
         (res: IncomingMessage) => {
           if (res.statusCode !== 200) {

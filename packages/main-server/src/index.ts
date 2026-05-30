@@ -287,6 +287,11 @@ server.keepAliveTimeout = 0;
 
 server.listen(port, () => {
   console.log(`[main-server] listening on http://localhost:${port}`);
+  if (process.env.TUNNEL_AUTH_TOKEN) {
+    console.log(`  /tunnel auth: REQUIRED (TUNNEL_AUTH_TOKEN set)`);
+  } else {
+    console.warn(`  /tunnel auth: DISABLED — set TUNNEL_AUTH_TOKEN for production`);
+  }
   console.log(`  GET  /                  — demo UI`);
   console.log(`  POST /tunnel            — shims dial in here`);
   console.log(`  POST /query             — user queries`);
