@@ -1,0 +1,12 @@
+node_modules
+dist
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# shim env files are named like `shim-a.env` (no leading dot) — exclude
+# anything ending in .env that isn't the .example template.
+*.env
+!*.env.example
+.DS_Store

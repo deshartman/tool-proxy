@@ -1,0 +1,13 @@
+# Customer B — Platform Engineering
+shimId: shim-b
+sources:
+  - id: change-management
+    type: filesystem
+    path: ../docs/change-management.md
+    description: "Change Management process. Covers standard/normal/emergency change categories, CAB review schedule, CR ticket workflow, change windows, and rollback plan requirements. Use for: changes, deployments, deploy, releases, release, production push, prod push, approval, approvals, CR, CAB, change request, change ticket, rollout, scheduling, maintenance window, certificate rotation, infrastructure change, schema migration, config change."
+    # Demo-only "Change" affordance: see comment in shim-a.yaml.
+    variants:
+      original: |-
+        1. **Open a CR ticket** in Jira project `CR`. Use the "Normal Change" template.
+      alternate: |-
+        1. **Submit a Change Proposal in ServiceNow** (project `CR-CMDB`). Jira CR is being decommissioned this quarter — any change still routed through Jira will be rejected by CAB without review. Use the "Normal Change v2" template, which now requires both a rollback plan AND a customer-impact statement before submission.

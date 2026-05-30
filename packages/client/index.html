@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MCP Shim POC — Live Demo</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --fg: #e6e8eb;
+      --muted: #8a93a0;
+      --cloud-bg: #122318;
+      --cloud-border: #1f7a4a;
+      --cloud-accent: #4fd897;
+      --shim-bg: #121a2c;
+      --shim-border: #3a5fb0;
+      --shim-accent: #7aa9ff;
+      --chat-user-bg: #2a4a8a;
+      --chat-agent-bg: #1d2a1d;
+      --chat-agent-border: #1f5530;
+      --fw-bg: #5a1818;
+      --fw-border: #b53a3a;
+      --fw-pulse-down: #7aa9ff;
+      --fw-pulse-up: #4fd897;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: var(--bg);
+      color: var(--fg);
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 10px 16px;
+      border-bottom: 1px solid #222;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+    header h1 { margin: 0; font-size: 14px; font-weight: 600; }
+    header .legend { color: var(--muted); font-size: 12px; }
+
+    main {
+      flex: 1;
+      display: grid;
+      /* chat | gutter | cloud | firewall | gutter | shims
+         Firewall stays at a fixed 36px. The two flex columns either side of
+         the resizers get explicit pixel widths once the user drags. */
+      grid-template-columns: var(--col-chat, 1.2fr) 8px var(--col-cloud, 1fr) 36px 8px var(--col-shims, 1fr);
+      gap: 10px;
+      padding: 10px;
+      min-height: 0;
+    }
+
+    .resizer {
+      cursor: col-resize;
+      background: #1a1f29;
+      border-radius: 2px;
+      transition: background 120ms ease;
+      align-self: stretch;
+      position: relative;
+    }
+    .resizer:hover,
+    .resizer.dragging { background: #355aae; }
+    .resizer::before {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 2px;
+      height: 28px;
+      background: #4a5060;
+      transform: translate(-50%, -50%);
+      border-radius: 1px;
+    }
+    body.col-resizing,
+    body.col-resizing * {
+      user-select: none;
+      cursor: col-resize !important;
+    }
+
+    .col {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    /* ── Chat column ─────────────────────────────────────────── */
+    .col.chat {
+      background: #131720;
+      border: 1px solid #2a2f3a;
+    }
+    .chat-header {
+      padding: 8px 10px;
+      border-bottom: 1px solid #1e2230;
+      font-weight: 600;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .chat-transcript {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .bubble {
+      max-width: 85%;
+      padding: 8px 10px;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.45;
+    }
+    .bubble.user {
+      align-self: flex-end;
+      background: var(--chat-user-bg);
+      border: 1px solid #3a5fb0;
+      border-bottom-right-radius: 2px;
+    }
+    .bubble.agent {
+      align-self: flex-start;
+      background: var(--chat-agent-bg);
+      border: 1px solid var(--chat-agent-border);
+      color: #cfe9da;
+      border-bottom-left-radius: 2px;
+    }
+    .bubble-meta {
+      color: var(--muted);
+      font-size: 10px;
+      margin-bottom: 4px;
+      letter-spacing: 0.03em;
+    }
+    .chat-input {
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      border-top: 1px solid #1e2230;
+      background: #0f1320;
+      flex-shrink: 0;
+    }
+    .chat-input input {
+      flex: 1;
+      padding: 8px 10px;
+      background: #1a1f29;
+      color: var(--fg);
+      border: 1px solid #333;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .chat-input button {
+      padding: 8px 14px;
+      background: #2a4a8a;
+      color: var(--fg);
+      border: 1px solid #3a5fb0;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .chat-input button:hover { background: #355aae; }
+    .chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .cursor {
+      display: inline-block;
+      animation: blink 1s steps(1) infinite;
+      color: var(--cloud-accent);
+      margin-left: 1px;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── Cloud column ────────────────────────────────────────── */
+    .col.cloud {
+      background: var(--cloud-bg);
+      border: 1px solid var(--cloud-border);
+    }
+    .col-header {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .col-header .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .col.cloud .badge { background: var(--cloud-border); color: #fff; }
+    .col-header .title { font-weight: 600; }
+    .col-header .subtitle { color: var(--muted); font-size: 11px; }
+
+    .summary {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+    }
+    .summary-title {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .summary-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      padding: 2px 0;
+    }
+    .status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #555;
+    }
+    .status-dot.connected {
+      background: var(--cloud-accent);
+      box-shadow: 0 0 6px var(--cloud-accent);
+    }
+
+    .log {
+      flex: 1;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.5;
+      padding: 6px 10px;
+      background: rgba(0,0,0,0.25);
+    }
+    .log-line { white-space: pre-wrap; word-break: break-word; }
+    .log-line .ts { color: var(--muted); margin-right: 6px; }
+    .log-line.detail { color: var(--muted); }
+
+    /* ── Firewall column ─────────────────────────────────────── */
+    .col.firewall {
+      background: var(--fw-bg);
+      border: 1px solid var(--fw-border);
+      position: relative;
+      overflow: hidden;
+    }
+    .firewall-label {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-90deg);
+      transform-origin: center;
+      white-space: nowrap;
+      color: #fff;
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      text-shadow: 0 0 6px rgba(0,0,0,0.6);
+      pointer-events: none;
+    }
+    .firewall-pulse {
+      position: absolute;
+      left: 0; right: 0;
+      height: 40px;
+      pointer-events: none;
+      opacity: 0;
+    }
+    .firewall-pulse.down {
+      top: 0;
+      background: linear-gradient(to bottom, transparent, var(--fw-pulse-down) 50%, transparent);
+    }
+    .firewall-pulse.up {
+      bottom: 0;
+      background: linear-gradient(to top, transparent, var(--fw-pulse-up) 50%, transparent);
+    }
+    .firewall-pulse.active.down { animation: pulse-down 600ms ease-out; }
+    .firewall-pulse.active.up { animation: pulse-up 600ms ease-out; }
+    @keyframes pulse-down {
+      0%   { opacity: 0; transform: translateY(-100%); }
+      30%  { opacity: 0.9; }
+      100% { opacity: 0; transform: translateY(900%); }
+    }
+    @keyframes pulse-up {
+      0%   { opacity: 0; transform: translateY(100%); }
+      30%  { opacity: 0.9; }
+      100% { opacity: 0; transform: translateY(-900%); }
+    }
+
+    /* ── Shims column ────────────────────────────────────────── */
+    .col.shims {
+      gap: 10px;
+      overflow-y: auto;
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+    }
+    .shim-panel {
+      background: var(--shim-bg);
+      border: 1px solid var(--shim-border);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      height: 320px;
+      overflow: hidden;
+    }
+    .shim-panel .badge { background: var(--shim-border); color: #fff; }
+    .shim-panel .log { flex: 1; }
+
+    .doc-section {
+      padding: 6px 10px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+    }
+    .doc-section button {
+      background: #1f2a3a;
+      border: 1px solid #355aae;
+      color: var(--fg);
+      padding: 4px 8px;
+      font-size: 11px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .doc-section button:hover { background: #2a3a55; }
+    .doc-section button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .doc-variant {
+      margin-left: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .doc-variant.alternate { color: var(--fw-pulse-down); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MCP Shim POC — Live Demo</h1>
+    <span class="legend">
+      <span style="color: var(--cloud-accent)">●</span> cloud-visible
+      &nbsp;
+      <span style="color: var(--shim-accent)">●</span> shim self-reported (would NOT exist in cloud logs in production)
+    </span>
+  </header>
+
+  <main>
+    <!-- Column 1: Chat -->
+    <section class="col chat">
+      <div class="chat-header">Chat</div>
+      <div class="chat-transcript" id="transcript"></div>
+      <div class="chat-input">
+        <input id="q" placeholder="Ask a question, e.g. Our payment service is down — what do I do first?" autocomplete="off" />
+        <button id="submit">Ask</button>
+      </div>
+    </section>
+
+    <div class="resizer" id="resizer-1" data-target="--col-chat" data-direction="forward"></div>
+
+    <!-- Column 2: Main server (cloud) -->
+    <section class="col cloud">
+      <div class="col-header">
+        <span class="badge">CLOUD</span>
+        <span class="title">main-server</span>
+        <span class="subtitle">— this is everything cloud sees</span>
+      </div>
+      <div class="summary">
+        <div class="summary-title">Connected shims</div>
+        <div class="summary-row"><span class="status-dot" id="dot-shim-a"></span><span>shim-a / incident-response-p1</span></div>
+        <div class="summary-row"><span class="status-dot" id="dot-shim-b"></span><span>shim-b / change-management</span></div>
+      </div>
+      <div class="log" id="log-cloud"></div>
+    </section>
+
+    <!-- Column 3: Firewall -->
+    <section class="col firewall">
+      <div class="firewall-pulse down" id="pulse-down"></div>
+      <div class="firewall-pulse up" id="pulse-up"></div>
+      <div class="firewall-label">Customer Firewall · Outbound Only</div>
+    </section>
+
+    <div class="resizer" id="resizer-2" data-target="--col-shims" data-direction="reverse"></div>
+
+    <!-- Column 4: Shims (vertical stack, fixed-height panels, scrollable) -->
+    <section class="col shims" id="shims-col">
+      <div class="shim-panel" id="panel-shim-a">
+        <div class="col-header">
+          <span class="badge">SHIM</span>
+          <span class="title">shim-a</span>
+          <span class="subtitle">— customer A · incident response</span>
+        </div>
+        <div class="log" id="log-shim-a"></div>
+        <div class="doc-section">
+          <button data-shim="shim-a" data-source="incident-response-p1" class="btn-change-doc">Change document</button>
+          <span class="doc-variant" data-shim="shim-a" data-source="incident-response-p1"></span>
+        </div>
+      </div>
+
+      <div class="shim-panel" id="panel-shim-b">
+        <div class="col-header">
+          <span class="badge">SHIM</span>
+          <span class="title">shim-b</span>
+          <span class="subtitle">— customer B · change management</span>
+        </div>
+        <div class="log" id="log-shim-b"></div>
+        <div class="doc-section">
+          <button data-shim="shim-b" data-source="change-management" class="btn-change-doc">Change document</button>
+          <span class="doc-variant" data-shim="shim-b" data-source="change-management"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "@mcp-shim/main-server",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@mcp-shim/shared": "*",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "dotenv": "^16.4.5"
+  }
+}
