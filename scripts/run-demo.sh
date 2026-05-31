@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boots the shims (and, depending on mode, the main server and/or demo-ui).
+# Boots the shims (and, depending on mode, the main server and/or local-server).
 #
 # Modes:
 #   dev   (default) — main server runs locally; shims dial localhost.
@@ -12,9 +12,10 @@
 #                     Reads:  packages/shim/config/shim-a.env.local
 #                             packages/shim/config/shim-b.env.local
 #
-#   local-ui        — same as `local`, plus a laptop-side demo-ui process
-#                     so a second browser tab can show the shim's view.
-#                     Reads:  packages/demo-ui/.env.local-ui
+#   local-ui        — same as `local`, plus a laptop-side local-server process
+#                     so a second browser tab can show the shim's view AND
+#                     handle Change-document requests locally on the laptop.
+#                     Reads:  packages/local-server/.env.local-ui
 #                             packages/shim/config/shim-a.env.local-ui
 #                             packages/shim/config/shim-b.env.local-ui
 #                     Browser tabs:
@@ -62,19 +63,21 @@ if [ "$MODE" = "dev" ]; then
 elif [ "$MODE" = "local" ]; then
   echo "[demo] mode=local: shims will dial remote MAIN_SERVER_URL from each shim env file"
 else
-  echo "[demo] mode=local-ui: shims dial remote MAIN_SERVER_URL AND fan out to local demo-ui"
+  echo "[demo] mode=local-ui: shims dial remote MAIN_SERVER_URL AND fan out to local local-server"
 fi
 
-# --- Optional demo-ui (local-ui only) ------------------------------------
+# --- Optional local-server (local-ui only) -------------------------------
 if [ "$MODE" = "local-ui" ]; then
-  DEMO_UI_ENV="$ROOT/packages/demo-ui/.env.local-ui"
-  if [ ! -f "$DEMO_UI_ENV" ]; then
-    echo "[demo] missing $DEMO_UI_ENV — copy from .env.local-ui.example" >&2
+  LOCAL_SERVER_ENV="$ROOT/packages/local-server/.env.local-ui"
+  if [ ! -f "$LOCAL_SERVER_ENV" ]; then
+    echo "[demo] missing $LOCAL_SERVER_ENV — copy from .env.local-ui.example" >&2
     exit 1
   fi
-  echo "[demo] starting demo-ui..."
-  (set -a; source "$DEMO_UI_ENV"; set +a; \
-    cd "$ROOT/packages/demo-ui" && node dist/index.js) &
+  echo "[demo] starting local-server..."
+  (set -a; source "$LOCAL_SERVER_ENV"; \
+    SHIM_CONFIGS="$ROOT/packages/shim/config/shim-a.yaml,$ROOT/packages/shim/config/shim-b.yaml"; \
+    set +a; \
+    cd "$ROOT/packages/local-server" && node dist/index.js) &
   sleep 1
 fi
 

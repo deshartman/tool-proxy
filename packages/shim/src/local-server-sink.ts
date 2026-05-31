@@ -1,8 +1,8 @@
-// DEMO-ONLY: fan-out shim events to a local "demo-ui" process so the laptop
-// browser can render a shim-side view side-by-side with the cloud's view.
+// Fan-out shim events to the laptop-side local-server process so the browser
+// tab there can render a shim-side view side-by-side with the cloud chat view.
 //
-// In production this code path is dormant: if DEMO_UI_URL is unset (the
-// default), createDemoUiSink returns no-op closures and no HTTP traffic
+// In production this code path is dormant: if LOCAL_SERVER_URL is unset (the
+// default), createLocalServerSink returns no-op closures and no HTTP traffic
 // leaves the shim toward localhost.
 //
 // Wire shape: one POST /events per emit, body = single NDJSON line.
@@ -14,18 +14,18 @@ import { request as httpsRequest } from "node:https";
 import { URL } from "node:url";
 import type { UiEvent, UiPayload, UiTokenEvent } from "@mcp-shim/shared";
 
-export interface DemoUiSink {
+export interface LocalServerSink {
   emit: (level: "info" | "detail", message: string) => void;
   emitToken: (queryId: string, seq: number, delta: string, done?: boolean) => void;
   publishCloudLike: (message: string) => void;
 }
 
-export function createDemoUiSink(opts: {
+export function createLocalServerSink(opts: {
   shimId: string;
   url?: string;
   token?: string;
-}): DemoUiSink {
-  const noop: DemoUiSink = {
+}): LocalServerSink {
+  const noop: LocalServerSink = {
     emit: () => {},
     emitToken: () => {},
     publishCloudLike: () => {},

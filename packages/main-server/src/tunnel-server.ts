@@ -3,7 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { RegisterFrame, TunnelFrame } from "@mcp-shim/shared";
 import { TunnelServerTransport } from "./tunnel-transport.js";
-import { registry, type PendingDocOp } from "./registry.js";
+import { registry } from "./registry.js";
 import { eventBus } from "./event-bus.js";
 
 // Shared-secret tunnel auth.
@@ -93,9 +93,7 @@ export async function handleTunnelConnection(
       { capabilities: {} }
     );
 
-    const pendingDocOps = new Map<string, PendingDocOp>();
-
-    // Demo-only: route inbound non-RPC frames into the event bus + pending doc ops map.
+    // Demo-only: route inbound non-RPC frames (event/token) into the event bus.
     t.onframe = (f: TunnelFrame) => {
       if (f.type === "event") {
         eventBus.publish({
@@ -114,12 +112,6 @@ export async function handleTunnelConnection(
           delta: f.delta,
           done: f.done,
         });
-      } else if (f.type === "doc-change-response") {
-        const op = pendingDocOps.get(f.requestId);
-        if (!op) return;
-        pendingDocOps.delete(f.requestId);
-        if (!f.ok) op.reject(new Error(f.error ?? "change failed"));
-        else op.resolve(f.variant ?? "");
       }
     };
 
@@ -131,7 +123,6 @@ export async function handleTunnelConnection(
           procedures: frame.procedures,
           client,
           transport: t,
-          pendingDocOps,
         });
         eventBus.publish({
           source: "main",

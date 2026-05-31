@@ -58,12 +58,17 @@
 
     /* View modes (set on <body data-view="...">):
          full   — all columns (default)
-         chat   — chat + cloud + firewall (firewall on right edge, shims hidden)
+         chat   — chat + cloud only. The firewall is the CUSTOMER's firewall;
+                  it has no architectural meaning on the cloud-side view, so
+                  it's hidden here. Document mutation also lives on the
+                  laptop-side local-server, so the Change button is hidden too.
          shim   — firewall + shims (firewall on left edge, chat/cloud hidden)
        Hiding via display:none collapses the grid track so the visible columns
        expand naturally. Resizers next to a hidden column are also hidden. */
     body[data-view="chat"] .col.shims,
-    body[data-view="chat"] #resizer-2 { display: none; }
+    body[data-view="chat"] .col.firewall,
+    body[data-view="chat"] #resizer-2,
+    body[data-view="chat"] .doc-section { display: none; }
     body[data-view="shim"] .col.chat,
     body[data-view="shim"] .col.cloud,
     body[data-view="shim"] #resizer-1,
@@ -72,7 +77,7 @@
       grid-template-columns: 36px 1fr;
     }
     body[data-view="chat"] main {
-      grid-template-columns: var(--col-chat, 1.2fr) 8px var(--col-cloud, 1fr) 36px;
+      grid-template-columns: var(--col-chat, 1.2fr) 8px var(--col-cloud, 1fr);
     }
 
     .resizer {

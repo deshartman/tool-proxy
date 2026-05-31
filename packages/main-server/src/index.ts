@@ -7,7 +7,6 @@ import { handleTunnelConnection } from "./tunnel-server.js";
 import { registry } from "./registry.js";
 import { route } from "./router.js";
 import { eventBus } from "./event-bus.js";
-import { changeShimDocument } from "./doc-ops.js";
 import type { UiEvent, UiPayload } from "@mcp-shim/shared";
 
 const port = Number(process.env.PORT ?? 8080);
@@ -128,42 +127,6 @@ function handleEvents(req: IncomingMessage, res: ServerResponse): void {
   req.on("error", cleanup);
 }
 
-async function handleDocChange(
-  req: IncomingMessage,
-  res: ServerResponse,
-  shimId: string,
-  sourceId: string
-): Promise<void> {
-  if (req.method !== "POST") {
-    res.statusCode = 405;
-    res.end();
-    return;
-  }
-  // Optional body: { variant: "original" | "alternate" }. If omitted, the
-  // shim toggles to whichever variant isn't currently active.
-  let target: "original" | "alternate" | undefined;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  const body = Buffer.concat(chunks).toString("utf8").trim();
-  if (body) {
-    try {
-      const parsed = JSON.parse(body) as { variant?: unknown };
-      if (parsed.variant === "original" || parsed.variant === "alternate") {
-        target = parsed.variant;
-      }
-    } catch {
-      // ignore malformed body, just toggle
-    }
-  }
-  const targetSuffix = target ? ` -> ${target}` : "";
-  publishCloud(`asking ${shimId} to switch document variant${targetSuffix}`);
-  const active = await changeShimDocument(shimId, sourceId, target);
-  publishCloud(`document now active variant: ${active}`);
-  res.statusCode = 200;
-  res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify({ ok: true, variant: active }));
-}
-
 async function serveClient(res: ServerResponse): Promise<void> {
   try {
     const html = await readFile(clientIndexPath, "utf8");
@@ -243,20 +206,8 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify(data, null, 2));
     return;
   }
-  // POST /docs/:shimId/:sourceId/change — toggle (or set) doc variant.
-  const changeMatch = /^\/docs\/([^/]+)\/([^/]+)\/change$/.exec(path);
-  if (changeMatch) {
-    handleDocChange(req, res, changeMatch[1], changeMatch[2]).catch((e) => {
-      console.error("[docs/change] handler error:", e);
-      try {
-        res.statusCode = 500;
-        res.end(JSON.stringify({ error: String(e?.message ?? e) }));
-      } catch {
-        // already ended
-      }
-    });
-    return;
-  }
+  // Document mutation lives on the laptop's local-server, not here. The
+  // cloud has no /docs endpoint by design.
   if (path === "/" || path === "/index.html") {
     // Default this tab to the chat view. Visitors can still open ?view=full
     // for the original 4-column layout, or ?view=shim if they want the
@@ -307,5 +258,4 @@ server.listen(port, () => {
   console.log(`  POST /query             — user queries`);
   console.log(`  GET  /events            — SSE stream for the UI`);
   console.log(`  GET  /registry          — list connected shims`);
-  console.log(`  POST /docs/:shim/:src/change — toggle doc variant (demo only)`);
 });

@@ -1,3 +1,7 @@
+// Re-export the shared "Change document" implementation so consumers can
+// `import { applyVariantInFile } from "@mcp-shim/shared"`.
+export * from "./variants.js";
+
 // Shared types for the shim <-> main-server tunnel.
 //
 // Frames are JSON objects, one per line (newline-delimited). Two kinds:
@@ -47,34 +51,11 @@ export interface TokenFrame {
   done?: boolean;
 }
 
-// Demo-only: the main server can ask a shim to swap step 1 of its procedure
-// document between two predefined variants. This is a demo affordance to show
-// the freshness guarantee — re-asking the same question after a change
-// immediately reflects the new step. In production the cloud would NEVER do
-// this; documents stay in the customer environment.
-export interface DocChangeRequestFrame {
-  type: "doc-change-request";
-  requestId: string;
-  sourceId: string;
-  // If specified, swap to that variant; if omitted, toggle to the other one.
-  variant?: "original" | "alternate";
-}
-
-export interface DocChangeResponseFrame {
-  type: "doc-change-response";
-  requestId: string;
-  ok: boolean;
-  variant?: "original" | "alternate";
-  error?: string;
-}
-
 export type TunnelFrame =
   | RegisterFrame
   | RpcFrame
   | EventFrame
-  | TokenFrame
-  | DocChangeRequestFrame
-  | DocChangeResponseFrame;
+  | TokenFrame;
 
 // Browser SSE payload (cloud-emitted + shim-forwarded events merged into one stream)
 export interface UiEvent {

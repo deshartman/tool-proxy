@@ -4,12 +4,8 @@ import { loadConfig } from "./config.js";
 import { makeAdapter } from "./adapters/index.js";
 import { createShimMcpServer } from "./mcp-server.js";
 import { TunnelClientTransport } from "./tunnel-client.js";
-import { createDemoUiSink } from "./demo-ui-sink.js";
-import type {
-  DocChangeResponseFrame,
-  RegisterFrame,
-  TunnelFrame,
-} from "@mcp-shim/shared";
+import { createLocalServerSink } from "./local-server-sink.js";
+import type { RegisterFrame } from "@mcp-shim/shared";
 
 async function main() {
   const configPath = process.env.SHIM_CONFIG;
@@ -19,11 +15,11 @@ async function main() {
   const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   const mainServerUrl = process.env.MAIN_SERVER_URL ?? "http://localhost:8080/tunnel";
   const authToken = process.env.TUNNEL_AUTH_TOKEN;
-  // DEMO-ONLY: when DEMO_UI_URL is set the shim ALSO POSTs every event/token
-  // to a local demo-ui process so the laptop browser tab can render its own
+  // When LOCAL_SERVER_URL is set the shim ALSO POSTs every event/token to the
+  // laptop-side local-server so the on-prem browser tab can render its own
   // shim-side view. Production leaves these unset → no localhost traffic.
-  const demoUiUrl = process.env.DEMO_UI_URL;
-  const demoUiToken = process.env.DEMO_UI_TOKEN;
+  const localServerUrl = process.env.LOCAL_SERVER_URL;
+  const localServerToken = process.env.LOCAL_SERVER_TOKEN;
 
   const config = loadConfig(configPath);
 
@@ -43,19 +39,19 @@ async function main() {
     procedures: [{ id: source.id, description: source.description }],
   };
   const transport = new TunnelClientTransport(mainServerUrl, registerFrame, authToken);
-  const demoSink = createDemoUiSink({
+  const localSink = createLocalServerSink({
     shimId: config.shimId,
-    url: demoUiUrl,
-    token: demoUiToken,
+    url: localServerUrl,
+    token: localServerToken,
   });
 
   const emit = (level: "info" | "detail", message: string) => {
     transport.emitEvent(config.shimId, level, message);
-    demoSink.emit(level, message);
+    localSink.emit(level, message);
   };
   const emitToken = (queryId: string, seq: number, delta: string, done?: boolean) => {
     transport.emitToken(config.shimId, queryId, seq, delta, done);
-    demoSink.emitToken(queryId, seq, delta, done);
+    localSink.emitToken(queryId, seq, delta, done);
   };
 
   const server = createShimMcpServer({
@@ -73,44 +69,9 @@ async function main() {
     process.exit(1);
   };
 
-  // Demo-only: handle doc-change requests pushed down the tunnel. The shim
-  // toggles step 1 of its document between two predefined variants from
-  // the YAML config and replies with the resulting active variant.
-  transport.onframe = (frame: TunnelFrame) => {
-    if (frame.type !== "doc-change-request" || frame.sourceId !== source.id) return;
-    const apply = adapter.applyVariant;
-    if (!apply) {
-      const resp: DocChangeResponseFrame = {
-        type: "doc-change-response",
-        requestId: frame.requestId,
-        ok: false,
-        error: "adapter does not support variants",
-      };
-      transport.sendFrame(resp);
-      return;
-    }
-    apply
-      .call(adapter, frame.variant)
-      .then((active) => {
-        emit("info", `document switched to variant: ${active}`);
-        const resp: DocChangeResponseFrame = {
-          type: "doc-change-response",
-          requestId: frame.requestId,
-          ok: true,
-          variant: active,
-        };
-        transport.sendFrame(resp);
-      })
-      .catch((e: unknown) => {
-        const resp: DocChangeResponseFrame = {
-          type: "doc-change-response",
-          requestId: frame.requestId,
-          ok: false,
-          error: e instanceof Error ? e.message : String(e),
-        };
-        transport.sendFrame(resp);
-      });
-  };
+  // Document mutation is handled by the laptop-side local-server now —
+  // the cloud has no role in it. No `transport.onframe` needed since the
+  // doc-change tunnel frame type was removed along with the Fly endpoint.
 
   await server.connect(transport);
   emit("info", `connected to main server`);

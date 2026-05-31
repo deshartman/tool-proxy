@@ -6,10 +6,10 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/shared packages/shim packages/main-server packages/demo-ui",
+    "build": "tsc -b packages/shared packages/shim packages/main-server packages/local-server",
     "main": "node packages/main-server/dist/index.js",
     "shim": "node packages/shim/dist/index.js",
-    "demo-ui": "node packages/demo-ui/dist/index.js"
+    "local-server": "node packages/local-server/dist/index.js"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
