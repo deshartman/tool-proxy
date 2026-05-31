@@ -75,18 +75,26 @@ if [ "$MODE" = "local-ui" ]; then
   # Skip with FLY_RESTART=0 if you want to dial straight in.
   if [ "${FLY_RESTART:-1}" != "0" ]; then
     if command -v flyctl >/dev/null 2>&1; then
-      echo "[demo] restarting Fly machine for fresh tunnel..."
-      flyctl machine restart -a mcp-shim-poc 2>&1 | sed 's/^/[fly] /' || \
-        echo "[demo] WARNING: flyctl machine restart failed — continuing anyway"
-      # Wait for the health check to pass so the WS handshake finds the app live.
-      echo "[demo] waiting for Fly to come back online..."
-      for i in 1 2 3 4 5 6 7 8 9 10; do
-        if curl -sf -o /dev/null https://mcp-shim-poc.fly.dev/registry; then
-          echo "[demo] Fly is live"
-          break
-        fi
-        sleep 2
-      done
+      # `flyctl machine restart` is non-interactive-hostile: it requires an
+      # explicit machine ID. Discover it via `machine list --json`. We pin
+      # to a single machine in fly.toml, so taking the first one is fine.
+      FLY_MACHINE_ID="$(flyctl machine list -a mcp-shim-poc --json 2>/dev/null \
+        | python3 -c 'import json,sys; ms=json.load(sys.stdin); print(ms[0]["id"] if ms else "")')"
+      if [ -n "$FLY_MACHINE_ID" ]; then
+        echo "[demo] restarting Fly machine $FLY_MACHINE_ID for fresh tunnel..."
+        flyctl machine restart "$FLY_MACHINE_ID" -a mcp-shim-poc 2>&1 | sed 's/^/[fly] /' || \
+          echo "[demo] WARNING: flyctl machine restart failed — continuing anyway"
+        echo "[demo] waiting for Fly to come back online..."
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          if curl -sf -o /dev/null https://mcp-shim-poc.fly.dev/registry; then
+            echo "[demo] Fly is live"
+            break
+          fi
+          sleep 2
+        done
+      else
+        echo "[demo] WARNING: could not discover Fly machine ID — skipping restart"
+      fi
     else
       echo "[demo] WARNING: flyctl not found on PATH — skipping Fly restart"
     fi
