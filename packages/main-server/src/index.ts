@@ -258,6 +258,16 @@ const server = createServer((req, res) => {
     return;
   }
   if (path === "/" || path === "/index.html") {
+    // Default this tab to the chat view. Visitors can still open ?view=full
+    // for the original 4-column layout, or ?view=shim if they want the
+    // mirror layout served from here too (it'd just be empty of shim events
+    // unless they're forwarded through this tab's SSE stream).
+    if (path === "/" && !url.searchParams.has("view")) {
+      res.statusCode = 302;
+      res.setHeader("location", "/?view=chat");
+      res.end();
+      return;
+    }
     serveClient(res).catch((e) => {
       console.error("[client] error:", e);
       res.statusCode = 500;

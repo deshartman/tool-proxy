@@ -3,18 +3,21 @@ dist
 *.log
 *.tsbuildinfo
 
-# Env files. Layered convention: <name>.env.<mode> where <mode> is dev|local|fly.
-# Example templates (committed) are *.env.example or *.env.<mode>.example.
+# Env files. Layered convention: <name>.env.<mode> where <mode> is
+# dev|local|local-ui|fly. Example templates (committed) are *.env.example
+# or *.env.<mode>.example.
 .env
 .env.*
 *.env
 *.env.dev
 *.env.local
+*.env.local-ui
 *.env.fly
 !.env.example
 !*.env.example
 !*.env.dev.example
 !*.env.local.example
+!*.env.local-ui.example
 !*.env.fly.example
 
 .DS_Store

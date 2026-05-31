@@ -56,6 +56,25 @@
       min-height: 0;
     }
 
+    /* View modes (set on <body data-view="...">):
+         full   — all columns (default)
+         chat   — chat + cloud + firewall (firewall on right edge, shims hidden)
+         shim   — firewall + shims (firewall on left edge, chat/cloud hidden)
+       Hiding via display:none collapses the grid track so the visible columns
+       expand naturally. Resizers next to a hidden column are also hidden. */
+    body[data-view="chat"] .col.shims,
+    body[data-view="chat"] #resizer-2 { display: none; }
+    body[data-view="shim"] .col.chat,
+    body[data-view="shim"] .col.cloud,
+    body[data-view="shim"] #resizer-1,
+    body[data-view="shim"] #resizer-2 { display: none; }
+    body[data-view="shim"] main {
+      grid-template-columns: 36px 1fr;
+    }
+    body[data-view="chat"] main {
+      grid-template-columns: var(--col-chat, 1.2fr) 8px var(--col-cloud, 1fr) 36px;
+    }
+
     .resizer {
       cursor: col-resize;
       background: #1a1f29;

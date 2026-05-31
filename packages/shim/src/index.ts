@@ -4,6 +4,7 @@ import { loadConfig } from "./config.js";
 import { makeAdapter } from "./adapters/index.js";
 import { createShimMcpServer } from "./mcp-server.js";
 import { TunnelClientTransport } from "./tunnel-client.js";
+import { createDemoUiSink } from "./demo-ui-sink.js";
 import type {
   DocChangeResponseFrame,
   RegisterFrame,
@@ -18,6 +19,11 @@ async function main() {
   const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   const mainServerUrl = process.env.MAIN_SERVER_URL ?? "http://localhost:8080/tunnel";
   const authToken = process.env.TUNNEL_AUTH_TOKEN;
+  // DEMO-ONLY: when DEMO_UI_URL is set the shim ALSO POSTs every event/token
+  // to a local demo-ui process so the laptop browser tab can render its own
+  // shim-side view. Production leaves these unset → no localhost traffic.
+  const demoUiUrl = process.env.DEMO_UI_URL;
+  const demoUiToken = process.env.DEMO_UI_TOKEN;
 
   const config = loadConfig(configPath);
 
@@ -37,11 +43,20 @@ async function main() {
     procedures: [{ id: source.id, description: source.description }],
   };
   const transport = new TunnelClientTransport(mainServerUrl, registerFrame, authToken);
+  const demoSink = createDemoUiSink({
+    shimId: config.shimId,
+    url: demoUiUrl,
+    token: demoUiToken,
+  });
 
-  const emit = (level: "info" | "detail", message: string) =>
+  const emit = (level: "info" | "detail", message: string) => {
     transport.emitEvent(config.shimId, level, message);
-  const emitToken = (queryId: string, seq: number, delta: string, done?: boolean) =>
+    demoSink.emit(level, message);
+  };
+  const emitToken = (queryId: string, seq: number, delta: string, done?: boolean) => {
     transport.emitToken(config.shimId, queryId, seq, delta, done);
+    demoSink.emitToken(queryId, seq, delta, done);
+  };
 
   const server = createShimMcpServer({
     shimId: config.shimId,

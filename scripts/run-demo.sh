@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boots the shims (and, in dev mode, the main server) for the POC demo.
+# Boots the shims (and, depending on mode, the main server and/or demo-ui).
 #
 # Modes:
 #   dev   (default) — main server runs locally; shims dial localhost.
@@ -7,10 +7,19 @@
 #                             packages/shim/config/shim-a.env.dev
 #                             packages/shim/config/shim-b.env.dev
 #
-#   local           — shims on this laptop dial a remote main server (e.g. Fly).
-#                     The main server is NOT started locally in this mode.
+#   local           — shims dial a remote main server (e.g. Fly).
+#                     Main server NOT started locally.
 #                     Reads:  packages/shim/config/shim-a.env.local
 #                             packages/shim/config/shim-b.env.local
+#
+#   local-ui        — same as `local`, plus a laptop-side demo-ui process
+#                     so a second browser tab can show the shim's view.
+#                     Reads:  packages/demo-ui/.env.local-ui
+#                             packages/shim/config/shim-a.env.local-ui
+#                             packages/shim/config/shim-b.env.local-ui
+#                     Browser tabs:
+#                       Fly chat tab: https://<your-fly-app>/?view=chat
+#                       Laptop shim tab: http://localhost:9000/?view=shim
 #
 # Prereqs (per mode):
 #   - npm install (from repo root)
@@ -25,9 +34,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 case "$MODE" in
-  dev|local) ;;
+  dev|local|local-ui) ;;
   *)
-    echo "usage: $0 [dev|local]" >&2
+    echo "usage: $0 [dev|local|local-ui]" >&2
     exit 64
     ;;
 esac
@@ -39,6 +48,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# --- Optional local main-server (dev only) -------------------------------
 if [ "$MODE" = "dev" ]; then
   MAIN_ENV="$ROOT/packages/main-server/.env.dev"
   if [ ! -f "$MAIN_ENV" ]; then
@@ -49,10 +59,26 @@ if [ "$MODE" = "dev" ]; then
   (set -a; source "$MAIN_ENV"; set +a; \
     cd "$ROOT/packages/main-server" && node dist/index.js) &
   sleep 1
+elif [ "$MODE" = "local" ]; then
+  echo "[demo] mode=local: shims will dial remote MAIN_SERVER_URL from each shim env file"
 else
-  echo "[demo] mode=local: shims will dial the remote MAIN_SERVER_URL from each shim env file"
+  echo "[demo] mode=local-ui: shims dial remote MAIN_SERVER_URL AND fan out to local demo-ui"
 fi
 
+# --- Optional demo-ui (local-ui only) ------------------------------------
+if [ "$MODE" = "local-ui" ]; then
+  DEMO_UI_ENV="$ROOT/packages/demo-ui/.env.local-ui"
+  if [ ! -f "$DEMO_UI_ENV" ]; then
+    echo "[demo] missing $DEMO_UI_ENV — copy from .env.local-ui.example" >&2
+    exit 1
+  fi
+  echo "[demo] starting demo-ui..."
+  (set -a; source "$DEMO_UI_ENV"; set +a; \
+    cd "$ROOT/packages/demo-ui" && node dist/index.js) &
+  sleep 1
+fi
+
+# --- Shims ---------------------------------------------------------------
 SHIM_A_ENV="$ROOT/packages/shim/config/shim-a.env.${MODE}"
 SHIM_B_ENV="$ROOT/packages/shim/config/shim-b.env.${MODE}"
 for f in "$SHIM_A_ENV" "$SHIM_B_ENV"; do
@@ -72,12 +98,18 @@ echo "[demo] starting shim-b (env: $(basename "$SHIM_B_ENV"))..."
 
 echo
 echo "[demo] all processes up. Try:"
-if [ "$MODE" = "dev" ]; then
-  echo "  curl -s http://localhost:8080/registry | jq ."
-  echo "  open http://localhost:8080/"
-else
-  echo "  open the MAIN_SERVER_URL host (without /tunnel) in your browser"
-fi
+case "$MODE" in
+  dev)
+    echo "  open http://localhost:8080/"
+    ;;
+  local)
+    echo "  open the MAIN_SERVER_URL host (without /tunnel) in your browser"
+    ;;
+  local-ui)
+    echo "  Tab 1 (cloud): open https://<your-fly-app>/?view=chat"
+    echo "  Tab 2 (shim):  open http://localhost:9000/?view=shim"
+    ;;
+esac
 echo
 echo "[demo] Ctrl-C to stop."
 wait

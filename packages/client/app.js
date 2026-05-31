@@ -1,5 +1,13 @@
 // Demo UI client. Subscribes to /events SSE, renders chat transcript,
 // cloud + shim event logs, and animates the firewall column.
+//
+// View modes (?view= query param): full (default) | chat | shim.
+//   chat — Fly tab. Chat + cloud columns. Firewall on right edge.
+//   shim — laptop tab. Firewall on left edge + shim panels stacked.
+// In shim mode the firewall pulse directions are mirrored so "incoming
+// from cloud" reads visually correct.
+const VIEW = new URLSearchParams(location.search).get("view") || "full";
+document.body.dataset.view = VIEW;
 
 const logEls = {
   "main": document.getElementById("log-cloud"),
