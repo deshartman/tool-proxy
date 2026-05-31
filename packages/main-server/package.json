@@ -9,6 +9,10 @@
   "dependencies": {
     "@mcp-shim/shared": "*",
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13"
   }
 }

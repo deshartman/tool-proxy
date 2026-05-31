@@ -3,7 +3,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { randomUUID } from "node:crypto";
-import { handleTunnelConnection } from "./tunnel-server.js";
+import { WebSocketServer } from "ws";
+import { acceptTunnel, tokenAuthOk } from "./tunnel-server.js";
 import { registry } from "./registry.js";
 import { route } from "./router.js";
 import { eventBus } from "./event-bus.js";
@@ -169,15 +170,12 @@ const server = createServer((req, res) => {
   const path = url.pathname;
 
   if (path === "/tunnel") {
-    handleTunnelConnection(req, res).catch((e) => {
-      console.error("[tunnel] handler error:", e);
-      try {
-        res.statusCode = 500;
-        res.end();
-      } catch {
-        // already ended
-      }
-    });
+    // The tunnel is a WebSocket endpoint. A bare GET/POST here is wrong —
+    // clients must send an Upgrade: websocket request, which the server
+    // handles via the `upgrade` event below.
+    res.statusCode = 426;
+    res.setHeader("upgrade", "websocket");
+    res.end("upgrade required: /tunnel is a WebSocket endpoint");
     return;
   }
   if (path === "/query") {
@@ -238,10 +236,27 @@ const server = createServer((req, res) => {
   res.end();
 });
 
-// Tunnels are persistent POSTs that can stay open indefinitely. Node's
-// default 5-minute requestTimeout would kill them mid-flight. Disable both
-// timers so the tunnel survives idle periods. (In production a real tunnel
-// would also send periodic keepalive frames; the demo tunnel does not.)
+// WebSocket upgrade for /tunnel. Auth check happens here, before the
+// handshake completes — unauthorized shims get a 401 and never see a
+// WebSocket open.
+const wss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url ?? "/", `http://localhost`);
+  if (url.pathname !== "/tunnel") {
+    socket.destroy();
+    return;
+  }
+  if (!tokenAuthOk(req)) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => acceptTunnel(ws));
+});
+
+// HTTP server timeouts don't apply to upgraded WebSockets, but SSE
+// (`/events`) does ride a long-lived response. Keep these disabled so the
+// SSE stream survives idle periods.
 server.requestTimeout = 0;
 server.headersTimeout = 0;
 server.keepAliveTimeout = 0;
@@ -254,7 +269,7 @@ server.listen(port, () => {
     console.warn(`  /tunnel auth: DISABLED — set TUNNEL_AUTH_TOKEN for production`);
   }
   console.log(`  GET  /                  — demo UI`);
-  console.log(`  POST /tunnel            — shims dial in here`);
+  console.log(`  WS   /tunnel            — shims dial in here`);
   console.log(`  POST /query             — user queries`);
   console.log(`  GET  /events            — SSE stream for the UI`);
   console.log(`  GET  /registry          — list connected shims`);

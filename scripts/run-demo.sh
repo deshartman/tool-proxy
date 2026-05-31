@@ -68,6 +68,30 @@ fi
 
 # --- Optional local-server (local-ui only) -------------------------------
 if [ "$MODE" = "local-ui" ]; then
+  # Restart the Fly machine before connecting so the demo always starts
+  # against a fresh tunnel state. Fly's HTTP idle timer will eventually
+  # close stale tunnels; rather than coding heartbeat/reconnect logic we
+  # only need at demo time, the cheaper fix is to kick the machine here.
+  # Skip with FLY_RESTART=0 if you want to dial straight in.
+  if [ "${FLY_RESTART:-1}" != "0" ]; then
+    if command -v flyctl >/dev/null 2>&1; then
+      echo "[demo] restarting Fly machine for fresh tunnel..."
+      flyctl machine restart -a mcp-shim-poc 2>&1 | sed 's/^/[fly] /' || \
+        echo "[demo] WARNING: flyctl machine restart failed — continuing anyway"
+      # Wait for the health check to pass so the WS handshake finds the app live.
+      echo "[demo] waiting for Fly to come back online..."
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        if curl -sf -o /dev/null https://mcp-shim-poc.fly.dev/registry; then
+          echo "[demo] Fly is live"
+          break
+        fi
+        sleep 2
+      done
+    else
+      echo "[demo] WARNING: flyctl not found on PATH — skipping Fly restart"
+    fi
+  fi
+
   LOCAL_SERVER_ENV="$ROOT/packages/local-server/.env.local-ui"
   if [ ! -f "$LOCAL_SERVER_ENV" ]; then
     echo "[demo] missing $LOCAL_SERVER_ENV — copy from .env.local-ui.example" >&2

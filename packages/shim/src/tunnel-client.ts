@@ -1,41 +1,39 @@
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type {
-  JSONRPCMessage,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { EventFrame, RegisterFrame, RpcFrame, TokenFrame, TunnelFrame } from "@mcp-shim/shared";
-import { request as httpRequest, IncomingMessage } from "node:http";
-import { request as httpsRequest } from "node:https";
-import { URL } from "node:url";
-import { PassThrough } from "node:stream";
+import WebSocket, { type RawData } from "ws";
+
+// ws gives us a union (Buffer | ArrayBuffer | Buffer[]); collapse it down
+// to a string so the rest of the code only deals with text frames.
+function wsDataToString(data: RawData): string {
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  return Buffer.from(data).toString("utf8");
+}
 
 // Outbound-only tunnel transport.
 //
 // Models the MCP Tunnels pattern: the shim dials the main server with a
-// streaming POST. The request body carries shim->server frames; the response
-// body carries server->shim frames. One persistent HTTP/1.1 connection,
-// outbound from the shim, no inbound ports.
+// WebSocket connection. One persistent connection, outbound from the shim,
+// no inbound ports. Each WS message carries one JSON-encoded TunnelFrame.
 //
-// This implements MCP's Transport interface so the SDK Server treats it like
-// any other transport.
+// The MAIN_SERVER_URL is given as http(s):// for parity with the previous
+// chunked-POST transport; we rewrite it to ws(s):// here so callers don't
+// need to think about the underlying scheme.
 export class TunnelClientTransport implements Transport {
   onmessage?: (msg: JSONRPCMessage) => void;
   onclose?: () => void;
   onerror?: (err: Error) => void;
-  // Demo-only callback for non-RPC inbound frames (doc-read/write requests).
   onframe?: (frame: TunnelFrame) => void;
 
-  private outbound = new PassThrough();
-  private inboundBuffer = "";
+  private ws?: WebSocket;
   private started = false;
   private closed = false;
 
   constructor(
     private readonly mainServerUrl: string,
     private readonly registerFrame: RegisterFrame,
-    // Optional shared-secret token. When set, sent as `Authorization: Bearer ...`
-    // on the tunnel POST. The main server validates this and returns 401 if
-    // it doesn't match. Required when dialing a public deployment.
     private readonly authToken?: string
   ) {}
 
@@ -43,48 +41,35 @@ export class TunnelClientTransport implements Transport {
     if (this.started) return;
     this.started = true;
 
-    const url = new URL(this.mainServerUrl);
-    const isHttps = url.protocol === "https:";
-    const dial = isHttps ? httpsRequest : httpRequest;
-    const headers: Record<string, string> = {
-      "content-type": "application/x-ndjson",
-      "transfer-encoding": "chunked",
-    };
+    const wsUrl = this.mainServerUrl
+      .replace(/^http:/i, "ws:")
+      .replace(/^https:/i, "wss:");
+
+    const headers: Record<string, string> = {};
     if (this.authToken) headers["authorization"] = `Bearer ${this.authToken}`;
 
     await new Promise<void>((resolveStart, rejectStart) => {
-      const req = dial(
-        {
-          method: "POST",
-          hostname: url.hostname,
-          port: url.port || (isHttps ? 443 : 80),
-          path: url.pathname + url.search,
-          headers,
-        },
-        (res: IncomingMessage) => {
-          if (res.statusCode !== 200) {
-            rejectStart(new Error(`Tunnel rejected with status ${res.statusCode}`));
-            return;
-          }
-          res.setEncoding("utf8");
-          res.on("data", (chunk: string) => this.handleInboundChunk(chunk));
-          res.on("end", () => this.handleClose());
-          res.on("error", (e) => this.handleError(e));
-          resolveStart();
-        }
-      );
+      const ws = new WebSocket(wsUrl, { headers });
+      this.ws = ws;
 
-      req.on("error", (e) => {
-        if (!this.started) rejectStart(e);
-        else this.handleError(e);
+      ws.once("open", () => {
+        this.writeFrame(this.registerFrame);
+        resolveStart();
       });
 
-      // Pipe outbound frames into the request body. PassThrough lets us
-      // write frames as they arrive from the MCP server.
-      this.outbound.pipe(req);
+      ws.once("unexpected-response", (_req, res) => {
+        rejectStart(new Error(`Tunnel rejected with status ${res.statusCode}`));
+      });
 
-      // Send the register frame first so the main server can identify this shim.
-      this.writeFrame(this.registerFrame);
+      ws.on("message", (data, isBinary) => {
+        if (isBinary) return;
+        this.handleMessage(wsDataToString(data));
+      });
+      ws.on("error", (e) => {
+        if (this.ws?.readyState === WebSocket.CONNECTING) rejectStart(e);
+        else this.handleError(e);
+      });
+      ws.on("close", () => this.handleClose());
     });
   }
 
@@ -93,7 +78,6 @@ export class TunnelClientTransport implements Transport {
     this.writeFrame(frame);
   }
 
-  // Demo-only side channel: lets the shim push internal events to the UI.
   emitEvent(source: string, level: "info" | "detail", message: string): void {
     const frame: EventFrame = { type: "event", source, level, message, ts: Date.now() };
     this.writeFrame(frame);
@@ -104,7 +88,6 @@ export class TunnelClientTransport implements Transport {
     this.writeFrame(frame);
   }
 
-  // Demo-only: send a non-RPC frame back through the tunnel (doc-read/write responses).
   sendFrame(frame: TunnelFrame): void {
     this.writeFrame(frame);
   }
@@ -112,32 +95,27 @@ export class TunnelClientTransport implements Transport {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.outbound.end();
+    this.ws?.close();
     this.onclose?.();
+    this.ws = undefined;
   }
 
   private writeFrame(frame: TunnelFrame): void {
-    this.outbound.write(JSON.stringify(frame) + "\n");
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify(frame));
   }
 
-  private handleInboundChunk(chunk: string): void {
-    this.inboundBuffer += chunk;
-    let idx: number;
-    while ((idx = this.inboundBuffer.indexOf("\n")) !== -1) {
-      const line = this.inboundBuffer.slice(0, idx).trim();
-      this.inboundBuffer = this.inboundBuffer.slice(idx + 1);
-      if (!line) continue;
-      try {
-        const frame = JSON.parse(line) as TunnelFrame;
-        if (frame.type === "rpc") {
-          const parsed = JSONRPCMessageSchema.parse(frame.payload);
-          this.onmessage?.(parsed);
-        } else {
-          this.onframe?.(frame);
-        }
-      } catch (e) {
-        this.handleError(e instanceof Error ? e : new Error(String(e)));
+  private handleMessage(line: string): void {
+    try {
+      const frame = JSON.parse(line) as TunnelFrame;
+      if (frame.type === "rpc") {
+        const parsed = JSONRPCMessageSchema.parse(frame.payload);
+        this.onmessage?.(parsed);
+      } else {
+        this.onframe?.(frame);
       }
+    } catch (e) {
+      this.handleError(e instanceof Error ? e : new Error(String(e)));
     }
   }
 
