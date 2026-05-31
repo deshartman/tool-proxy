@@ -21,7 +21,7 @@ shim-a (process)              shim-b (process)              main-server (process
                                                           packages/client/index.html
 ```
 
-**Boundary protocol is MCP.** Each shim exposes itself as an MCP `Server` over a custom `Transport` whose wire format is NDJSON frames over a single long-lived outbound HTTP/1.1 POST (modelling Anthropic's MCP Tunnels). The main server is the MCP `Client`. The MCP SDK does the JSON-RPC; the tunnel is just transport. Frame types are defined in [packages/shared/src/index.ts](packages/shared/src/index.ts) and include `register`, `rpc` (opaque MCP JSON-RPC), `event`, `token`, and `doc-change-*`.
+**Boundary protocol is MCP.** Each shim exposes itself as an MCP `Server` over a custom `Transport` whose wire format is JSON-encoded frames carried as text WebSocket messages on a single outbound `wss://` connection (modelling Anthropic's MCP Tunnels). The main server is the MCP `Client`. The MCP SDK does the JSON-RPC; the tunnel is just transport. Frame types are defined in [packages/shared/src/index.ts](packages/shared/src/index.ts) and include `register`, `rpc` (opaque MCP JSON-RPC), `event`, and `token`.
 
 **Architecturally load-bearing properties** the code is written to preserve:
 
@@ -96,11 +96,13 @@ The legacy parameter names work for older models but break newer ones; the proje
 
 ## Tunnel timeout
 
-Node's HTTP server defaults kill long-lived requests at 5 minutes. The main server explicitly disables `requestTimeout`, `headersTimeout`, and `keepAliveTimeout` near the bottom of [packages/main-server/src/index.ts](packages/main-server/src/index.ts). Don't reintroduce defaults — the tunnel is meant to be persistent.
+The tunnel is a WebSocket and isn't subject to HTTP request timeouts. The SSE `/events` stream still rides a long-lived HTTP response, so the main server keeps `requestTimeout`, `headersTimeout`, and `keepAliveTimeout` disabled near the bottom of [packages/main-server/src/index.ts](packages/main-server/src/index.ts). Don't reintroduce defaults.
+
+Fly's HTTP edge will eventually drop idle WebSockets. Demo posture is to restart the Fly machine before each demo run via `flyctl machine restart` — see [scripts/run-demo.sh](scripts/run-demo.sh) `local-ui` mode.
 
 ## Procedure-document variants
 
-Each shim's YAML has a `variants:` block with `original` and `alternate` versions of step 1. The `Change document` UI button calls `POST /docs/:shim/:source/change` which round-trips through a `doc-change-request` tunnel frame to the shim. The shim's filesystem adapter detects the currently-active variant by exact-string match (no marker or anchor) and swaps in place — see [packages/shim/src/adapters/filesystem.ts](packages/shim/src/adapters/filesystem.ts). This is the freshness-guarantee demo affordance: edit the source, re-ask, get a different answer with no re-indexing.
+Each shim's YAML has a `variants:` block with `original` and `alternate` versions of step 1. The `Change document` UI button (visible only in the `?view=shim` tab served by `local-server`) calls `POST /docs/:shim/:source/change` on local-server, which writes the file directly on disk. The shim's `FilesystemAdapter` re-reads the file on every `fetch()` (see [packages/shim/src/adapters/filesystem.ts](packages/shim/src/adapters/filesystem.ts)) so the next query picks up the new content with no re-indexing — and **no tunnel round-trip**. The cloud is not involved.
 
 ## Process lifecycle gotcha
 

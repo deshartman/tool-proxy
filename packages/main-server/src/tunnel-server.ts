@@ -1,21 +1,29 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { RawData, WebSocket } from "ws";
 import type { RegisterFrame, TunnelFrame } from "@mcp-shim/shared";
 import { TunnelServerTransport } from "./tunnel-transport.js";
 import { registry } from "./registry.js";
 import { eventBus } from "./event-bus.js";
 
+function wsDataToString(data: RawData): string {
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  return Buffer.from(data).toString("utf8");
+}
+
 // Shared-secret tunnel auth.
 //
 // This is the registration / license / billing gate. In production the
-// shared secret would be a per-customer JWT (or similar), issued at
-// signup and validated here. The check happens at tunnel-open time, so
-// an unauthorized shim never registers itself and never gets queries.
+// shared secret would be a per-customer JWT (or similar), issued at signup
+// and validated here. The check happens at WS handshake time (during the
+// HTTP upgrade), so an unauthorized shim never opens a WebSocket and never
+// gets queries.
 //
 // If TUNNEL_AUTH_TOKEN is unset we skip auth — that keeps the local-dev
 // flow zero-config. Production deployments MUST set the env var.
-function tokenAuthOk(req: IncomingMessage): boolean {
+export function tokenAuthOk(req: IncomingMessage): boolean {
   const expected = process.env.TUNNEL_AUTH_TOKEN;
   if (!expected) return true;
   const raw = req.headers["authorization"];
@@ -27,65 +35,35 @@ function tokenAuthOk(req: IncomingMessage): boolean {
   return timingSafeEqual(Buffer.from(got), Buffer.from(expected));
 }
 
-// Accepts an inbound shim tunnel connection. The first NDJSON line on the
-// request body is expected to be a "register" frame. Everything after is
-// MCP JSON-RPC traffic, handed off to a per-shim MCP Client.
-export async function handleTunnelConnection(
-  req: IncomingMessage,
-  res: ServerResponse
-): Promise<void> {
-  if (req.method !== "POST") {
-    res.statusCode = 405;
-    res.end("tunnel endpoint requires POST");
-    return;
-  }
-  if (!tokenAuthOk(req)) {
-    res.statusCode = 401;
-    res.setHeader("www-authenticate", "Bearer");
-    res.end("unauthorized");
-    return;
-  }
-
-  res.statusCode = 200;
-  res.setHeader("content-type", "application/x-ndjson");
-  res.flushHeaders?.();
-
-  let buffer = "";
-  let registered = false;
+// Wraps a freshly-upgraded WebSocket. The first message is expected to be
+// a "register" frame; everything after is MCP JSON-RPC traffic, handed off
+// to a per-shim MCP Client.
+export function acceptTunnel(ws: WebSocket): void {
   let shimId: string | null = null;
 
-  req.setEncoding("utf8");
-
-  // We can't pass control to the MCP Client until we've read the register frame,
-  // so we consume bytes here until we see one newline, then construct the
-  // transport and hand the rest of the data flow to it.
-  const onData = (chunk: string) => {
-    if (registered) return; // transport's own listener took over via swap below
-    buffer += chunk;
-    const idx = buffer.indexOf("\n");
-    if (idx === -1) return;
-
-    const line = buffer.slice(0, idx).trim();
-    const remainder = buffer.slice(idx + 1);
-    req.removeListener("data", onData);
+  const onFirstMessage = (data: RawData, isBinary: boolean) => {
+    if (isBinary) {
+      ws.close(1003, "expected text register frame");
+      return;
+    }
+    ws.off("message", onFirstMessage);
 
     let frame: RegisterFrame;
     try {
-      const parsed = JSON.parse(line);
+      const parsed = JSON.parse(wsDataToString(data));
       if (parsed.type !== "register") {
         throw new Error(`expected register frame, got ${parsed.type}`);
       }
       frame = parsed as RegisterFrame;
     } catch (e) {
       console.error("[tunnel] invalid register frame:", e);
-      res.end();
+      ws.close(1002, "invalid register frame");
       return;
     }
 
     shimId = frame.shimId;
-    registered = true;
 
-    const t = new TunnelServerTransport(req, res);
+    const t = new TunnelServerTransport(ws);
     t.start().catch((e) => console.error("[tunnel] transport start error:", e));
 
     const client = new Client(
@@ -93,7 +71,6 @@ export async function handleTunnelConnection(
       { capabilities: {} }
     );
 
-    // Demo-only: route inbound non-RPC frames (event/token) into the event bus.
     t.onframe = (f: TunnelFrame) => {
       if (f.type === "event") {
         eventBus.publish({
@@ -146,13 +123,10 @@ export async function handleTunnelConnection(
         });
       }
     };
-
-    t.feedInitialBuffer(remainder);
   };
 
-  req.on("data", onData);
-
-  req.on("close", () => {
+  ws.on("message", onFirstMessage);
+  ws.on("close", () => {
     if (shimId) registry.unregister(shimId);
   });
 }
