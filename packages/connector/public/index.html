@@ -18,26 +18,34 @@
   </header>
 
   <main>
-    <aside id="manifest-pane">
-      <h2>Manifest</h2>
-      <div id="manifest-empty" class="empty">No manifest yet — connector hasn't built one.</div>
-      <div id="manifest" hidden>
-        <div class="meta-row"><span class="muted">connectorId</span><code id="m-connector"></code></div>
-        <div class="meta-row"><span class="muted">environment</span><code id="m-env"></code></div>
-        <div class="meta-row"><span class="muted">version</span><code id="m-ver"></code></div>
-        <div id="m-servers"></div>
-      </div>
+    <aside id="left-col">
+      <section id="manifest-pane">
+        <h2>Manifest</h2>
+        <div id="manifest-empty" class="empty">No manifest yet — connector hasn't built one.</div>
+        <div id="manifest" hidden>
+          <div class="meta-row"><span class="muted">connectorId</span><code id="m-connector"></code></div>
+          <div class="meta-row"><span class="muted">environment</span><code id="m-env"></code></div>
+          <div class="meta-row"><span class="muted">version</span><code id="m-ver"></code></div>
+          <div id="m-servers"></div>
+        </div>
+      </section>
+
+      <section id="frames-pane">
+        <h2>
+          Frames
+          <span class="controls">
+            <label><input type="checkbox" id="show-heartbeats"> heartbeats</label>
+            <button id="clear">clear</button>
+          </span>
+        </h2>
+        <ol id="frames" class="empty"><li class="empty-msg">No frames yet.</li></ol>
+      </section>
     </aside>
 
-    <section id="frames-pane">
-      <h2>
-        Frames
-        <span class="controls">
-          <label><input type="checkbox" id="show-heartbeats"> heartbeats</label>
-          <button id="clear">clear</button>
-        </span>
-      </h2>
-      <ol id="frames" class="empty"><li class="empty-msg">No frames yet.</li></ol>
+    <section id="tools-pane">
+      <h2>Tools</h2>
+      <div id="tools-empty" class="empty">No tools yet.</div>
+      <div id="tools-list"></div>
     </section>
   </main>
 
