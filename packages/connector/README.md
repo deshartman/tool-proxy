@@ -1,8 +1,8 @@
 # @mcp-shim/connector
 
-Customer-side connector per [docs/MCP-TUNNEL.md](../../../Conversations/memory-deepdive/docs/MCP-TUNNEL.md).
+Customer-side connector per `MCP-TUNNEL.md` (held outside this repo).
 
-This is a **new build** — the existing PoC under `packages/shim`, `packages/main-server`, `packages/client`, and `packages/local-server` is reference material from an earlier design. It uses a different wire protocol and tool surface and does not interoperate with this connector.
+The earlier PoC (in-shim LLM agent, `can_answer` / `ask_procedure`) is preserved on the `poc-testing` branch. Don't look there for productized-connector patterns.
 
 ## What it does
 
@@ -64,4 +64,4 @@ are made at process boot.
 - Auto-reconnect with backoff (manual reconnect button only)
 - Live reconnect on `mcp_servers` YAML changes (requires process restart)
 
-See [docs/MCP-TUNNEL.md](../../../Conversations/memory-deepdive/docs/MCP-TUNNEL.md) for the full productization roadmap.
+See `MCP-TUNNEL.md` (held outside this repo) for the full productization roadmap.

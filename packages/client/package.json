@@ -1,6 +1,0 @@
-{
-  "name": "@mcp-shim/client",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Static demo UI for the MCP shim POC. Served by the main server at GET /."
-}
