@@ -33,18 +33,35 @@ Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector sp
 # from repo root
 npm install
 npm run build
+
+# Copy the templates (the .yaml is gitignored so it stays your local config).
 cp packages/connector/config/connector-a.yaml.example packages/connector/config/connector-a.yaml
 cp packages/connector/config/connector-a.env.example  packages/connector/config/connector-a.env
-# edit connector-a.yaml: set tunnel.controller_url to your server
+
+# Edit packages/connector/config/connector-a.yaml:
+#   - tunnel.controller_url   public WSS URL of your controller (e.g. ngrok)
+#   - tunnel.connector_id     pre-provisioned ID from the controller side
+#   - allow_list.tools        which tools you want to expose
+
 ./scripts/run-connector.sh
 ```
 
-## Out of scope (this branch)
+The connector serves an **inspector UI at http://localhost:9090/** showing:
+- live WS state (connecting / open / closed)
+- the current `ToolManifest` and per-tool allow/deny verdicts
+- every frame in/out (register, register-ack, rpc, heartbeat, manifest-delta)
+- a **reconnect** button that re-reads YAML + redials (use after editing
+  `allow_list` or `policy`)
 
-- mTLS / cert rotation / Account-SID-bound auth
+To pick up `mcp_servers` changes, restart the connector — those connections
+are made at process boot.
+
+## Out of scope (production hardening)
+
+- mTLS / cert rotation / Account-SID-bound tunnel auth
 - OAuth 2.1 + RFC 8707 audience-bound MCP tokens
 - QUIC transport (stays on WS)
-- Reconnect / heartbeat-miss recovery (process exits on close)
-- Live reconnect on `mcp_servers` YAML changes (requires restart)
+- Auto-reconnect with backoff (manual reconnect button only)
+- Live reconnect on `mcp_servers` YAML changes (requires process restart)
 
 See [docs/MCP-TUNNEL.md](../../../Conversations/memory-deepdive/docs/MCP-TUNNEL.md) for the full productization roadmap.
