@@ -8,35 +8,69 @@ The controller is **outside this repo**. This repo is the customer side only.
 
 ```
 packages/
-  connector/            customer-side process: tunnel client + dispatcher + inspector UI
-  sample-mcp-server/    tiny stub MCP server (echo, now, slow_echo) used for verification
+  connector/                 the customer-side process (only thing that ships)
+examples/
+  sample-mcp-server/         standalone demo MCP server (now, slow_echo, uuid, weather)
+  twilio-mcp-server/         standalone demo MCP server wrapping Twilio APIs
+docs/deploy/                 per-cloud deployment guides (AWS Fargate, Azure Container Apps, GCP GKE)
 scripts/
-  run-connector.sh      boots sample-mcp-server + connector
+  run-connector.sh           boots one connector per examples/<server>/, all dialing CONTROLLER_URL
+  build-image.sh             builds the multi-arch OCI image
 ```
 
-## Quick start
+Each `examples/<server>/` directory carries its own `connector.yaml{,.example}` and `.env{,.example}`. The repo-root `.env` carries only `CONTROLLER_URL` (genuinely shared). The connector binary itself is one thing, run once per pairing in dev, once per `connector_id` container in prod.
+
+## Quick start (development)
 
 ```bash
+# Connector (workspace).
 npm install
 npm run build
 
-# First-time setup:
-cp packages/connector/config/connector-a.yaml.example packages/connector/config/connector-a.yaml
-cp packages/connector/config/connector-a.env.example  packages/connector/config/connector-a.env
-# Edit connector-a.yaml: set tunnel.controller_url and tunnel.connector_id.
+# Demo MCP servers (standalone — install + build each one you want to use).
+(cd examples/sample-mcp-server && npm install && npm run build)
+(cd examples/twilio-mcp-server && npm install && npm run build)
+
+# Repo-root .env: just CONTROLLER_URL.
+cp .env.example .env
+
+# Per-pairing env + YAML — repeat for each examples/<server>/.
+cp examples/sample-mcp-server/.env.example          examples/sample-mcp-server/.env
+cp examples/sample-mcp-server/connector.yaml.example examples/sample-mcp-server/connector.yaml
+cp examples/twilio-mcp-server/.env.example          examples/twilio-mcp-server/.env
+cp examples/twilio-mcp-server/connector.yaml.example examples/twilio-mcp-server/connector.yaml
 
 ./scripts/run-connector.sh
 ```
 
-Open the inspector UI at <http://localhost:9090/>.
+Inspector UIs: <http://localhost:9090/> (sample), <http://localhost:9091/> (twilio).
 
 The inspector shows:
 - live WS state (connecting / open / closed)
-- the `ToolManifest` and per-tool allow/deny verdicts
+- the `ToolManifest` and an "Available Tools" list (all discovered tools are Ready)
 - every frame in/out
 - a **Reconnect** button that re-reads the YAML and redials
 
+`run-connector.sh` auto-skips a pairing whose `.env` lists `TWILIO_ACCOUNT_SID=` empty, so the script still boots if you don't have Twilio creds set.
+
 To pick up changes to `mcp_servers`, restart the script (those connections are made at boot).
+
+## CLI
+
+The connector is also a CLI:
+
+```
+mcp-connector start         run the connector (default)
+mcp-connector init          interactive YAML wizard (uses tools/list as confirmation)
+mcp-connector discover      print tools/list per configured server, then exit
+mcp-connector version       print the connector version
+```
+
+## Production deployment
+
+See [docs/deploy/README.md](docs/deploy/README.md) and the per-cloud guides:
+[AWS Fargate](docs/deploy/aws-fargate.md), [Azure Container Apps](docs/deploy/azure-container-apps.md),
+[GCP GKE](docs/deploy/gcp-gke.md).
 
 ## What's load-bearing
 

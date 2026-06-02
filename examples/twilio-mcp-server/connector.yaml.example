@@ -1,0 +1,27 @@
+# Connector YAML for the Twilio MCP server. Copy to connector.yaml
+# (gitignored).
+#
+# CONTROLLER_URL comes from the repo-root .env (shared across deployments).
+# CONNECTOR_ID and TUNNEL_AUTH_TOKEN come from the sibling .env in this dir.
+# Twilio credentials (TWILIO_ACCOUNT_SID etc.) are read by the MCP server,
+# not the connector.
+
+tunnel:
+  controller_url: ${CONTROLLER_URL}
+  connector_id: ${CONNECTOR_ID}
+  environment: dev
+  auth_token: ${TUNNEL_AUTH_TOKEN:-}
+
+mcp_servers:
+  - name: twilio
+    transport: http
+    endpoint: http://localhost:7200/mcp
+    timeout_ms: 5000
+
+policy:
+  fail_mode: fail_fast
+  log_tool_args: redacted
+  max_concurrent_calls: 64
+  discovery_interval_ms: 30000
+  heartbeat_interval_ms: 1500
+  tool_timeout_ms: 5000

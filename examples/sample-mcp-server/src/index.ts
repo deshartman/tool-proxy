@@ -2,50 +2,23 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
+import { now } from "./tools/now.js";
+import { slowEcho } from "./tools/slow-echo.js";
+import { uuid } from "./tools/uuid.js";
+import { weather } from "./tools/weather.js";
+import type { Tool } from "./tools/types.js";
 
 // Tiny stub MCP server for verifying the connector end to end.
-// Exposes three tools:
-//   echo(text)                  — returns the same text back
-//   now()                       — returns the server's current ISO timestamp
-//   slow_echo(text, sleep_ms?)  — sleeps then echoes; used to test tool_timeout_ms
+// Tools live one-per-file under tools/; each module owns its zod schema and
+// handler. New demo tool? Add a file and append to TOOLS.
+const TOOLS: Tool[] = [now, slowEcho, uuid, weather];
 
 function buildServer(): McpServer {
   const server = new McpServer(
     { name: "sample-mcp-server", version: "0.1.0" },
     { capabilities: { tools: {} } }
   );
-
-  server.registerTool(
-    "echo",
-    {
-      description: "Echo the provided text back unchanged.",
-      inputSchema: { text: z.string() },
-    },
-    async ({ text }) => ({ content: [{ type: "text", text }] })
-  );
-
-  server.registerTool(
-    "now",
-    { description: "Return the server's current time as an ISO 8601 timestamp." },
-    async () => ({ content: [{ type: "text", text: new Date().toISOString() }] })
-  );
-
-  server.registerTool(
-    "slow_echo",
-    {
-      description: "Sleep for sleep_ms (default 6000), then echo text. Use to test tool_timeout_ms.",
-      inputSchema: {
-        text: z.string(),
-        sleep_ms: z.number().optional(),
-      },
-    },
-    async ({ text, sleep_ms }) => {
-      await new Promise((r) => setTimeout(r, sleep_ms ?? 6000));
-      return { content: [{ type: "text", text }] };
-    }
-  );
-
+  for (const t of TOOLS) t.register(server);
   return server;
 }
 
@@ -82,7 +55,7 @@ async function main() {
   });
 
   http.listen(port, () => {
-    console.log(`[sample-mcp] listening on http://localhost:${port}/mcp`);
+    console.log(`[sample-mcp] listening on http://localhost:${port}/mcp (tools: ${TOOLS.map(t => t.name).join(", ")})`);
   });
 }
 

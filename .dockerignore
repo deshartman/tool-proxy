@@ -1,0 +1,30 @@
+# Build outputs and deps — rebuilt inside the image.
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+
+# Secrets and live config — never ship these in an image layer.
+.env
+**/.env
+*.env
+**/*.env
+!*.env.example
+
+# Live customer-authored config; only the .example variant ships.
+packages/connector/config/connector-*.yaml
+!packages/connector/config/connector-*.yaml.example
+
+# Repo metadata.
+.git
+.github
+.DS_Store
+*.log
+
+# Examples and docs aren't needed inside the connector image.
+examples
+docs
+README.md
+CLAUDE.md
+scripts

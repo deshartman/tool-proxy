@@ -12,6 +12,8 @@ dist
 .DS_Store
 
 # Connector live config — customer-authored copy of *.yaml.example.
-# Contains real controller URLs and connector_ids; never commit.
-packages/connector/config/connector-*.yaml
-!packages/connector/config/connector-*.yaml.example
+# Per-pairing connector.yaml lives next to each MCP server (e.g. under
+# examples/<server>/). Live copies are gitignored; only the *.example
+# templates ship.
+**/connector.yaml
+!**/connector.yaml.example

@@ -1,0 +1,26 @@
+# Connector YAML for the sample MCP server. Copy to connector.yaml
+# (gitignored) — though the live copy is identical here, the convention
+# is "example committed, live gitignored" so deploy guides match.
+#
+# CONTROLLER_URL comes from the repo-root .env.
+# CONNECTOR_ID and TUNNEL_AUTH_TOKEN come from the sibling .env in this dir.
+
+tunnel:
+  controller_url: ${CONTROLLER_URL}
+  connector_id: ${CONNECTOR_ID}
+  environment: dev
+  auth_token: ${TUNNEL_AUTH_TOKEN:-}
+
+mcp_servers:
+  - name: sample
+    transport: http
+    endpoint: http://localhost:7100/mcp
+    timeout_ms: 5000
+
+policy:
+  fail_mode: fail_fast
+  log_tool_args: redacted
+  max_concurrent_calls: 64
+  discovery_interval_ms: 30000
+  heartbeat_interval_ms: 1500
+  tool_timeout_ms: 5000

@@ -27,34 +27,81 @@ Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts):
 
 Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector splits on the first `.`.
 
-## Quick start
+## Quick start (development)
 
 ```bash
 # from repo root
 npm install
 npm run build
 
-# Copy the templates (the .yaml is gitignored so it stays your local config).
-cp packages/connector/config/connector-a.yaml.example packages/connector/config/connector-a.yaml
-cp packages/connector/config/connector-a.env.example  packages/connector/config/connector-a.env
+# Demo MCP servers (one per pairing you want to run).
+(cd examples/sample-mcp-server && npm install && npm run build)
 
-# Edit packages/connector/config/connector-a.yaml:
-#   - tunnel.controller_url   public WSS URL of your controller (e.g. ngrok)
-#   - tunnel.connector_id     pre-provisioned ID from the controller side
-#   - mcp_servers[]           which local MCP servers to expose
+# Shared env (CONTROLLER_URL only).
+cp .env.example .env
+
+# Per-pairing env + YAML.
+cp examples/sample-mcp-server/.env.example examples/sample-mcp-server/.env
+cp examples/sample-mcp-server/connector.yaml.example \
+   examples/sample-mcp-server/connector.yaml
 
 ./scripts/run-connector.sh
 ```
 
 The connector serves an **inspector UI at http://localhost:9090/** showing:
 - live WS state (connecting / open / closed)
-- the current `ToolManifest` and per-tool allow/deny verdicts
+- the current `ToolManifest` and an "Available Tools" list (every discovered tool is Ready)
 - every frame in/out (register, register-ack, rpc, heartbeat, manifest-delta)
-- a **reconnect** button that re-reads YAML + redials (use after editing
-  `policy`)
+- a **reconnect** button that re-reads YAML + redials (use after editing `policy`)
 
 To pick up `mcp_servers` changes, restart the connector — those connections
 are made at process boot.
+
+## CLI
+
+The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
+
+| Subcommand | Use |
+|---|---|
+| `start` (default) | run the connector. Flags: `--config <path>`, `--inspector-port <n>`, `--no-inspector` |
+| `init` | discovery-driven wizard. Connects to each configured MCP server, runs `tools/list` as confirmation, writes the YAML. `--output <path>`, `--force` |
+| `discover` | non-interactive: print `tools/list` per server. `--config <path>` |
+| `version` | print the connector version |
+
+## Files that ship (in the OCI image)
+
+| Path | Why |
+|---|---|
+| `dist/` | compiled JS (the entrypoint with shebang) |
+| `public/` | inspector UI assets (HTML/JS/CSS) |
+| `package.json` | metadata + the `bin` entry |
+| `node_modules/` (production only) | `npm prune --omit=dev` in the build stage |
+
+The image does **not** contain anything under `examples/` or `docs/`.
+
+## Run standalone
+
+```bash
+# Inside a container the entrypoint is `node dist/index.js`. Mount your config:
+docker run --rm \
+  -v "$PWD/connector.yaml:/etc/mcp-connector/config.yaml:ro" \
+  -e TUNNEL_AUTH_TOKEN=... \
+  -e CONTROLLER_URL=wss://controller.example.com/tunnel \
+  -e CONNECTOR_ID=conn_xxxxxxxx \
+  -p 9090:9090 \
+  mcp-connector:0.1.0 start
+
+# Or directly:
+CONNECTOR_CONFIG=./connector.yaml \
+  node packages/connector/dist/index.js start
+```
+
+## Production deployment
+
+See [docs/deploy/README.md](../../docs/deploy/README.md) plus the per-cloud guides:
+[AWS Fargate](../../docs/deploy/aws-fargate.md),
+[Azure Container Apps](../../docs/deploy/azure-container-apps.md),
+[GCP GKE](../../docs/deploy/gcp-gke.md).
 
 ## Out of scope (production hardening)
 
