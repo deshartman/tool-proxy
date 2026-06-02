@@ -41,7 +41,7 @@ To pick up changes to `mcp_servers`, restart the script (those connections are m
 ## What's load-bearing
 
 - **Outbound only.** The connector opens no inbound ports for the tunnel.
-- **Default-deny allow-list.** Tools are advertised with `allowed: false` unless explicitly listed.
+- **Trust boundary is per MCP server, not per tool.** Every tool a configured MCP server exposes is forwarded — pick which servers run carefully.
 - **No LLM, no agent loop, no document handling.** This is a tool dispatcher with policy.
 
 See [CLAUDE.md](CLAUDE.md) and [packages/connector/README.md](packages/connector/README.md) for details.

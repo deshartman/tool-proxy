@@ -1,7 +1,7 @@
 // Inspector UI — vanilla JS. Streams frames from /events (SSE) and renders:
-//   left col:  manifest (with Allow List) on top + frames log below
+//   left col:  manifest (with Available Tools) on top + frames log below
 //   right col: each tool's MCP-shape card (registerTool-style) stacked vertically
-// Clicking a row in the Allow List highlights the matching tool card on the
+// Clicking a row in Available Tools highlights the matching tool card on the
 // right and scrolls it into view.
 
 const elStatus = document.getElementById('status');
@@ -183,29 +183,30 @@ function renderManifest(m) {
 function buildServerCard(s) {
   const card = document.createElement('div');
   card.className = 'server-card';
-  const allowedCount = s.tools.filter((t) => t.allowed).length;
+  const count = s.tools.length;
+  const countLabel = count === 1 ? '1 tool' : `${count} tools`;
   card.innerHTML = `
     <div class="server-label">MCP Server</div>
     <div class="server-name">${escapeHtml(s.name)}</div>
-    <div class="server-meta">${escapeHtml(s.transport)} · ${allowedCount}/${s.tools.length} allowed</div>
-    <div class="allow-section">
-      <div class="allow-label">Allow List</div>
+    <div class="server-meta">${escapeHtml(s.transport)} · ${countLabel}</div>
+    <div class="tools-section">
+      <div class="tools-section-label">Available Tools</div>
     </div>
   `;
-  const allowSection = card.querySelector('.allow-section');
+  const toolsSection = card.querySelector('.tools-section');
   for (const t of s.tools) {
-    allowSection.appendChild(buildAllowRow(s.name, t));
+    toolsSection.appendChild(buildToolRow(s.name, t));
   }
   return card;
 }
 
-function buildAllowRow(serverName, t) {
+function buildToolRow(serverName, t) {
   const row = document.createElement('div');
-  row.className = 'allow-row';
+  row.className = 'tool-row';
   row.dataset.key = `${serverName}.${t.name}`;
   row.innerHTML = `
     <span>${escapeHtml(t.name)}</span>
-    <span class="verdict ${t.allowed ? 'allowed' : 'not-allowed'}">${t.allowed ? 'Allowed' : 'Not Allowed'}</span>
+    <span class="verdict ready">Ready</span>
   `;
   row.addEventListener('click', () => {
     selectedToolKey = row.dataset.key;
@@ -234,12 +235,12 @@ function renderTools(m) {
 function buildToolCard(serverName, t) {
   const key = `${serverName}.${t.name}`;
   const card = document.createElement('div');
-  card.className = 'tool-card' + (t.allowed ? '' : ' denied');
+  card.className = 'tool-card';
   card.dataset.key = key;
   card.innerHTML = `
     <div class="tool-card-head">
       <span class="name">${escapeHtml(serverName)}.${escapeHtml(t.name)}</span>
-      <span class="verdict ${t.allowed ? 'allowed' : 'not-allowed'}">${t.allowed ? 'Allowed' : 'Not Allowed'}</span>
+      <span class="verdict ready">Ready</span>
     </div>
     <pre>${renderToolShape(t)}</pre>
   `;
@@ -247,7 +248,7 @@ function buildToolCard(serverName, t) {
 }
 
 function applySelection() {
-  document.querySelectorAll('.allow-row').forEach((el) => {
+  document.querySelectorAll('.tool-row').forEach((el) => {
     el.classList.toggle('selected', el.dataset.key === selectedToolKey);
   });
   document.querySelectorAll('.tool-card').forEach((el) => {

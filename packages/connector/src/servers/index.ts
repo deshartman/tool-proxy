@@ -3,7 +3,7 @@ import type { ToolDescriptor } from "../tunnel/frames.js";
 import { connectHttp } from "./http.js";
 import { connectStdio } from "./stdio.js";
 
-// Raw tool from a local MCP server, before allow-list resolution.
+// Raw tool from a local MCP server, before being shaped into a ToolDescriptor.
 export interface DiscoveredTool {
   name: string;
   description: string;

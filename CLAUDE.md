@@ -23,7 +23,7 @@ The connector dials a public controller URL (e.g. an ngrok WSS endpoint that fro
 ## Architecturally load-bearing properties
 
 - **Outbound-only.** The connector opens **no inbound ports** for the tunnel. It dials out; the controller pushes RPC requests back down the same WS the connector opened.
-- **Default-deny allow-list.** Tools are advertised with `allowed: false` unless explicitly listed in `allow_list.tools`. Inbound `tools/call` for a denied tool returns `tool_not_allowed`.
+- **Trust boundary is per MCP server, not per tool.** Every tool a server in `mcp_servers[]` exposes is forwarded to the controller. The customer controls *which* MCP servers run on their machine; that's the gate. We deliberately diverged from MCP-TUNNEL.md §"Configuration surface" (which prescribes a default-deny `allow_list.tools` block) — per-tool gating duplicated authority and forced a YAML edit on every new tool. Don't reintroduce `allow_list` without an explicit ask. The wire format keeps `ToolDescriptor.allowed` (controller may still display it; future enterprise-strict mode might use it) — the connector always sets it to `true`.
 - **Pre-provisioned `connector_id`.** YAML carries the ID; the controller's persistence layer must know it. An unknown ID is silently dropped by some controllers (it looks like a no-op, not an error).
 - **No LLM, no agent loop, no document handling.** If you find yourself adding `openai` or anything that reads documents, stop — that belongs on the controller side or in a separate process, not here.
 
@@ -65,9 +65,9 @@ Then open the inspector UI: <http://localhost:9090/>
 
 There are **no tests**. Verification is interactive via the inspector UI:
 - "MCP Server" panel shows the local MCP servers and their tools.
-- "Allow List" panel shows each tool's allow/deny verdict ("Allowed" / "Not Allowed").
+- "Available Tools" panel lists each discovered tool with a "Ready" verdict.
 - "Frames" panel shows live WS state + every frame in/out (filterable; heartbeats hidden by default).
-- "Reconnect" button **re-reads the YAML** (allow_list / policy changes), then redials. To pick up changes to `mcp_servers`, restart the script — those connections happen at boot.
+- "Reconnect" button **re-reads the YAML** (`policy` changes), then redials. To pick up changes to `mcp_servers`, restart the script — those connections happen at boot.
 
 ## Inspector UI notes
 
@@ -91,7 +91,7 @@ The left column is draggable; the width is persisted in `localStorage` under `in
 ## Reconnect semantics
 
 - WS close does **not** kill the connector process. It transitions the inspector to `closed` state and stops timers; the user can hit the reconnect button to redial.
-- Reconnect re-reads the YAML. If `mcp_servers` changed, the connector logs a warning and uses the prior list (live MCP server reconnect is out of scope). Other YAML changes (`allow_list`, `policy`) take effect.
+- Reconnect re-reads the YAML. If `mcp_servers` changed, the connector logs a warning and uses the prior list (live MCP server reconnect is out of scope). `policy` changes take effect.
 - Controller-side restarts (e.g. ngrok tunnel cycling) are handled by clicking reconnect.
 
 ## Process lifecycle gotcha

@@ -2,7 +2,6 @@ import type { ConnectorConfig } from "./config.js";
 import type { McpServerConnection } from "./servers/index.js";
 import type { ToolManifest } from "./tunnel/frames.js";
 import type { TunnelClient } from "./tunnel/client.js";
-import { AllowList } from "./policy/allow-list.js";
 import { renderArgsForLog } from "./policy/redact.js";
 
 // JSON-RPC 2.0 standard error codes.
@@ -31,11 +30,8 @@ export interface DispatcherDeps {
 
 export class Dispatcher {
   private inFlight = 0;
-  private readonly allow: AllowList;
 
-  constructor(private readonly deps: DispatcherDeps) {
-    this.allow = new AllowList(deps.config);
-  }
+  constructor(private readonly deps: DispatcherDeps) {}
 
   attach(): void {
     this.deps.tunnel.onframe = (frame) => {
@@ -68,7 +64,6 @@ export class Dispatcher {
     const tools: Array<{ name: string; description: string; inputSchema: unknown; outputSchema?: unknown }> = [];
     for (const s of manifest.servers) {
       for (const t of s.tools) {
-        if (!t.allowed) continue;
         tools.push({
           name: `${s.name}.${t.name}`,
           description: t.description,
@@ -100,10 +95,6 @@ export class Dispatcher {
     const server = this.deps.servers.get(serverName);
     if (!server) {
       this.replyKind(id, "tool_not_found", `no local MCP server '${serverName}'`);
-      return;
-    }
-    if (!this.allow.isAllowed(serverName, toolName)) {
-      this.replyKind(id, "tool_not_allowed", `tool '${qualifiedName}' is not in allow_list`);
       return;
     }
 

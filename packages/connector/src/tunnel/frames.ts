@@ -6,7 +6,7 @@ export interface ToolDescriptor {
   description: string;
   inputSchema: unknown;       // JSON Schema, opaque pass-through from MCP
   outputSchema?: unknown;
-  allowed: boolean;           // resolved against allow_list
+  allowed: boolean;           // always true on this connector — see CLAUDE.md "Trust boundary"
 }
 
 export interface ServerDescriptor {

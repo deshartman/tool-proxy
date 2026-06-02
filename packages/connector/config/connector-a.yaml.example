@@ -25,19 +25,13 @@ tunnel:
 
 mcp_servers:
   # Each entry is a local MCP server the connector connects to and aggregates
-  # tools from. transport: http | stdio. Add as many as you need.
+  # tools from. transport: http | stdio. Add as many as you need. The trust
+  # boundary is per-server: every tool a server here exposes is forwarded to
+  # the controller. Pick which servers to run carefully.
   - name: sample
     transport: http
     endpoint: http://localhost:7100/mcp        # the bundled sample-mcp-server
     timeout_ms: 5000
-
-# Default-deny: only tools named here advertise allowed=true to the controller.
-# Tool name format is `${mcp_server_name}.${tool_name}`.
-# Omit this block entirely to advertise everything as allowed=false (and see
-# a startup warning).
-allow_list:
-  tools:
-    - sample.echo
 
 policy:
   fail_mode: fail_fast                # only fail_fast supported

@@ -8,7 +8,7 @@ The earlier PoC (in-shim LLM agent, `can_answer` / `ask_procedure`) is preserved
 
 1. Reads a YAML config describing one or more **local MCP servers** (HTTP or stdio).
 2. Connects to each, runs `tools/list` to discover their tools.
-3. Builds a **`ToolManifest`** by aggregating discovered tools, applying the customer's `allow_list` (default-deny).
+3. Builds a **`ToolManifest`** by aggregating every discovered tool. Trust boundary is per-MCP-server: pick which servers run, get every tool they expose.
 4. Dials out to a controller URL via WSS and pushes `{ type: "register", manifest }`.
 5. Dispatches inbound `tools/call name="${server}.${tool}"` requests to the right local MCP server.
 6. Heartbeats; pushes `manifest-delta` on YAML reload (SIGHUP) or periodic discovery; sends `goodbye` on SIGTERM.
@@ -41,7 +41,7 @@ cp packages/connector/config/connector-a.env.example  packages/connector/config/
 # Edit packages/connector/config/connector-a.yaml:
 #   - tunnel.controller_url   public WSS URL of your controller (e.g. ngrok)
 #   - tunnel.connector_id     pre-provisioned ID from the controller side
-#   - allow_list.tools        which tools you want to expose
+#   - mcp_servers[]           which local MCP servers to expose
 
 ./scripts/run-connector.sh
 ```
@@ -51,7 +51,7 @@ The connector serves an **inspector UI at http://localhost:9090/** showing:
 - the current `ToolManifest` and per-tool allow/deny verdicts
 - every frame in/out (register, register-ack, rpc, heartbeat, manifest-delta)
 - a **reconnect** button that re-reads YAML + redials (use after editing
-  `allow_list` or `policy`)
+  `policy`)
 
 To pick up `mcp_servers` changes, restart the connector — those connections
 are made at process boot.

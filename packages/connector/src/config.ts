@@ -36,7 +36,6 @@ const ConfigSchema = z.object({
     credentials_file: z.string().optional(),
   }),
   mcp_servers: z.array(z.discriminatedUnion("transport", [HttpServer, StdioServer])).min(1),
-  allow_list: z.object({ tools: z.array(z.string()) }).optional(),
   policy: Policy.default({}),
 });
 
