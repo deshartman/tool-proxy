@@ -16,6 +16,8 @@ const elFrames = document.getElementById('frames');
 const elShowHb = document.getElementById('show-heartbeats');
 const elClear = document.getElementById('clear');
 const elReconnect = document.getElementById('reconnect');
+const elMain = document.getElementById('main');
+const elResizer = document.getElementById('col-resizer');
 const elToolsEmpty = document.getElementById('tools-empty');
 const elToolsList = document.getElementById('tools-list');
 
@@ -95,7 +97,7 @@ function appendSchemaTokens(tokens, schema, indent) {
   const NL = () => tokens.push([null, '\n']);
   const SP = (n) => tokens.push([null, ' '.repeat(n)]);
 
-  if (!schema || schema.type !== 'object' || !schema.properties) {
+  if (schema?.type !== 'object' || !schema.properties) {
     T('punct', '{}');
     return;
   }
@@ -337,5 +339,48 @@ function connectSse() {
   };
   es.onerror = () => { /* EventSource auto-retries */ };
 }
+
+// Column resizer — drag the divider to widen/narrow the left pane.
+const LEFT_COL_KEY = 'inspector.leftColPx';
+const LEFT_COL_MIN = 280;
+const LEFT_COL_MAX_FRAC = 0.7; // never let it eat more than 70% of the viewport
+
+function applyLeftColWidth(px) {
+  const clamped = Math.max(LEFT_COL_MIN, Math.min(px, window.innerWidth * LEFT_COL_MAX_FRAC));
+  elMain.style.setProperty('--left-col', `${clamped}px`);
+  return clamped;
+}
+
+const savedWidth = Number(localStorage.getItem(LEFT_COL_KEY));
+if (savedWidth > 0) applyLeftColWidth(savedWidth);
+
+elResizer.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  elResizer.setPointerCapture(e.pointerId);
+  elResizer.classList.add('dragging');
+  document.body.classList.add('col-resizing');
+
+  const onMove = (ev) => {
+    const next = applyLeftColWidth(ev.clientX);
+    localStorage.setItem(LEFT_COL_KEY, String(Math.round(next)));
+  };
+  const onUp = (ev) => {
+    elResizer.releasePointerCapture(ev.pointerId);
+    elResizer.classList.remove('dragging');
+    document.body.classList.remove('col-resizing');
+    elResizer.removeEventListener('pointermove', onMove);
+    elResizer.removeEventListener('pointerup', onUp);
+    elResizer.removeEventListener('pointercancel', onUp);
+  };
+  elResizer.addEventListener('pointermove', onMove);
+  elResizer.addEventListener('pointerup', onUp);
+  elResizer.addEventListener('pointercancel', onUp);
+});
+
+// Re-clamp on window resize so the saved width never exceeds the new viewport.
+window.addEventListener('resize', () => {
+  const current = Number.parseInt(getComputedStyle(elMain).getPropertyValue('--left-col'), 10) || 0;
+  if (current > 0) applyLeftColWidth(current);
+});
 
 connectSse();
