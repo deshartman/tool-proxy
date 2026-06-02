@@ -12,13 +12,13 @@ async function main() {
   const configPath = process.env.CONNECTOR_CONFIG;
   if (!configPath) throw new Error("CONNECTOR_CONFIG env var is required");
   const version = process.env.CONNECTOR_VERSION ?? "dev";
-  const authToken = process.env.TUNNEL_AUTH_TOKEN;
   // Set INSPECTOR_PORT=0 to disable; defaults to 9090.
   const inspectorPort = process.env.INSPECTOR_PORT === "0"
     ? 0
     : Number(process.env.INSPECTOR_PORT ?? 9090);
 
   const config = loadConfig(configPath);
+  const authToken = config.tunnel.auth_token;
   log(`config loaded: connector_id=${config.tunnel.connector_id} environment=${config.tunnel.environment}`);
 
   // 1. Connect to all local MCP servers in parallel. Fail fast if any are unreachable.

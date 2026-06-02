@@ -1,9 +1,18 @@
 # Connector configuration. Customer-authored, reviewable in their repo.
-# Schema mirrors docs/MCP-TUNNEL.md "Configuration surface".
+# Schema mirrors MCP-TUNNEL.md "Configuration surface".
 #
 # Copy this file to connector-a.yaml (gitignored), fill in your values, then:
 #   ./scripts/run-connector.sh
 # The connector serves an inspector UI at http://localhost:9090/.
+#
+# ENV VAR INTERPOLATION
+#   Any ${VAR} or ${VAR:-fallback} in this file is substituted from the process
+#   environment before parse. Use it to keep secrets out of disk-readable YAML.
+#   Recognized env vars at boot:
+#     CONNECTOR_CONFIG     path to this file (required)
+#     CONNECTOR_VERSION    stamped into ToolManifest.version (optional)
+#     INSPECTOR_PORT       inspector UI port; 0 disables (optional, default 9090)
+#   Plus any vars you reference inside this file via ${...}.
 
 tunnel:
   # Public WSS URL exposed by your controller. The connector dials OUT to this;
@@ -18,6 +27,11 @@ tunnel:
   connector_id: REPLACE_ME
 
   environment: dev
+
+  # Optional bearer token sent on the WSS handshake. Sourced from the env so
+  # the YAML stays safe to commit. Omit the line entirely to send no token.
+  auth_token: ${TUNNEL_AUTH_TOKEN:-}
+
   # Optional / advisory:
   # account_sid: AC...
   # region: us1
