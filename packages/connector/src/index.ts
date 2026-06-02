@@ -6,12 +6,17 @@ import { diffManifest, isEmptyDelta } from "./manifest/diff.js";
 import { TunnelClient } from "./tunnel/client.js";
 import { Dispatcher } from "./dispatcher.js";
 import type { ToolManifest } from "./tunnel/frames.js";
+import { Inspector, startInspector } from "./inspector/server.js";
 
 async function main() {
   const configPath = process.env.CONNECTOR_CONFIG;
   if (!configPath) throw new Error("CONNECTOR_CONFIG env var is required");
   const version = process.env.CONNECTOR_VERSION ?? "dev";
   const authToken = process.env.TUNNEL_AUTH_TOKEN;
+  // Set INSPECTOR_PORT=0 to disable; defaults to 9090.
+  const inspectorPort = process.env.INSPECTOR_PORT === "0"
+    ? 0
+    : Number(process.env.INSPECTOR_PORT ?? 9090);
 
   const config = loadConfig(configPath);
   log(`config loaded: connector_id=${config.tunnel.connector_id} environment=${config.tunnel.environment}`);
@@ -36,6 +41,22 @@ async function main() {
     log(`tunnel closed — exiting`);
     process.exit(1);
   };
+
+  // Inspector: live frame log + manifest view, served at http://localhost:INSPECTOR_PORT/.
+  // Wired BEFORE connect() so the connecting->open transition is observable.
+  const inspector = inspectorPort > 0
+    ? new Inspector({
+        controllerUrl: config.tunnel.controller_url,
+        state: "connecting",
+        manifest,
+      })
+    : undefined;
+  if (inspector) {
+    tunnel.onstate = (s) => inspector.setState(s);
+    tunnel.ontap = (t) => inspector.recordTap(t);
+    startInspector(inspectorPort, inspector);
+  }
+
   await tunnel.connect();
   log(`tunnel connected to ${config.tunnel.controller_url}`);
 
@@ -83,6 +104,7 @@ async function main() {
       const next = await buildManifest(config, servers, version);
       const delta = diffManifest(manifest, next);
       manifest = next;
+      inspector?.setManifest(next);
       if (!isEmptyDelta(delta)) {
         tunnel.send({ type: "manifest-delta", delta });
         log(`pushed manifest-delta: +${delta.added.length}/-${delta.removed.length}/~${delta.changed.length}`);

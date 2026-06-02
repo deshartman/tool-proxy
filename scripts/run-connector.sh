@@ -24,9 +24,24 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Always start with a clean slate. The sample MCP server's session-aware
+# HTTP transport gets stuck if the connector reconnects mid-session, so
+# we bounce prior runs of THIS SCRIPT (which take their child node
+# processes down via the trap below).
+echo "[run-connector] cleaning up any prior runs of this script..."
+SELF_PID=$$
+# pgrep -f matches the full command line; -v inverts; we want all matching
+# pids EXCEPT self.
+for pid in $(pgrep -f 'scripts/run-connector\.sh' 2>/dev/null); do
+  [ "$pid" = "$SELF_PID" ] && continue
+  echo "  killing prior run pid $pid"
+  kill -TERM "$pid" 2>/dev/null || true
+done
+sleep 1
+
 # 1. Sample MCP server (HTTP).
 echo "[run-connector] starting sample-mcp-server on :7100..."
-(PORT=7100 cd "$ROOT/packages/sample-mcp-server" && node dist/index.js) &
+(cd "$ROOT/packages/sample-mcp-server" && PORT=7100 node dist/index.js) &
 sleep 1
 
 # 2. Connector.
@@ -36,8 +51,9 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 echo "[run-connector] starting connector..."
-(set -a; source "$ENV_FILE"; set +a; \
-  cd "$ROOT/packages/connector" && node dist/index.js) &
+(cd "$ROOT/packages/connector" && \
+  set -a; source "$ENV_FILE"; set +a; \
+  node dist/index.js) &
 
 echo
 echo "[run-connector] running. Ctrl-C to stop."

@@ -1,6 +1,14 @@
 import WebSocket, { type RawData } from "ws";
 import type { TunnelFrame } from "./frames.js";
 
+export type WsState = "connecting" | "open" | "closed";
+export type FrameDirection = "out" | "in";
+export interface FrameTap {
+  ts: number;
+  direction: FrameDirection;
+  frame: TunnelFrame;
+}
+
 // Outbound-only WSS client.
 //
 // Dials the controller, sends one frame per text WS message. The MCP SDK
@@ -14,15 +22,28 @@ export class TunnelClient {
   onframe?: (frame: TunnelFrame) => void;
   onclose?: () => void;
   onerror?: (err: Error) => void;
+  // Inspector hook: every frame in/out, plus state transitions. Optional.
+  ontap?: (tap: FrameTap) => void;
+  onstate?: (state: WsState) => void;
 
   private ws?: WebSocket;
   private opened = false;
   private closed = false;
+  private _state: WsState = "connecting";
 
   constructor(
     private readonly url: string,
     private readonly authToken?: string
   ) {}
+
+  get state(): WsState { return this._state; }
+  get controllerUrl(): string { return this.url; }
+
+  private setState(next: WsState): void {
+    if (this._state === next) return;
+    this._state = next;
+    this.onstate?.(next);
+  }
 
   async connect(): Promise<void> {
     if (this.opened) return;
@@ -36,7 +57,10 @@ export class TunnelClient {
       const ws = new WebSocket(wsUrl, { headers });
       this.ws = ws;
 
-      ws.once("open", () => resolve());
+      ws.once("open", () => {
+        this.setState("open");
+        resolve();
+      });
       ws.once("unexpected-response", (_req, res) => {
         reject(new Error(`Tunnel rejected with status ${res.statusCode}`));
       });
@@ -55,6 +79,7 @@ export class TunnelClient {
   send(frame: TunnelFrame): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify(frame));
+    this.ontap?.({ ts: Date.now(), direction: "out", frame });
   }
 
   close(reason?: string): void {
@@ -75,12 +100,14 @@ export class TunnelClient {
       this.onerror?.(new Error(`malformed frame: ${(e as Error).message}`));
       return;
     }
+    this.ontap?.({ ts: Date.now(), direction: "in", frame });
     this.onframe?.(frame);
   }
 
   private handleClose(): void {
     if (this.closed) return;
     this.closed = true;
+    this.setState("closed");
     this.onclose?.();
   }
 }
