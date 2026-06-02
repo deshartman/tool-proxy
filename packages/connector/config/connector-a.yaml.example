@@ -1,0 +1,31 @@
+# Connector configuration. Customer-authored, reviewable in their repo.
+# Schema mirrors docs/MCP-TUNNEL.md "Configuration surface".
+
+tunnel:
+  controller_url: ws://localhost:9090/tunnel
+  connector_id: connector-a
+  environment: dev
+  # Optional / advisory in the PoC:
+  # account_sid: AC...
+  # region: us1
+  # credentials_file: /etc/twilio/tunnel.pem    # mTLS is out of scope this branch
+
+mcp_servers:
+  - name: sample
+    transport: http
+    endpoint: http://localhost:7100/mcp
+    timeout_ms: 5000
+
+# Default-deny: only tools listed here are dispatched.
+# Comment out or omit allow_list entirely to advertise everything as allowed=false.
+allow_list:
+  tools:
+    - sample.echo
+
+policy:
+  fail_mode: fail_fast
+  log_tool_args: redacted
+  max_concurrent_calls: 64
+  discovery_interval_ms: 30000
+  heartbeat_interval_ms: 1500
+  tool_timeout_ms: 5000
