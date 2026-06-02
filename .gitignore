@@ -21,3 +21,8 @@ dist
 !*.env.fly.example
 
 .DS_Store
+
+# Connector live config — customer-authored copy of *.yaml.example.
+# Contains real controller URLs and connector_ids; never commit.
+packages/connector/config/connector-*.yaml
+!packages/connector/config/connector-*.yaml.example
