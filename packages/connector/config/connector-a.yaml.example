@@ -2,7 +2,7 @@
 # Schema mirrors docs/MCP-TUNNEL.md "Configuration surface".
 
 tunnel:
-  controller_url: ws://localhost:9090/tunnel
+  controller_url: ws://localhost:9090/tunnel    # local-controller default
   connector_id: connector-a
   environment: dev
   # Optional / advisory in the PoC:

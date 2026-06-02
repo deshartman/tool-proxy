@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MCP Connector — Local Controller</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>MCP Connector — Local Controller</h1>
+    <span id="status" class="status status-disconnected">SSE: connecting…</span>
+  </header>
+
+  <main>
+    <aside id="connectors">
+      <h2>Connectors</h2>
+      <div id="connectors-list" class="empty">No connectors yet. Run <code>./scripts/run-connector.sh</code>.</div>
+    </aside>
+
+    <section id="tool-pane">
+      <h2>Tool</h2>
+      <div id="tool-empty" class="empty">Select a tool from a connector on the left.</div>
+      <div id="tool-form" hidden>
+        <h3 id="tool-title"></h3>
+        <p id="tool-description" class="muted"></p>
+        <details>
+          <summary>inputSchema</summary>
+          <pre id="tool-schema"></pre>
+        </details>
+        <form id="call-form">
+          <label>arguments (JSON)
+            <textarea id="args" rows="6" spellcheck="false">{}</textarea>
+          </label>
+          <button type="submit">Call tool</button>
+        </form>
+        <h3>Response</h3>
+        <pre id="response" class="muted">—</pre>
+      </div>
+    </section>
+
+    <section id="log-pane">
+      <h2>Log</h2>
+      <ol id="log"></ol>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

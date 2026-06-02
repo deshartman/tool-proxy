@@ -6,12 +6,13 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/shared packages/shim packages/main-server packages/local-server packages/connector packages/sample-mcp-server",
+    "build": "tsc -b packages/shared packages/shim packages/main-server packages/local-server packages/connector packages/sample-mcp-server packages/local-controller",
     "main": "node packages/main-server/dist/index.js",
     "shim": "node packages/shim/dist/index.js",
     "local-server": "node packages/local-server/dist/index.js",
     "connector": "node packages/connector/dist/index.js",
-    "sample-mcp": "node packages/sample-mcp-server/dist/index.js"
+    "sample-mcp": "node packages/sample-mcp-server/dist/index.js",
+    "local-controller": "node packages/local-controller/dist/index.js"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
