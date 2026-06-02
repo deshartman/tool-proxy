@@ -20,6 +20,10 @@ export interface InspectorState {
 const RING_SIZE = 500;
 
 export class Inspector {
+  // Caller can wire this to its reconnect routine; invoked when the UI
+  // POSTs /reconnect.
+  onReconnect?: () => void;
+
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
   private readonly frames: FrameTap[] = [];
   private readonly current: InspectorState;
@@ -114,6 +118,13 @@ export function startInspector(port: number, inspector: Inspector): void {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
     if (path === "/events") return handleEvents(req, res, inspector);
+    if (path === "/reconnect" && req.method === "POST") {
+      inspector.onReconnect?.();
+      res.statusCode = 202;
+      res.setHeader("content-type", "application/json");
+      res.end('{"ok":true}');
+      return;
+    }
     if (path === "/" || path === "/index.html") { void serveStatic(res, "index.html"); return; }
     if (path === "/app.js" || path === "/style.css") { void serveStatic(res, path.slice(1)); return; }
     res.statusCode = 404;

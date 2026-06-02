@@ -34,16 +34,7 @@ async function main() {
   let manifest: ToolManifest = await buildManifest(config, servers, version);
   log(`built manifest with ${countTools(manifest)} tool(s)`);
 
-  // 3. Open tunnel and register.
-  const tunnel = new TunnelClient(config.tunnel.controller_url, authToken);
-  tunnel.onerror = (e) => log(`tunnel error: ${e.message}`);
-  tunnel.onclose = () => {
-    log(`tunnel closed — exiting`);
-    process.exit(1);
-  };
-
-  // Inspector: live frame log + manifest view, served at http://localhost:INSPECTOR_PORT/.
-  // Wired BEFORE connect() so the connecting->open transition is observable.
+  // 3. Inspector first, so it survives tunnel cycles.
   const inspector = inspectorPort > 0
     ? new Inspector({
         controllerUrl: config.tunnel.controller_url,
@@ -51,53 +42,105 @@ async function main() {
         manifest,
       })
     : undefined;
+
+  // Live mutable references — replaced on each reconnect.
+  let tunnel: TunnelClient | undefined;
+  let heartbeatTimer: NodeJS.Timeout | undefined;
+  let discoveryTimer: NodeJS.Timeout | undefined;
+  let reconnecting = false;
+
   if (inspector) {
-    tunnel.onstate = (s) => inspector.setState(s);
-    tunnel.ontap = (t) => inspector.recordTap(t);
+    inspector.onReconnect = () => { void reconnect("inspector requested"); };
     startInspector(inspectorPort, inspector);
   }
 
-  await tunnel.connect();
-  log(`tunnel connected to ${config.tunnel.controller_url}`);
+  await connectTunnel("initial");
 
-  tunnel.send({ type: "register", manifest });
-  log(`register frame sent`);
+  // SIGHUP — reload YAML, rebuild manifest, push delta.
+  process.on("SIGHUP", () => { void onSighup(); });
 
-  // 4. Wire dispatcher.
-  const dispatcher = new Dispatcher({
-    config,
-    servers,
-    getManifest: () => manifest,
-    tunnel,
-    log,
-  });
-  dispatcher.attach();
-
-  // 5. Heartbeat.
-  const heartbeatTimer = setInterval(() => {
-    tunnel.send({ type: "heartbeat", ts: Date.now() });
-  }, config.policy.heartbeat_interval_ms);
-
-  // 6. Discovery poll — push manifest-delta if local servers' tools change.
-  const discoveryTimer = setInterval(() => {
-    void refreshManifestAndPushDelta();
-  }, config.policy.discovery_interval_ms);
-
-  // 7. SIGHUP — reload YAML, rebuild manifest, push delta.
-  process.on("SIGHUP", () => {
-    void onSighup();
-  });
-
-  // 8. Graceful shutdown.
+  // Graceful shutdown.
   const shutdown = (signal: string) => {
     log(`received ${signal} — shutting down`);
-    clearInterval(heartbeatTimer);
-    clearInterval(discoveryTimer);
-    tunnel.close(`signal:${signal}`);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (discoveryTimer) clearInterval(discoveryTimer);
+    tunnel?.close(`signal:${signal}`);
     void closeServers(servers).then(() => process.exit(0));
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
+
+  // ─── connect / reconnect ────────────────────────────────────────────────
+  async function connectTunnel(reason: string): Promise<void> {
+    inspector?.setState("connecting");
+    log(`tunnel ${reason}: dialing ${config.tunnel.controller_url}`);
+    const t = new TunnelClient(config.tunnel.controller_url, authToken);
+    t.onerror = (e) => log(`tunnel error: ${e.message}`);
+    if (inspector) {
+      t.onstate = (s) => inspector.setState(s);
+      t.ontap = (tap) => inspector.recordTap(tap);
+    }
+    t.onclose = () => {
+      log(`tunnel closed`);
+      stopTimers();
+      // Don't auto-redial — wait for the user to hit reconnect (or SIGHUP).
+      // Inspector keeps showing the last manifest + frame log; state goes
+      // 'closed' so the UI surfaces it.
+    };
+
+    try {
+      await t.connect();
+    } catch (e) {
+      log(`tunnel connect failed: ${(e as Error).message}`);
+      inspector?.setState("closed");
+      return;
+    }
+
+    tunnel = t;
+    log(`tunnel connected to ${config.tunnel.controller_url}`);
+    t.send({ type: "register", manifest });
+    log(`register frame sent`);
+
+    // Wire dispatcher to this tunnel instance.
+    new Dispatcher({
+      config,
+      servers,
+      getManifest: () => manifest,
+      tunnel: t,
+      log,
+    }).attach();
+
+    startTimers();
+  }
+
+  async function reconnect(reason: string): Promise<void> {
+    if (reconnecting) return;
+    reconnecting = true;
+    try {
+      log(`reconnect requested: ${reason}`);
+      stopTimers();
+      tunnel?.close("reconnect");
+      tunnel = undefined;
+      await connectTunnel("reconnect");
+    } finally {
+      reconnecting = false;
+    }
+  }
+
+  function startTimers(): void {
+    if (heartbeatTimer || discoveryTimer) return;
+    heartbeatTimer = setInterval(() => {
+      tunnel?.send({ type: "heartbeat", ts: Date.now() });
+    }, config.policy.heartbeat_interval_ms);
+    discoveryTimer = setInterval(() => {
+      void refreshManifestAndPushDelta();
+    }, config.policy.discovery_interval_ms);
+  }
+
+  function stopTimers(): void {
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = undefined; }
+    if (discoveryTimer) { clearInterval(discoveryTimer); discoveryTimer = undefined; }
+  }
 
   async function refreshManifestAndPushDelta(): Promise<void> {
     try {
@@ -106,7 +149,7 @@ async function main() {
       manifest = next;
       inspector?.setManifest(next);
       if (!isEmptyDelta(delta)) {
-        tunnel.send({ type: "manifest-delta", delta });
+        tunnel?.send({ type: "manifest-delta", delta });
         log(`pushed manifest-delta: +${delta.added.length}/-${delta.removed.length}/~${delta.changed.length}`);
       }
     } catch (e) {
@@ -121,8 +164,6 @@ async function main() {
         log(`SIGHUP: mcp_servers list changed — restart required for live reconnect; ignoring this reload`);
         return;
       }
-      // Mutate the config in place for fields the running connector observes.
-      // (Allow-list and policy can change live; mcp_servers cannot.)
       Object.assign(config, { allow_list: next.allow_list, policy: next.policy });
       log(`SIGHUP: config reloaded`);
       await refreshManifestAndPushDelta();

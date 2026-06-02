@@ -15,6 +15,7 @@ const elMServers = document.getElementById('m-servers');
 const elFrames = document.getElementById('frames');
 const elShowHb = document.getElementById('show-heartbeats');
 const elClear = document.getElementById('clear');
+const elReconnect = document.getElementById('reconnect');
 const elToolsEmpty = document.getElementById('tools-empty');
 const elToolsList = document.getElementById('tools-list');
 
@@ -34,6 +35,19 @@ elClear.addEventListener('click', () => {
   li.className = 'empty-msg';
   li.textContent = 'No frames yet.';
   elFrames.appendChild(li);
+});
+
+elReconnect.addEventListener('click', async () => {
+  elReconnect.disabled = true;
+  const original = elReconnect.textContent;
+  elReconnect.textContent = 'reconnecting…';
+  try {
+    await fetch('/reconnect', { method: 'POST' });
+  } catch { /* ignore */ }
+  setTimeout(() => {
+    elReconnect.disabled = false;
+    elReconnect.textContent = original;
+  }, 1500);
 });
 
 function setStatus(state) {
@@ -67,7 +81,7 @@ function zodExpr(prop) {
     case 'integer': return 'z.number().int()';
     case 'boolean': return 'z.boolean()';
     case 'array':
-      return prop.items ? `z.array(${zodExpr(prop.items)})` : 'z.array(z.unknown())';
+      return `z.array(${zodExpr(prop.items ?? {})})`;
     case 'object':  return 'z.object({ ... })';
     default:        return 'z.unknown()';
   }
