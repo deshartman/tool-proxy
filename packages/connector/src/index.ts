@@ -121,6 +121,27 @@ async function main() {
       stopTimers();
       tunnel?.close("reconnect");
       tunnel = undefined;
+
+      // Re-read YAML so allow-list / policy edits land on the next dial.
+      // mcp_servers changes still require a full process restart (the
+      // connections to local MCP servers were established at boot).
+      try {
+        const next = loadConfig(configPath!);
+        if (sameMcpServers(config.mcp_servers, next.mcp_servers)) {
+          Object.assign(config, { allow_list: next.allow_list, policy: next.policy });
+          log(`reconnect: YAML reloaded`);
+        } else {
+          log(`reconnect: mcp_servers list changed in YAML — restart required to pick that up; using prior list`);
+        }
+      } catch (e) {
+        log(`reconnect: YAML reload failed (${(e as Error).message}) — using last-known config`);
+      }
+
+      // Rebuild manifest against the (possibly updated) config so register
+      // carries the fresh allow-list. Updates inspector view too.
+      manifest = await buildManifest(config, servers, version);
+      inspector?.setManifest(manifest);
+
       await connectTunnel("reconnect");
     } finally {
       reconnecting = false;
