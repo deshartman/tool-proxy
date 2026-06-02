@@ -31,8 +31,8 @@ if [ ! -f "$ROOT/packages/connector/config/connector-a.yaml" ]; then
 fi
 
 echo "[run-local] starting connector..."
-(CONNECTOR_CONFIG=config/connector-a.yaml \
-  cd "$ROOT/packages/connector" && node dist/index.js) &
+(cd "$ROOT/packages/connector" && \
+  CONNECTOR_CONFIG=config/connector-a.yaml node dist/index.js) &
 
 echo
 echo "[run-local] all up. Open: http://localhost:9090/"
