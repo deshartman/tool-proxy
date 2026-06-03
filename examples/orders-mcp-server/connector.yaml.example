@@ -1,0 +1,30 @@
+# Connector YAML for the orders MCP server. Copy to connector.yaml
+# (gitignored).
+#
+# CONTROLLER_URL comes from the repo-root .env (shared across deployments).
+# CONNECTOR_ID and TUNNEL_AUTH_TOKEN come from the sibling .env in this dir.
+#
+# IMPORTANT: mcp_servers[].name MUST be "orders" — the controller stamps the
+# qualified tool names as customer.<name>.<tool>, and the Refund Eligibility
+# procedure's EXPECTED_CUSTOMER_TOOLS binds to customer.orders.get_recent
+# and customer.orders.issue_refund.
+
+tunnel:
+  controller_url: ${CONTROLLER_URL}
+  connector_id: ${CONNECTOR_ID}
+  environment: dev
+  auth_token: ${TUNNEL_AUTH_TOKEN:-}
+
+mcp_servers:
+  - name: orders
+    transport: http
+    endpoint: http://localhost:7300/mcp
+    timeout_ms: 5000
+
+policy:
+  fail_mode: fail_fast
+  log_tool_args: redacted
+  max_concurrent_calls: 64
+  discovery_interval_ms: 30000
+  heartbeat_interval_ms: 1500
+  tool_timeout_ms: 5000

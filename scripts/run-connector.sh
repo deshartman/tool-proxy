@@ -20,6 +20,7 @@ cd "$ROOT"
 MCP_DIRS=(
   "examples/sample-mcp-server"
   "examples/twilio-mcp-server"
+  "examples/orders-mcp-server"
 )
 
 cleanup() {
