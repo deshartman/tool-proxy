@@ -20,7 +20,6 @@ packages/
     .env.example             shared tunnel env (CONTROLLER_URL, optional CONTROLLER_WS_URL, TUNNEL_AUTH_TOKEN)
 examples/
   sample-mcp-server/         Type 1 — now, slow_echo, uuid, weather
-  twilio-mcp-server/         Type 1 — wraps Twilio APIs
   orders-mcp-server/         Type 1 — Refund Eligibility procedure fixtures
   aviation-weather-mcp/      Type 2 — pure config; spawns published `aviation-weather-mcp` via stdio
 docs/deploy/                 per-cloud deployment guides
@@ -63,7 +62,7 @@ mkdir -p examples/my-mcp/tools
 #     dir: ../../examples/my-mcp
 ```
 
-No `package.json` if you only need `zod` and the SDK (both resolve from the repo's root `node_modules`). Add a per-folder `package.json` only if you need a third-party SDK (e.g. how `twilio-mcp-server/` carries the Twilio SDK).
+No `package.json` if you only need `zod` and the SDK (both resolve from the repo's root `node_modules`). Add a per-folder `package.json` only if you need a third-party SDK — see the sibling `twilio-mcp-shim/` project for a real-world example of a Twilio-authored MCP packaged as its own deployment.
 
 **Type 2** (you point at an existing MCP):
 

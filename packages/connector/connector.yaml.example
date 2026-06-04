@@ -40,10 +40,6 @@ mcp_servers:
     transport: http
     dir: ../../examples/sample-mcp-server
 
-  - name: twilio
-    transport: http
-    dir: ../../examples/twilio-mcp-server
-
   - name: orders
     transport: http
     dir: ../../examples/orders-mcp-server
