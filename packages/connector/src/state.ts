@@ -1,0 +1,43 @@
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+
+// Persistent state for a registered connector. Currently holds just the
+// registrationToken handed back by the controller on first connect; future
+// fields (rotated tokens, last-known connectorId) can be added here without
+// changing the customer-visible config surface.
+//
+// The file lives next to packages/connector/.env so dev workflows that source
+// .env also see the state directory. Gitignored. Customer never edits it
+// directly — clearing it forces a re-mint.
+
+export interface ConnectorState {
+  /** Persisted token from the controller's register-ack. Used as the identity
+   *  claim on every subsequent register frame. Absent before first connect. */
+  registrationToken?: string;
+}
+
+const DEFAULT_PATH = "packages/connector/.connector-state.json";
+
+export function defaultStatePath(): string {
+  return resolve(process.env.CONNECTOR_STATE_PATH ?? DEFAULT_PATH);
+}
+
+export function readState(path: string = defaultStatePath()): ConnectorState {
+  if (!existsSync(path)) return {};
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw) as Partial<ConnectorState>;
+    return {
+      registrationToken: typeof parsed.registrationToken === "string" ? parsed.registrationToken : undefined,
+    };
+  } catch (e) {
+    // A corrupt state file is recoverable — treat as missing and let the
+    // first-connect path mint a fresh token. Logging is the caller's job.
+    throw new Error(`failed to read connector state at ${path}: ${(e as Error).message}`);
+  }
+}
+
+export function writeState(state: ConnectorState, path: string = defaultStatePath()): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(state, null, 2) + "\n", "utf8");
+}

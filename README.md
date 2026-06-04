@@ -4,64 +4,96 @@ A customer-side **MCP connector**: dials out to a controller URL via WSS, advert
 
 The controller is **outside this repo**. This repo is the customer side only.
 
+## Two ways to wire up an MCP
+
+The connector understands two integration patterns. Both go in the same `mcp_servers:` list in `connector.yaml`.
+
+- **Type 1 — customer-authored.** Drop tool files (`tools/*.ts`) plus a tiny `server.ts` into a folder under `examples/`. The connector spawns it as a child via `tsx` and auto-assigns a localhost port. No build step, no port wrangling.
+- **Type 2 — connect to an existing MCP.** Pure config — the entry just declares `transport: http` + `endpoint`, or `transport: stdio` + `command`, and optionally a `dir` whose `.env` is loaded into the child's environment. Useful for off-the-shelf servers (e.g. Salesforce, Atlassian, the bundled `aviation-weather-mcp` example).
+
 ## Layout
 
 ```
 packages/
   connector/                 the customer-side process (only thing that ships)
+    connector.yaml.example   single yaml listing every MCP — Type 1 and Type 2
+    .env.example             shared tunnel env (CONTROLLER_URL, optional CONTROLLER_WS_URL, TUNNEL_AUTH_TOKEN)
 examples/
-  sample-mcp-server/         standalone demo MCP server (now, slow_echo, uuid, weather)
-  twilio-mcp-server/         standalone demo MCP server wrapping Twilio APIs
-docs/deploy/                 per-cloud deployment guides (AWS Fargate, Azure Container Apps, GCP GKE)
+  sample-mcp-server/         Type 1 — now, slow_echo, uuid, weather
+  twilio-mcp-server/         Type 1 — wraps Twilio APIs
+  orders-mcp-server/         Type 1 — Refund Eligibility procedure fixtures
+  aviation-weather-mcp/      Type 2 — pure config; spawns published `aviation-weather-mcp` via stdio
+docs/deploy/                 per-cloud deployment guides
 scripts/
-  run-connector.sh           boots one connector per examples/<server>/, all dialing CONTROLLER_URL
+  start-connector.sh         boots the connector. Auto-registers with the controller on first run
+                             (writes registrationToken to .connector-state.json), reconnects by token after.
   build-image.sh             builds the multi-arch OCI image
 ```
 
-Each `examples/<server>/` directory carries its own `connector.yaml{,.example}` and `.env{,.example}`. The repo-root `.env` carries only `CONTROLLER_URL` (genuinely shared). The connector binary itself is one thing, run once per pairing in dev, once per `connector_id` container in prod.
+`packages/connector/connector.yaml` is the **single** source of truth: one entry per MCP. There is no per-folder `connector.yaml` any more. Per-folder `.env` files in `examples/<name>/` carry only that MCP's own credentials and are loaded into that child's process — they don't leak across MCPs.
 
 ## Quick start (development)
 
 ```bash
-# Connector (workspace).
 npm install
 npm run build
 
-# Demo MCP servers (standalone — install + build each one you want to use).
-(cd examples/sample-mcp-server && npm install && npm run build)
-(cd examples/twilio-mcp-server && npm install && npm run build)
+# Connector-level config: one yaml, one .env.
+cp packages/connector/connector.yaml.example packages/connector/connector.yaml
+cp packages/connector/.env.example packages/connector/.env
+# edit packages/connector/.env: CONTROLLER_URL, TUNNEL_AUTH_TOKEN
+# edit packages/connector/connector.yaml: pick a unique tunnel.name
 
-# Repo-root .env: just CONTROLLER_URL.
-cp .env.example .env
-
-# Per-pairing env + YAML — repeat for each examples/<server>/.
-cp examples/sample-mcp-server/.env.example          examples/sample-mcp-server/.env
-cp examples/sample-mcp-server/connector.yaml.example examples/sample-mcp-server/connector.yaml
-cp examples/twilio-mcp-server/.env.example          examples/twilio-mcp-server/.env
-cp examples/twilio-mcp-server/connector.yaml.example examples/twilio-mcp-server/connector.yaml
-
-./scripts/run-connector.sh
+./scripts/start-connector.sh
 ```
 
-Inspector UIs: <http://localhost:9090/> (sample), <http://localhost:9091/> (twilio).
+That's it — the connector spawns each Type 1 child via `tsx` (no build), dials each Type 2 entry, and surfaces them all in the inspector at <http://localhost:9090/>. On the **first** run it registers itself with the controller using `tunnel.name` and persists the controller-issued registrationToken to `packages/connector/.connector-state.json`. Subsequent restarts reconnect via that token.
 
-The inspector shows:
+## Adding a new MCP
+
+**Type 1** (you write the tools):
+
+```bash
+mkdir -p examples/my-mcp/tools
+# write examples/my-mcp/tools/<tool>.ts files (Tool interface from @mcp-shim/connector/sdk)
+# write examples/my-mcp/server.ts: createMcpHttpServer({name, tools})
+# add an entry to packages/connector/connector.yaml:
+#   - name: my-mcp
+#     transport: http
+#     dir: ../../examples/my-mcp
+```
+
+No `package.json` if you only need `zod` and the SDK (both resolve from the repo's root `node_modules`). Add a per-folder `package.json` only if you need a third-party SDK (e.g. how `twilio-mcp-server/` carries the Twilio SDK).
+
+**Type 2** (you point at an existing MCP):
+
+```yaml
+- name: salesforce
+  transport: http
+  endpoint: https://salesforce-mcp.example.com/mcp
+  dir: ../../examples/salesforce-mcp     # optional, for the .env
+
+- name: filesystem
+  transport: stdio
+  command: [npx, "--yes", "@modelcontextprotocol/server-filesystem", /tmp]
+```
+
+## Inspector
+
+`http://localhost:9090/` shows:
+
 - live WS state (connecting / open / closed)
 - the `ToolManifest` and an "Available Tools" list (all discovered tools are Ready)
 - every frame in/out
 - a **Reconnect** button that re-reads the YAML and redials
 
-`run-connector.sh` auto-skips a pairing whose `.env` lists `TWILIO_ACCOUNT_SID=` empty, so the script still boots if you don't have Twilio creds set.
-
-To pick up changes to `mcp_servers`, restart the script (those connections are made at boot).
+To pick up changes to `mcp_servers`, restart the script — those connections happen at boot. `policy` changes pick up via Reconnect.
 
 ## CLI
 
-The connector is also a CLI:
-
 ```
-mcp-connector start         run the connector (default)
-mcp-connector init          interactive YAML wizard (uses tools/list as confirmation)
+mcp-connector start         run the connector (default; auto-registers on first connect)
+mcp-connector init          interactive wizard to write connector.yaml
 mcp-connector discover      print tools/list per configured server, then exit
 mcp-connector version       print the connector version
 ```

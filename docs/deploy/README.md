@@ -11,7 +11,7 @@ required for the tunnel itself.
    IMAGE=your-registry/mcp-connector:0.1.0 PUSH=1 ./scripts/build-image.sh
    ```
    (Multi-arch: `linux/amd64,linux/arm64`.)
-2. Pre-provision a `connector_id` in your controller's UI.
+2. Pick a unique `tunnel.name` for this connector deployment. The connector mints its own row on first connect — no UI pre-provisioning needed.
 3. Mint a `TUNNEL_AUTH_TOKEN` and store it in your cloud's secret manager.
 
 ## Cloud-specific guides

@@ -1,0 +1,65 @@
+# Single connector.yaml for the whole machine. Copy to connector.yaml
+# (gitignored), then edit the mcp_servers list to declare which MCPs this
+# connector exposes.
+#
+# Two MCP shapes are supported:
+#
+#   Type 1 — customer-authored HTTP MCP server.
+#     The connector spawns server.ts as a child via tsx and auto-assigns a
+#     localhost port. You write the tools, drop them in tools/, and add an
+#     entry below with `dir:` set and `endpoint:` omitted.
+#
+#   Type 2 — connect to an existing MCP server.
+#     The connector dials a server you (or someone else) already runs.
+#     Either `transport: http` with `endpoint:` set, or `transport: stdio`
+#     with `command:` set. No customer-authored code needed.
+#
+# Vars like ${CONTROLLER_URL} are interpolated from packages/connector/.env.
+# The connector identifies itself by `name` on first connect; the controller
+# mints a registrationToken in response which the connector persists in
+# .connector-state.json (gitignored) for subsequent reconnects.
+# Per-MCP secrets (e.g. TWILIO_ACCOUNT_SID) live in the entry's dir/.env
+# and are passed only to that child process.
+
+tunnel:
+  controller_url: ${CONTROLLER_URL}
+  # Optional. Set CONTROLLER_WS_URL when the WS tunnel terminator lives on a
+  # different host than the API (e.g. dev rigs that ngrok 3001 and 3002
+  # separately). Production single-host setups can leave this blank — the
+  # connector will dial controller_url with https:// upgraded to wss://.
+  ws_url: ${CONTROLLER_WS_URL:-}
+  # Customer-chosen connector name; must be unique on the controller. On
+  # first connect the controller mints a fresh row keyed to this name.
+  name: my-customer
+  auth_token: ${TUNNEL_AUTH_TOKEN:-}
+  environment: dev
+
+mcp_servers:
+  # ── Type 1 (customer-authored, auto-spawned) ─────────────────────────
+  - name: sample
+    transport: http
+    dir: ../../examples/sample-mcp-server
+
+  - name: twilio
+    transport: http
+    dir: ../../examples/twilio-mcp-server
+
+  - name: orders
+    transport: http
+    dir: ../../examples/orders-mcp-server
+
+  # ── Type 2 (external MCP, pure config) ───────────────────────────────
+  # No code in the dir — just .env and a README. Connector spawns the
+  # published npm package via stdio.
+  - name: aviation-weather
+    transport: stdio
+    command: [npx, "--yes", aviation-weather-mcp]
+    dir: ../../examples/aviation-weather-mcp
+
+policy:
+  fail_mode: fail_fast
+  log_tool_args: redacted
+  max_concurrent_calls: 64
+  discovery_interval_ms: 30000
+  heartbeat_interval_ms: 1500
+  tool_timeout_ms: 5000

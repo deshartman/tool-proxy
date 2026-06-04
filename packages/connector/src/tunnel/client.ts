@@ -1,12 +1,12 @@
 import WebSocket, { type RawData } from "ws";
-import type { TunnelFrame } from "./frames.js";
+import type { InboundTunnelFrame, TunnelFrame } from "./frames.js";
 
 export type WsState = "connecting" | "open" | "closed";
 export type FrameDirection = "out" | "in";
 export interface FrameTap {
   ts: number;
   direction: FrameDirection;
-  frame: TunnelFrame;
+  frame: InboundTunnelFrame | TunnelFrame;
 }
 
 // Outbound-only WSS client.
@@ -19,7 +19,7 @@ export interface FrameTap {
 // branch. On unexpected close the process exits 1 — let the supervisor
 // restart it. See plan's "Out of scope" section.
 export class TunnelClient {
-  onframe?: (frame: TunnelFrame) => void;
+  onframe?: (frame: InboundTunnelFrame) => void;
   onclose?: () => void;
   onerror?: (err: Error) => void;
   // Inspector hook: every frame in/out, plus state transitions. Optional.
@@ -93,9 +93,9 @@ export class TunnelClient {
   }
 
   private handleMessage(line: string): void {
-    let frame: TunnelFrame;
+    let frame: InboundTunnelFrame;
     try {
-      frame = JSON.parse(line) as TunnelFrame;
+      frame = JSON.parse(line) as InboundTunnelFrame;
     } catch (e) {
       this.onerror?.(new Error(`malformed frame: ${(e as Error).message}`));
       return;

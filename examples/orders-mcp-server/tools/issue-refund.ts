@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
-import type { Tool } from "./types.js";
+import type { Tool } from "@mcp-shim/connector/sdk";
 
 // In-memory ledger of refunds we've issued, keyed by orderId. The connector
 // process is the only thing reading/writing this; restart wipes it. The

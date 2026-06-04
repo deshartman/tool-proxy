@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { parseArgs } from "node:util";
-import { loadConfig } from "./config.js";
+import { loadConfig, type McpServerSpec } from "./config.js";
 import { connectAll, type McpServerConnection } from "./servers/index.js";
 import { buildManifest } from "./manifest/build.js";
 import { diffManifest, isEmptyDelta } from "./manifest/diff.js";
@@ -10,11 +10,13 @@ import type { ToolManifest } from "./tunnel/frames.js";
 import { Inspector, startInspector } from "./inspector/server.js";
 import { runDiscover } from "./discover.js";
 import { runInit } from "./init.js";
+import { spawnType1Children, shutdownChildren, type SpawnedChild } from "./spawner.js";
+import { readState, writeState, defaultStatePath, type ConnectorState } from "./state.js";
 
 const USAGE = `usage: mcp-connector <command> [options]
 
 commands:
-  start                   run the connector (default)
+  start                   run the connector (default). Auto-registers with the controller on first connect.
   init                    interactive wizard to write connector.yaml
   discover                connect to MCP servers and print tools/list
   version                 print the connector version
@@ -84,9 +86,27 @@ async function main() {
   const config = loadConfig(configPath);
   const authToken = config.tunnel.auth_token;
   const authStatus = authToken ? `set (len=${authToken.length})` : "absent";
-  log(`config loaded: connector_id=${config.tunnel.connector_id} environment=${config.tunnel.environment} auth_token=${authStatus}`);
 
-  // 1. Connect to all local MCP servers in parallel. Fail fast if any are unreachable.
+  // Identity: read the persisted registrationToken (if any). On first connect
+  // it's absent and we send `name` only — the controller mints a row and
+  // returns a token in the register-ack, which we persist for next boot.
+  const statePath = defaultStatePath();
+  const state: ConnectorState = readState(statePath);
+  const identityStatus = state.registrationToken
+    ? `reconnect (token len=${state.registrationToken.length})`
+    : `first-connect (name="${config.tunnel.name}")`;
+  log(`config loaded: name=${config.tunnel.name} environment=${config.tunnel.environment} auth_token=${authStatus} identity=${identityStatus}`);
+
+  // 1a. Spawn Type 1 children (http transport + dir + no endpoint). Mutates
+  // the spec list to fill in `endpoint` so the dispatch path below sees a
+  // uniform shape.
+  const spawned: SpawnedChild[] = await spawnType1Children(config.mcp_servers, { log });
+  if (spawned.length > 0) {
+    const summary = spawned.map((c) => c.name + "=" + c.port).join(", ");
+    log(`spawned ${spawned.length} Type 1 child(ren): ${summary}`);
+  }
+
+  // 1b. Connect to all local MCP servers in parallel. Fail fast if any are unreachable.
   log(`connecting to ${config.mcp_servers.length} local MCP server(s)...`);
   const servers = await connectAll(config.mcp_servers);
   log(`connected to local servers: ${[...servers.keys()].join(", ")}`);
@@ -94,6 +114,16 @@ async function main() {
   // 2. Build initial manifest.
   let manifest: ToolManifest = await buildManifest(config, servers, version);
   log(`built manifest with ${countTools(manifest)} tool(s)`);
+
+  // The yaml carries `controller_url` (HTTPS root, used for the register API
+  // and shown in the inspector) and an optional `ws_url` for setups where the
+  // WS tunnel terminator is on a different host. When ws_url is omitted we
+  // dial controller_url directly — TunnelClient internally rewrites
+  // https://→wss:// in tunnel/client.ts:52.
+  const tunnelDialUrl = config.tunnel.ws_url ?? config.tunnel.controller_url;
+  if (config.tunnel.ws_url) {
+    log(`tunnel ws_url override: ${config.tunnel.ws_url}`);
+  }
 
   // 3. Inspector first, so it survives tunnel cycles.
   const inspector = inspectorPort > 0
@@ -126,6 +156,7 @@ async function main() {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (discoveryTimer) clearInterval(discoveryTimer);
     tunnel?.close(`signal:${signal}`);
+    void shutdownChildren(spawned, log);
     void closeServers(servers).then(() => process.exit(0));
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -134,8 +165,8 @@ async function main() {
   // ─── connect / reconnect ────────────────────────────────────────────────
   async function connectTunnel(reason: string): Promise<void> {
     inspector?.setState("connecting");
-    log(`tunnel ${reason}: dialing ${config.tunnel.controller_url}`);
-    const t = new TunnelClient(config.tunnel.controller_url, authToken);
+    log(`tunnel ${reason}: dialing ${tunnelDialUrl}`);
+    const t = new TunnelClient(tunnelDialUrl, authToken);
     t.onerror = (e) => log(`tunnel error: ${e.message}`);
     if (inspector) {
       t.onstate = (s) => inspector.setState(s);
@@ -158,8 +189,39 @@ async function main() {
     }
 
     tunnel = t;
-    log(`tunnel connected to ${config.tunnel.controller_url}`);
-    t.send({ type: "register", manifest });
+    log(`tunnel connected to ${tunnelDialUrl}`);
+
+    // Listen for register-ack to capture a freshly-minted registrationToken
+    // on first connect. Mounted before sending register so we don't miss the
+    // ack racing back. The ontap subscription on the tunnel client also
+    // surfaces this to the inspector — this listener only persists the token.
+    t.onframe = (frame) => {
+      if (frame.type === "register-ack") {
+        if (frame.error) {
+          log(`register-ack rejected: code=${frame.error.code} message=${frame.error.message}`);
+          return;
+        }
+        if (frame.registrationToken && frame.registrationToken !== state.registrationToken) {
+          state.registrationToken = frame.registrationToken;
+          try {
+            writeState(state, statePath);
+            log(`register-ack ok — persisted registrationToken to ${statePath}`);
+          } catch (e) {
+            log(`register-ack: failed to persist token: ${(e as Error).message}`);
+          }
+        } else if (frame.accepted) {
+          const idForLog = frame.connectorId ?? "?";
+          log(`register-ack ok — bound to existing record ${idForLog}`);
+        }
+      }
+    };
+
+    t.send({
+      type: "register",
+      manifest,
+      name: config.tunnel.name,
+      ...(state.registrationToken ? { registrationToken: state.registrationToken } : {}),
+    });
     log(`register frame sent`);
 
     // Wire dispatcher to this tunnel instance.
@@ -260,11 +322,33 @@ function countTools(m: ToolManifest): number {
 }
 
 function sameMcpServers(
-  a: { name: string; transport: string }[],
-  b: { name: string; transport: string }[]
+  a: McpServerSpec[],
+  b: McpServerSpec[]
 ): boolean {
   if (a.length !== b.length) return false;
-  return a.every((s, i) => s.name === b[i].name && s.transport === b[i].transport);
+  // Compare every field that affects how we'd spawn or connect to the entry.
+  // The reconnect path uses this to decide whether YAML changes are safe to
+  // apply live; anything beyond `policy` requires a process restart.
+  return a.every((s, i) => {
+    const t = b[i];
+    if (s.name !== t.name || s.transport !== t.transport) return false;
+    if (s.transport === "http" && t.transport === "http") {
+      if (s.endpoint !== t.endpoint) return false;
+    }
+    if (s.transport === "stdio" && t.transport === "stdio") {
+      if (s.command.length !== t.command.length) return false;
+      if (s.command.some((c, j) => c !== t.command[j])) return false;
+    }
+    if (s.dir !== t.dir) return false;
+    return sameStringMap(s.env, t.env);
+  });
+}
+
+function sameStringMap(a?: Record<string, string>, b?: Record<string, string>): boolean {
+  const ka = a ? Object.keys(a) : [];
+  const kb = b ? Object.keys(b) : [];
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => a?.[k] === b?.[k]);
 }
 
 async function closeServers(servers: Map<string, McpServerConnection>): Promise<void> {

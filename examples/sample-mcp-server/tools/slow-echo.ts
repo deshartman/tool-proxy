@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "./types.js";
+import type { Tool } from "@mcp-shim/connector/sdk";
 
 export const slowEcho: Tool = {
   name: "slow_echo",

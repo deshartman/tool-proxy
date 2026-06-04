@@ -7,7 +7,7 @@ Demo MCP server for the **Refund Eligibility** procedure. Exposes two tools:
 | `get_recent`   | hydration   | Fires server-side before the LLM call. Returns the customer's most recent order keyed by phone (preferred) or email (fallback). |
 | `issue_refund` | side-effect | Called by the BYO-LLM mid-conversation when it decides the order qualifies. |
 
-Wire-format names through the controller are `customer.orders.get_recent` and `customer.orders.issue_refund` — the `orders` segment comes from `mcp_servers[].name` in this directory's `connector.yaml`. Don't rename it without also updating the controller's `EXPECTED_CUSTOMER_TOOLS`.
+Wire-format names through the controller are `customer.orders.get_recent` and `customer.orders.issue_refund` — the `orders` segment comes from this entry's `name:` in `packages/connector/connector.yaml`. Don't rename it without also updating the controller's `EXPECTED_CUSTOMER_TOOLS`.
 
 ## Demo fixtures
 
@@ -33,19 +33,22 @@ The ledger is in-memory only; restarting the server wipes it.
 
 ## Setup
 
-```bash
-npm install
-npm run build
+This is a Type 1 example — no per-folder `package.json` deps to install. The
+entry already exists in `packages/connector/connector.yaml.example`:
 
-cp connector.yaml.example connector.yaml
-cp .env.example .env
-# fill in CONNECTOR_ID + TUNNEL_AUTH_TOKEN
+```yaml
+- name: orders
+  transport: http
+  dir: ../../examples/orders-mcp-server
 ```
 
-Then run from the repo root:
+From the repo root:
 
 ```bash
-./scripts/run-connector.sh
+npm install && npm run build
+cp packages/connector/connector.yaml.example packages/connector/connector.yaml
+cp packages/connector/.env.example packages/connector/.env
+./scripts/start-connector.sh
 ```
 
-Inspector UI for this pairing: <http://localhost:9092/>.
+Inspector UI: <http://localhost:9090/> (single connector for all MCPs).

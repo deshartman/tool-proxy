@@ -34,8 +34,17 @@ export class Dispatcher {
   constructor(private readonly deps: DispatcherDeps) {}
 
   attach(): void {
+    // Compose with any pre-existing onframe (e.g. main()'s register-ack
+    // listener that persists the registrationToken). The dispatcher only
+    // cares about `rpc` frames; everything else falls through to the
+    // previously-installed handler.
+    const previous = this.deps.tunnel.onframe;
     this.deps.tunnel.onframe = (frame) => {
-      if (frame.type === "rpc") this.handleRpcFrame(frame.payload);
+      if (frame.type === "rpc") {
+        void this.handleRpcFrame(frame.payload);
+        return;
+      }
+      previous?.(frame);
     };
   }
 

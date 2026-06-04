@@ -1,21 +1,38 @@
 import { existsSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, relative, dirname } from "node:path";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { randomBytes } from "node:crypto";
-import { connectServer, type DiscoveredTool } from "./servers/index.js";
-import type { McpServerSpec } from "./config.js";
 
-// `mcp-connector init` — discovery-driven YAML scaffolder.
-// Prompts for the few customer-authored fields, dials each MCP server to
-// run tools/list as confirmation, then writes connector.yaml. The auth
-// token stays in env (the YAML uses ${TUNNEL_AUTH_TOKEN:-}); init prints
-// the .env snippet to paste rather than touching .env itself.
+// `mcp-connector init` — interactive wizard to write the connector-level
+// connector.yaml.
+//
+// Asks for tunnel.controller_url, tunnel.name, then walks the user
+// through adding mcp_servers entries:
+//   Type 1 — customer-authored. Folder under examples/<name>/ that holds
+//            tools/*.ts + server.ts. Renders as `transport: http` + `dir:`,
+//            no endpoint (the connector spawns it + auto-assigns a port).
+//   Type 2 — connect to an existing MCP server. Either http with endpoint
+//            or stdio with a command. Optional dir for the entry's .env.
+//
+// The yaml uses ${VAR} interpolation against process.env, so init prints a
+// .env snippet to paste and never writes secrets to the yaml.
 
 interface InitFlags {
   output: string;
   force: boolean;
+}
+
+interface ServerEntry {
+  name: string;
+  // "type1" gets rendered as http+dir (no endpoint).
+  // "type2-http" gets rendered as http+endpoint.
+  // "type2-stdio" gets rendered as stdio+command (+ optional dir).
+  kind: "type1" | "type2-http" | "type2-stdio";
+  dir?: string;          // absolute when collected; written as a path relative to the yaml's directory
+  endpoint?: string;
+  command?: string[];
 }
 
 export async function runInit(args: string[]): Promise<void> {
@@ -31,9 +48,8 @@ export async function runInit(args: string[]): Promise<void> {
   if (values.help) {
     console.log(`usage: mcp-connector init [--output <path>] [--force]
 
-Interactive wizard. Prompts for tunnel.controller_url, tunnel.connector_id,
-and one or more mcp_servers[]. Connects to each server, runs tools/list,
-prints the discovered tools as confirmation, then writes the YAML.
+Interactive wizard. Prompts for tunnel fields and one or more mcp_servers,
+then writes the YAML.
 
   -o, --output <path>   destination YAML path (default ./connector.yaml)
   -f, --force           overwrite an existing file`);
@@ -50,47 +66,29 @@ prints the discovered tools as confirmation, then writes the YAML.
 
   const rl = createInterface({ input, output });
   try {
-    const controllerUrl = await ask(rl, "Controller URL", "wss://your-controller.example.com/tunnel");
-    const connectorId = await askRequired(rl, "Connector ID (e.g. conn_xxxxxxxx)");
+    const controllerUrl = await ask(rl, "Controller URL (HTTPS root)", "https://your-controller.example.com");
+    const name = await askRequired(rl, "Connector name (must be unique on the controller)");
 
-    const servers: McpServerSpec[] = [];
+    const servers: ServerEntry[] = [];
     let i = 0;
     do {
-      const isFirst = i === 0;
-      const useDefault = isFirst
-        ? await yesno(rl, "Add the bundled sample MCP server (http://localhost:7100/mcp)?", true)
-        : false;
-      if (useDefault) {
-        servers.push({
-          name: "sample",
-          transport: "http",
-          endpoint: "http://localhost:7100/mcp",
-          timeout_ms: 5000,
-        });
-      } else {
-        servers.push(await promptMcpServer(rl, i + 1));
+      const entry = await promptServer(rl, i + 1);
+      if (entry) {
+        servers.push(entry);
+        i += 1;
       }
-      i += 1;
     } while (await yesno(rl, "Add another MCP server?", false));
 
-    const discovery = await discoverAll(servers);
-    const yamlText = renderYaml(controllerUrl, connectorId, servers);
+    const yamlText = renderYaml(controllerUrl, name, servers, dirname(outputPath));
     writeFileSync(outputPath, yamlText, "utf8");
 
     console.log(`\nWrote ${outputPath}`);
-    console.log("\nDiscovered tools:");
-    for (const r of discovery) {
-      if (r.error) {
-        console.log(`  ${r.name}: ⚠ ${r.error}`);
-      } else {
-        console.log(`  ${r.name}: ${r.tools.map((t) => t.name).join(", ") || "(none)"}`);
-      }
-    }
-
     console.log(`\nNext steps:`);
-    console.log(`  1. Set TUNNEL_AUTH_TOKEN in your .env (or unset if your controller doesn't require one):`);
+    console.log(`  1. In your .env (next to the yaml), set:`);
+    console.log(`       CONTROLLER_URL=${controllerUrl}`);
     console.log(`       TUNNEL_AUTH_TOKEN=${randomBytes(32).toString("base64url")}`);
-    console.log(`  2. Run: node packages/connector/dist/index.js start --config ${flags.output}`);
+    console.log(`  2. For each Type 1 entry, add tools/*.ts + server.ts under its dir.`);
+    console.log(`  3. Start: node packages/connector/dist/index.js start --config ${flags.output}`);
   } finally {
     rl.close();
   }
@@ -102,8 +100,6 @@ async function ask(rl: ReturnType<typeof createInterface>, label: string, fallba
 }
 
 async function askRequired(rl: ReturnType<typeof createInterface>, label: string): Promise<string> {
-  // Loop until non-empty so users can't hit Enter through the wizard with an
-  // unset connector_id and silently get rejected by the controller later.
   while (true) {
     const ans = (await rl.question(`${label}: `)).trim();
     if (ans) return ans;
@@ -118,91 +114,111 @@ async function yesno(rl: ReturnType<typeof createInterface>, label: string, def:
   return ans === "y" || ans === "yes";
 }
 
-async function promptMcpServer(rl: ReturnType<typeof createInterface>, n: number): Promise<McpServerSpec> {
+async function promptServer(rl: ReturnType<typeof createInterface>, n: number): Promise<ServerEntry | null> {
   console.log(`\nMCP server #${n}:`);
-  const name = await askRequired(rl, "  name");
-  const transport = (await ask(rl, "  transport (http|stdio)", "http")).toLowerCase();
-  if (transport === "stdio") {
-    const cmdLine = await askRequired(rl, "  command (space-separated, e.g. 'node server.js')");
+  console.log(`  1) Type 1 — customer-authored (drop tools/*.ts in a folder; we spawn it)`);
+  console.log(`  2) Type 2 — connect to an existing MCP via HTTP`);
+  console.log(`  3) Type 2 — connect to an existing MCP via stdio (e.g. an npm-installed server)`);
+  const choice = (await ask(rl, "  choice (1/2/3)", "1")).trim();
+
+  if (choice === "1") {
+    const name = await askRequired(rl, "  name (used by the controller; appears as a tool prefix)");
+    const dir = resolve(await ask(rl, "  dir (folder for tools/ + server.ts)", `examples/${name}-mcp-server`));
+    return { name, kind: "type1", dir };
+  }
+  if (choice === "2") {
+    const name = await askRequired(rl, "  name");
+    const endpoint = await askRequired(rl, "  endpoint URL (e.g. https://example.com/mcp)");
+    const dir = (await ask(rl, "  dir for per-MCP .env (blank to skip)", "")).trim();
     return {
       name,
-      transport: "stdio",
-      command: cmdLine.split(/\s+/).filter(Boolean),
-      timeout_ms: 5000,
+      kind: "type2-http",
+      endpoint,
+      dir: dir ? resolve(dir) : undefined,
     };
   }
-  if (transport !== "http") {
-    throw new Error(`unsupported transport: ${transport}`);
+  if (choice === "3") {
+    const name = await askRequired(rl, "  name");
+    const cmdLine = await askRequired(rl, "  command (e.g. 'npx --yes some-mcp-server')");
+    const dir = (await ask(rl, "  dir for per-MCP .env (blank to skip)", "")).trim();
+    return {
+      name,
+      kind: "type2-stdio",
+      command: cmdLine.split(/\s+/).filter(Boolean),
+      dir: dir ? resolve(dir) : undefined,
+    };
   }
-  const endpoint = await askRequired(rl, "  endpoint URL (e.g. http://localhost:7100/mcp)");
-  return { name, transport: "http", endpoint, timeout_ms: 5000 };
+  console.log("  (skipped — unrecognized choice)");
+  return null;
 }
 
-interface DiscoveryRow {
-  name: string;
-  tools: DiscoveredTool[];
-  error?: string;
-}
-
-async function discoverAll(servers: McpServerSpec[]): Promise<DiscoveryRow[]> {
-  const results: DiscoveryRow[] = [];
-  for (const spec of servers) {
-    try {
-      const conn = await connectServer(spec);
-      try {
-        const tools = await conn.listTools();
-        results.push({ name: spec.name, tools });
-      } finally {
-        await conn.close().catch(() => undefined);
-      }
-    } catch (e) {
-      results.push({ name: spec.name, tools: [], error: (e as Error).message });
-    }
-  }
-  return results;
-}
-
-function renderYaml(controllerUrl: string, connectorId: string, servers: McpServerSpec[]): string {
+function renderYaml(
+  controllerUrl: string,
+  name: string,
+  servers: ServerEntry[],
+  yamlDir: string
+): string {
   const lines: string[] = [];
   lines.push("# Generated by `mcp-connector init`. Edit by hand if you want.");
-  lines.push("# tunnel.auth_token is interpolated from TUNNEL_AUTH_TOKEN in your .env.");
-  lines.push("");
-  lines.push("tunnel:");
-  lines.push(`  controller_url: ${quoteIfNeeded(controllerUrl)}`);
-  lines.push(`  connector_id: ${quoteIfNeeded(connectorId)}`);
-  lines.push(`  environment: dev`);
-  lines.push(`  auth_token: \${TUNNEL_AUTH_TOKEN:-}`);
-  lines.push("");
-  lines.push("mcp_servers:");
+  lines.push("# Tunnel secrets come from the .env next to this file via ${VAR}.");
+  lines.push(
+    "",
+    "tunnel:",
+    `  controller_url: ${quoteIfNeeded(controllerUrl)}`,
+    `  ws_url: \${CONTROLLER_WS_URL:-}`,
+    `  name: ${quoteIfNeeded(name)}`,
+    `  auth_token: \${TUNNEL_AUTH_TOKEN:-}`,
+    `  environment: dev`,
+    "",
+    "mcp_servers:"
+  );
   for (const s of servers) {
     lines.push(`  - name: ${quoteIfNeeded(s.name)}`);
-    lines.push(`    transport: ${s.transport}`);
-    if (s.transport === "http") {
-      lines.push(`    endpoint: ${quoteIfNeeded(s.endpoint)}`);
+    if (s.kind === "type1") {
+      lines.push(
+        `    transport: http`,
+        `    dir: ${quoteIfNeeded(toRelative(s.dir!, yamlDir))}`
+      );
+    } else if (s.kind === "type2-http") {
+      lines.push(
+        `    transport: http`,
+        `    endpoint: ${quoteIfNeeded(s.endpoint!)}`
+      );
+      if (s.dir) lines.push(`    dir: ${quoteIfNeeded(toRelative(s.dir, yamlDir))}`);
     } else {
-      lines.push(`    command:`);
-      for (const part of s.command) lines.push(`      - ${quoteIfNeeded(part)}`);
+      lines.push(`    transport: stdio`, `    command:`);
+      for (const part of s.command!) lines.push(`      - ${quoteIfNeeded(part)}`);
+      if (s.dir) lines.push(`    dir: ${quoteIfNeeded(toRelative(s.dir, yamlDir))}`);
     }
-    lines.push(`    timeout_ms: ${s.timeout_ms}`);
   }
-  lines.push("");
-  // Defaults from MCP-TUNNEL.md "Configuration surface"; same values the Zod
-  // schema applies, restated so the YAML is self-describing.
-  lines.push("policy:");
-  lines.push("  fail_mode: fail_fast");
-  lines.push("  log_tool_args: redacted");
-  lines.push("  max_concurrent_calls: 64");
-  lines.push("  discovery_interval_ms: 30000");
-  lines.push("  heartbeat_interval_ms: 1500");
-  lines.push("  tool_timeout_ms: 5000");
-  lines.push("");
+  lines.push(
+    "",
+    "policy:",
+    "  fail_mode: fail_fast",
+    "  log_tool_args: redacted",
+    "  max_concurrent_calls: 64",
+    "  discovery_interval_ms: 30000",
+    "  heartbeat_interval_ms: 1500",
+    "  tool_timeout_ms: 5000",
+    ""
+  );
   return lines.join("\n");
 }
 
+// Render a path as "./foo/bar" / "../foo/bar" relative to the yaml dir so
+// the file moves cleanly with the project. Falls back to absolute if the
+// target is on a different volume / outside the tree.
+function toRelative(target: string, base: string): string {
+  const r = relative(base, target);
+  if (!r) return ".";
+  if (r.startsWith("..")) return r;
+  return `./${r}`;
+}
+
 function quoteIfNeeded(v: string): string {
-  // Bare values are fine if they don't contain YAML-special chars or start
-  // with one. Be conservative: anything with whitespace, colons, or shell
-  // chars gets double-quoted with backslash-escaped backslashes/quotes.
+  // Allow ${...} interpolation tokens through bare. Other values get
+  // double-quoted if they contain anything YAML would mis-parse.
+  if (/^\$\{[^}]+\}$/.test(v)) return v;
   if (/^[A-Za-z0-9_./:\-+@]+$/.test(v) && !/^[-?:&*!|>%@`#]/.test(v)) return v;
   return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

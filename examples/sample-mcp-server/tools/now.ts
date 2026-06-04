@@ -1,4 +1,4 @@
-import type { Tool } from "./types.js";
+import type { Tool } from "@mcp-shim/connector/sdk";
 
 export const now: Tool = {
   name: "now",

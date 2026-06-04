@@ -38,7 +38,7 @@ data:
   config.yaml: |
     tunnel:
       controller_url: ${CONTROLLER_URL}
-      connector_id: ${CONNECTOR_ID}
+      name: ${CONNECTOR_NAME}
       environment: prod
       auth_token: ${TUNNEL_AUTH_TOKEN}
     mcp_servers:
@@ -63,10 +63,14 @@ spec:
           envFrom:
             - secretRef: { name: mcp-connector-token }
           env:
-            - { name: CONTROLLER_URL, value: "wss://controller.example.com/tunnel" }
-            - { name: CONNECTOR_ID,   value: "conn_xxxxxxxx" }
+            - { name: CONTROLLER_URL, value: "https://controller.example.com" }
+            - { name: CONNECTOR_NAME, value: "prod-customer" }
             - { name: CONNECTOR_CONFIG, value: "/etc/mcp-connector/config.yaml" }
             - { name: INSPECTOR_PORT,   value: "0" }
+          # Mount a writable volume at /etc/mcp-connector for
+          # .connector-state.json (registrationToken). Without it, every pod
+          # restart re-mints — the controller's dup-name guard then 409s, so
+          # use a PVC or hostPath for stable identity.
           volumeMounts:
             - { name: config, mountPath: /etc/mcp-connector, readOnly: true }
       volumes:

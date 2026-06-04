@@ -1,12 +1,18 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
+import { parse as parseDotenv } from "dotenv";
 
 const HttpServer = z.object({
   name: z.string().min(1),
   transport: z.literal("http"),
-  endpoint: z.string().url(),
+  // endpoint is optional: when absent and `dir` is set, the connector spawns
+  // the folder as a Type 1 child and synthesizes endpoint at an auto-assigned
+  // localhost port.
+  endpoint: z.string().url().optional(),
+  dir: z.string().optional(),
+  env: z.record(z.string()).optional(),
   timeout_ms: z.number().int().positive().default(5000),
 });
 
@@ -14,6 +20,8 @@ const StdioServer = z.object({
   name: z.string().min(1),
   transport: z.literal("stdio"),
   command: z.array(z.string().min(1)).min(1),
+  dir: z.string().optional(),
+  env: z.record(z.string()).optional(),
   timeout_ms: z.number().int().positive().default(5000),
 });
 
@@ -28,8 +36,25 @@ const Policy = z.object({
 
 const ConfigSchema = z.object({
   tunnel: z.object({
+    // The controller's HTTPS root. Used for the WS tunnel dial — the
+    // connector upgrades https:// → wss:// internally in tunnel/client.ts.
     controller_url: z.string().url(),
-    connector_id: z.string().min(1),
+    // Optional override for the WS tunnel dial. Use this in setups where the
+    // tunnel listener is on a different host than the API (e.g. the dev rig
+    // where two ngrok tunnels front 3001 and 3002 separately). Production is
+    // typically one host — leave this unset and let the rewrite handle it.
+    ws_url: z
+      .string()
+      .url()
+      .nullable()
+      .optional()
+      .transform((v) => (v == null || v === "" ? undefined : v)),
+    // Customer-chosen connector name. Used as the identity claim on first
+    // connect — the controller mints a fresh row keyed to this name and
+    // returns a registrationToken which the connector persists in
+    // .connector-state.json. Subsequent connects identify by token; the name
+    // is along for the ride (logs, controller UI).
+    name: z.string().min(1),
     auth_token: z
       .string()
       .nullable()
@@ -47,6 +72,14 @@ const ConfigSchema = z.object({
 export type ConnectorConfig = z.infer<typeof ConfigSchema>;
 export type McpServerSpec = z.infer<typeof HttpServer> | z.infer<typeof StdioServer>;
 
+// True when the entry is a Type 1 customer-authored MCP that the connector
+// must spawn as a child process. Detection: http transport + dir set +
+// endpoint omitted. (Type 2 http entries set endpoint; Type 2 stdio entries
+// use the stdio transport.)
+export function isType1Spawn(spec: McpServerSpec): spec is z.infer<typeof HttpServer> & { dir: string } {
+  return spec.transport === "http" && !!spec.dir && !spec.endpoint;
+}
+
 export function loadConfig(configPath: string): ConnectorConfig {
   const absolute = resolve(configPath);
   const raw = readFileSync(absolute, "utf8");
@@ -58,6 +91,22 @@ export function loadConfig(configPath: string): ConnectorConfig {
       .map((i) => `  ${i.path.join(".") || "<root>"}: ${i.message}`)
       .join("\n");
     throw new Error(`Invalid connector config at ${absolute}:\n${issues}`);
+  }
+  // Resolve each entry's `dir` against the YAML's directory, then layer in
+  // <dir>/.env on top of the inline yaml `env:` (yaml takes precedence).
+  // This populates a per-entry env map without mutating process.env, so
+  // entries can carry overlapping var names (e.g. each its own PORT or
+  // service token) without leaking across children.
+  const yamlDir = dirname(absolute);
+  for (const spec of result.data.mcp_servers) {
+    if (spec.dir) {
+      spec.dir = resolve(yamlDir, spec.dir);
+      const dotenvPath = resolve(spec.dir, ".env");
+      if (existsSync(dotenvPath)) {
+        const fromFile = parseDotenv(readFileSync(dotenvPath, "utf8"));
+        spec.env = spec.env ? { ...fromFile, ...spec.env } : fromFile;
+      }
+    }
   }
   return result.data;
 }

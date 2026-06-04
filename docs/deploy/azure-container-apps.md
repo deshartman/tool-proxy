@@ -45,7 +45,8 @@ az containerapp create \
 
 Then mount the YAML via an Azure File share or build it into the image.
 For per-environment configs (dev/stage/prod) bake `${...}` interpolation
-into a single YAML and set `CONTROLLER_URL` / `CONNECTOR_ID` per app.
+into a single YAML and set `CONTROLLER_URL` per app. Pick distinct
+`tunnel.name` values per deployment (or maintain per-environment yamls).
 
 ## Inspector UI
 

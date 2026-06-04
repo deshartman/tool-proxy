@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Tool } from "./types.js";
+import type { Tool } from "@mcp-shim/connector/sdk";
 
 export const uuid: Tool = {
   name: "uuid",

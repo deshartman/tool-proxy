@@ -1,6 +1,6 @@
 import { z } from "zod";
+import type { Tool } from "@mcp-shim/connector/sdk";
 import { getTwilioClient } from "../twilio-client.js";
-import type { Tool } from "./types.js";
 
 export const sendSms: Tool = {
   name: "send_sms",

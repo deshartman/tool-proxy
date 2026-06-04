@@ -6,6 +6,13 @@
   "bin": {
     "mcp-connector": "dist/index.js"
   },
+  "exports": {
+    ".": "./dist/index.js",
+    "./sdk": {
+      "types": "./dist/sdk/index.d.ts",
+      "default": "./dist/sdk/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b && node scripts/postbuild.mjs"
   },
@@ -13,6 +20,7 @@
     "@modelcontextprotocol/sdk": "^1.0.4",
     "yaml": "^2.6.0",
     "dotenv": "^16.4.5",
+    "tsx": "^4.19.0",
     "ws": "^8.18.0",
     "zod": "^3.23.8"
   },

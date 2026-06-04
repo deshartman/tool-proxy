@@ -27,7 +27,10 @@ export async function buildManifest(
   serverEntries.sort((a, b) => (orderByName.get(a.name) ?? 0) - (orderByName.get(b.name) ?? 0));
 
   return {
-    connectorId: config.tunnel.connector_id,
+    // Empty on the wire. The controller resolves identity from the register
+    // frame's `name` / `registrationToken` and stamps the manifest with the
+    // canonical connectorId before storing it.
+    connectorId: "",
     environment: config.tunnel.environment,
     version,
     servers: serverEntries,

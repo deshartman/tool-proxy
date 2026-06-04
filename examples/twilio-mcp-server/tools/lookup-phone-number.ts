@@ -1,6 +1,6 @@
 import { z } from "zod";
+import type { Tool } from "@mcp-shim/connector/sdk";
 import { getTwilioClient } from "../twilio-client.js";
-import type { Tool } from "./types.js";
 
 export const lookupPhoneNumber: Tool = {
   name: "lookup_phone_number",

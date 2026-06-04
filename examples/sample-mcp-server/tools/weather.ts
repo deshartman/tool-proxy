@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "./types.js";
+import type { Tool } from "@mcp-shim/connector/sdk";
 
 // Public, key-less US weather API. Two-step: /points/{lat},{lon} returns a
 // forecast URL; we GET that and return the next-period forecast text.
