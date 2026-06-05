@@ -25,6 +25,19 @@ const StdioServer = z.object({
   timeout_ms: z.number().int().positive().default(5000),
 });
 
+// Auto-reconnect: when the WS closes unexpectedly (not from a manual reconnect
+// or SIGTERM) the connector schedules a redial on a backoff timer instead of
+// sitting idle. Disable this in environments where the orchestrator is the
+// supervisor (e.g. a Fargate task with a healthcheck and restart policy) and
+// you'd rather have the process exit-and-be-restarted than auto-recover.
+// max_attempts=0 means infinite retries.
+const ReconnectPolicy = z.object({
+  enabled: z.boolean().default(true),
+  initial_backoff_ms: z.number().int().positive().default(1_000),
+  max_backoff_ms: z.number().int().positive().default(30_000),
+  max_attempts: z.number().int().nonnegative().default(0),
+});
+
 const Policy = z.object({
   fail_mode: z.literal("fail_fast").default("fail_fast"),
   log_tool_args: z.enum(["none", "redacted", "full"]).default("redacted"),
@@ -32,7 +45,10 @@ const Policy = z.object({
   discovery_interval_ms: z.number().int().positive().default(30_000),
   heartbeat_interval_ms: z.number().int().positive().default(1_500),
   tool_timeout_ms: z.number().int().positive().default(5_000),
+  reconnect: ReconnectPolicy.default({}),
 });
+
+export type ReconnectPolicyConfig = z.infer<typeof ReconnectPolicy>;
 
 const ConfigSchema = z.object({
   tunnel: z.object({

@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { parseArgs } from "node:util";
-import { loadConfig, type McpServerSpec } from "./config.js";
+import { loadConfig, type McpServerSpec, type ReconnectPolicyConfig } from "./config.js";
 import { connectAll, type McpServerConnection } from "./servers/index.js";
 import { buildManifest } from "./manifest/build.js";
 import { diffManifest, isEmptyDelta } from "./manifest/diff.js";
@@ -139,6 +139,11 @@ async function main() {
   let heartbeatTimer: NodeJS.Timeout | undefined;
   let discoveryTimer: NodeJS.Timeout | undefined;
   let reconnecting = false;
+  let shuttingDown = false;
+  // Auto-reconnect state. reconnectAttempt is the count of consecutive
+  // unsuccessful attempts since the last successful register-ack.
+  let reconnectAttempt = 0;
+  let reconnectTimer: NodeJS.Timeout | undefined;
 
   if (inspector) {
     inspector.onReconnect = () => { void reconnect("inspector requested"); };
@@ -152,7 +157,9 @@ async function main() {
 
   // Graceful shutdown.
   const shutdown = (signal: string) => {
+    shuttingDown = true;
     log(`received ${signal} — shutting down`);
+    cancelAutoReconnect();
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (discoveryTimer) clearInterval(discoveryTimer);
     tunnel?.close(`signal:${signal}`);
@@ -175,9 +182,14 @@ async function main() {
     t.onclose = () => {
       log(`tunnel closed`);
       stopTimers();
-      // Don't auto-redial — wait for the user to hit reconnect (or SIGHUP).
-      // Inspector keeps showing the last manifest + frame log; state goes
-      // 'closed' so the UI surfaces it.
+      // SIGTERM/SIGINT and the manual /reconnect path both close the tunnel
+      // intentionally — they handle their own bookkeeping. Auto-reconnect
+      // only triggers on an *unexpected* close (network blip, controller
+      // restart). The inspector still goes 'closed' first; we then transition
+      // it to 'reconnecting' below if the policy is enabled.
+      if (shuttingDown || reconnecting) return;
+      if (!config.policy.reconnect.enabled) return;
+      scheduleAutoReconnect();
     };
 
     try {
@@ -200,6 +212,13 @@ async function main() {
         if (frame.error) {
           log(`register-ack rejected: code=${frame.error.code} message=${frame.error.message}`);
           return;
+        }
+        // Successful register-ack means we're healthy — clear any
+        // accumulated reconnect-attempt count so the next blip restarts
+        // the backoff at the bottom of the curve.
+        if (reconnectAttempt > 0) {
+          log(`tunnel healthy — resetting reconnect attempts (was ${reconnectAttempt})`);
+          reconnectAttempt = 0;
         }
         if (frame.registrationToken && frame.registrationToken !== state.registrationToken) {
           state.registrationToken = frame.registrationToken;
@@ -240,6 +259,10 @@ async function main() {
     if (reconnecting) return;
     reconnecting = true;
     try {
+      // A manual click or an auto-fire both come through here. Either way,
+      // an attempt is now in flight — drop any pending backoff timer so we
+      // don't stack a second redial on top of this one.
+      cancelAutoReconnect();
       log(`reconnect requested: ${reason}`);
       stopTimers();
       tunnel?.close("reconnect");
@@ -286,6 +309,31 @@ async function main() {
     if (discoveryTimer) { clearInterval(discoveryTimer); discoveryTimer = undefined; }
   }
 
+  // ─── auto-reconnect ─────────────────────────────────────────────────────
+  function scheduleAutoReconnect(): void {
+    const policy = config.policy.reconnect;
+    reconnectAttempt += 1;
+    if (policy.max_attempts > 0 && reconnectAttempt > policy.max_attempts) {
+      log(`auto-reconnect: gave up after ${policy.max_attempts} attempt(s); inspector stays in 'closed' until manual reconnect`);
+      reconnectAttempt = 0;
+      return;
+    }
+    const delayMs = nextReconnectDelay(reconnectAttempt, policy);
+    log(`auto-reconnect: attempt ${reconnectAttempt} in ${delayMs}ms`);
+    inspector?.setReconnecting({ attempt: reconnectAttempt, nextDelayMs: delayMs });
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      void reconnect(`auto attempt ${reconnectAttempt}`);
+    }, delayMs);
+  }
+
+  function cancelAutoReconnect(): void {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
+  }
+
   async function refreshManifestAndPushDelta(): Promise<void> {
     try {
       const next = await buildManifest(config, servers, version);
@@ -319,6 +367,35 @@ async function main() {
 
 function countTools(m: ToolManifest): number {
   return m.servers.reduce((n, s) => n + s.tools.length, 0);
+}
+
+// Compute the delay before the next auto-reconnect attempt.
+//
+//   attempt: 1-indexed attempt count (1 = first retry after an unexpected close,
+//            reset to 0 on a successful register-ack)
+//   policy:  the policy.reconnect block from the yaml — initial_backoff_ms,
+//            max_backoff_ms, max_attempts (the caller already applied
+//            max_attempts; this fn doesn't need to re-check it)
+//
+// USER CONTRIBUTION POINT — the current implementation is the trivial
+// baseline: a fixed delay equal to initial_backoff_ms. It works (the
+// connector recovers from blips) but it's not what you'd want behind a real
+// controller serving many connectors after an outage.
+//
+// Replace with a real backoff. Trade-offs to weigh (see plan doc for the
+// long version — /Users/dhartman/.claude/plans/logical-spinning-badger.md):
+//   - Pure exponential is predictable but synchronizes — bad if many
+//     connectors reconnect to one controller after an outage.
+//   - Full jitter (random(0, cap)) avoids thundering herds but can also
+//     retry very fast on small attempt counts.
+//   - Equal jitter (half + random(0, half)) keeps a floor while spreading.
+//   - Decorrelated jitter (AWS) is the smoothest spread for many clients.
+//
+// Use policy.initial_backoff_ms and policy.max_backoff_ms as the bounds.
+// Drop a one-line comment naming the strategy you picked.
+function nextReconnectDelay(_attempt: number, policy: ReconnectPolicyConfig): number {
+  // Strategy: fixed delay (placeholder). Replace with a backoff curve.
+  return policy.initial_backoff_ms;
 }
 
 function sameMcpServers(
