@@ -122,12 +122,12 @@ The left column is draggable; the width is persisted in `localStorage` under `in
 
 | File | Purpose |
 |------|---------|
-| `packages/connector/connector.yaml`         | live, single source of truth for this connector. Lists every MCP. Carries `tunnel.name` (customer-chosen, identity claim) and references `${CONTROLLER_URL}`, optional `${CONTROLLER_WS_URL}`, `${TUNNEL_AUTH_TOKEN}`. Gitignored. |
+| `packages/connector/connector.yaml`         | live, single source of truth for this connector. Lists every MCP. Carries `tunnel.name` (customer-chosen, identity claim) and references `${CONTROLLER_URL}`, `${TUNNEL_AUTH_TOKEN}`. Gitignored. |
 | `packages/connector/connector.yaml.example` | template, committed. |
-| `packages/connector/.env`                   | live, shared tunnel env: `CONTROLLER_URL` (HTTPS root, e.g. `https://controller.example.com`), optional `CONTROLLER_WS_URL`, `TUNNEL_AUTH_TOKEN`, optional `INSPECTOR_PORT` / `MCP_BASE_PORT`. Gitignored. |
+| `packages/connector/.env`                   | live, shared tunnel env: `CONTROLLER_URL` (HTTPS root, e.g. `https://controller.example.com`), `TUNNEL_AUTH_TOKEN`, optional `INSPECTOR_PORT` / `MCP_BASE_PORT`. Gitignored. |
 | `packages/connector/.connector-state.json`  | written by the connector on first register-ack; carries `registrationToken`. Customer never edits; clearing it forces a re-mint. Gitignored. |
 
-`CONTROLLER_URL` is the controller's HTTPS root; it's used for the WS tunnel dial. The connector internally upgrades `https://` → `wss://` in [packages/connector/src/tunnel/client.ts:52](packages/connector/src/tunnel/client.ts#L52) before opening the socket. Don't expose the wire scheme as a customer-facing config knob — keep it as `https://` everywhere customers touch and let the connector do the upgrade. Registration happens entirely over the WS register frame — there is no separate `POST /api/connectors` step from the connector. Production deployments typically have one host that fronts both the API and the WS terminator, so this is the natural shape.
+`CONTROLLER_URL` is the controller's HTTPS root; it's used for both the register API call and the WS tunnel dial. The connector internally upgrades `https://` → `wss://` and appends the `/mcp-tunnel` path in [packages/connector/src/tunnel/client.ts](packages/connector/src/tunnel/client.ts) before opening the socket. Don't expose the wire scheme or path as a customer-facing config knob — keep it as `https://<host>` everywhere customers touch and let the connector do the upgrade. The controller dispatches `/crelay` (Conversation Relay) and `/mcp-tunnel` on a single port (default 3001), so one DNS entry / one ngrok tunnel covers both.
 | `packages/connector/.env.example`           | template, committed. |
 | `examples/<name>/.env`                      | per-MCP live env. Loaded by the connector into *that child's* process only — never leaks across MCPs. Gitignored. |
 | `examples/<name>/.env.example`              | per-MCP template, committed. |

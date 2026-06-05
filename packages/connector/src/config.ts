@@ -53,18 +53,9 @@ export type ReconnectPolicyConfig = z.infer<typeof ReconnectPolicy>;
 const ConfigSchema = z.object({
   tunnel: z.object({
     // The controller's HTTPS root. Used for the WS tunnel dial — the
-    // connector upgrades https:// → wss:// internally in tunnel/client.ts.
+    // connector upgrades https:// → wss:// internally and appends the
+    // /mcp-tunnel path in tunnel/client.ts.
     controller_url: z.string().url(),
-    // Optional override for the WS tunnel dial. Use this in setups where the
-    // tunnel listener is on a different host than the API (e.g. the dev rig
-    // where two ngrok tunnels front 3001 and 3002 separately). Production is
-    // typically one host — leave this unset and let the rewrite handle it.
-    ws_url: z
-      .string()
-      .url()
-      .nullable()
-      .optional()
-      .transform((v) => (v == null || v === "" ? undefined : v)),
     // Customer-chosen connector name. Used as the identity claim on first
     // connect — the controller mints a fresh row keyed to this name and
     // returns a registrationToken which the connector persists in

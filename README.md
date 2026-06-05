@@ -17,7 +17,7 @@ The connector understands two integration patterns. Both go in the same `mcp_ser
 packages/
   connector/                 the customer-side process (only thing that ships)
     connector.yaml.example   single yaml listing every MCP — Type 1 and Type 2
-    .env.example             shared tunnel env (CONTROLLER_URL, optional CONTROLLER_WS_URL, TUNNEL_AUTH_TOKEN)
+    .env.example             shared tunnel env (CONTROLLER_URL, TUNNEL_AUTH_TOKEN)
 examples/
   sample-mcp-server/         Type 1 — now, slow_echo, uuid, weather
   orders-mcp-server/         Type 1 — Refund Eligibility procedure fixtures

@@ -165,7 +165,6 @@ function renderYaml(
     "",
     "tunnel:",
     `  controller_url: ${quoteIfNeeded(controllerUrl)}`,
-    `  ws_url: \${CONTROLLER_WS_URL:-}`,
     `  name: ${quoteIfNeeded(name)}`,
     `  auth_token: \${TUNNEL_AUTH_TOKEN:-}`,
     `  environment: dev`,
