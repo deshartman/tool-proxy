@@ -49,7 +49,17 @@ export class TunnelClient {
     if (this.opened) return;
     this.opened = true;
 
-    const wsUrl = this.url.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+    // Controller URL → WS URL. Upgrade scheme then default the path to
+    // /mcp-tunnel when none is set; the controller dispatches /crelay and
+    // /mcp-tunnel on a single port so the path is now part of the contract.
+    // Honour an explicit path if the operator sets one (useful for tests
+    // dialling localhost directly).
+    const upgraded = this.url.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+    const parsed = new URL(upgraded);
+    if (parsed.pathname === "" || parsed.pathname === "/") {
+      parsed.pathname = "/mcp-tunnel";
+    }
+    const wsUrl = parsed.toString();
     const headers: Record<string, string> = {};
     if (this.authToken) headers["authorization"] = `Bearer ${this.authToken}`;
 

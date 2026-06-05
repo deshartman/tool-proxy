@@ -116,14 +116,9 @@ async function main() {
   log(`built manifest with ${countTools(manifest)} tool(s)`);
 
   // The yaml carries `controller_url` (HTTPS root, used for the register API
-  // and shown in the inspector) and an optional `ws_url` for setups where the
-  // WS tunnel terminator is on a different host. When ws_url is omitted we
-  // dial controller_url directly — TunnelClient internally rewrites
-  // https://→wss:// in tunnel/client.ts:52.
-  const tunnelDialUrl = config.tunnel.ws_url ?? config.tunnel.controller_url;
-  if (config.tunnel.ws_url) {
-    log(`tunnel ws_url override: ${config.tunnel.ws_url}`);
-  }
+  // and shown in the inspector). TunnelClient upgrades https:// → wss:// and
+  // appends the /mcp-tunnel path in tunnel/client.ts before dialling.
+  const tunnelDialUrl = config.tunnel.controller_url;
 
   // 3. Inspector first, so it survives tunnel cycles.
   const inspector = inspectorPort > 0
