@@ -52,9 +52,14 @@ elReconnect.addEventListener('click', async () => {
   }, 1500);
 });
 
-function setStatus(state) {
+function setStatus(state, reconnect) {
   elStatus.className = `status status-${state}`;
-  elStatus.textContent = state;
+  if (state === 'reconnecting' && reconnect) {
+    const seconds = (reconnect.nextDelayMs / 1000).toFixed(1);
+    elStatus.textContent = `reconnecting in ${seconds}s · attempt ${reconnect.attempt}`;
+  } else {
+    elStatus.textContent = state;
+  }
 }
 
 function fmtTs(ts) {
@@ -312,7 +317,7 @@ function appendFrame(tap) {
 
 function applySnapshot(s) {
   elController.textContent = s.controllerUrl;
-  setStatus(s.state);
+  setStatus(s.state, s.reconnect);
   renderManifest(s.manifest);
   elFrames.replaceChildren();
   elFrames.classList.add('empty');
@@ -333,7 +338,7 @@ function connectSse() {
     const ev = JSON.parse(e.data);
     switch (ev.kind) {
       case 'snapshot': applySnapshot(ev); break;
-      case 'state':    setStatus(ev.state); break;
+      case 'state':    setStatus(ev.state, ev.reconnect); break;
       case 'manifest': renderManifest(ev.manifest); break;
       case 'frame':    appendFrame(ev.tap); break;
     }

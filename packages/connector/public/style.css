@@ -27,9 +27,10 @@ header .meta { font-size: 0.75rem; }
 header .meta code { font-family: var(--mono); color: var(--accent); }
 .muted { color: var(--muted); }
 .status { font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; font-family: var(--mono); }
-.status-open       { background: rgba(63, 185, 80, 0.15); color: var(--green); }
-.status-connecting { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
-.status-closed     { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+.status-open         { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+.status-connecting   { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+.status-reconnecting { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+.status-closed       { background: rgba(248, 81, 73, 0.15); color: var(--red); }
 
 main {
   /* Left column width is set by JS on #main as --left-col (defaults below).

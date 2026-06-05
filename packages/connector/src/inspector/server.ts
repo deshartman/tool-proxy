@@ -4,16 +4,28 @@ import { resolve as resolvePath } from "node:path";
 import type { FrameTap, WsState } from "../tunnel/client.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 
+// Inspector exposes a "reconnecting" state on top of the tunnel's WsState —
+// the tunnel itself only knows connecting/open/closed; the reconnecting
+// pseudostate is a connector-level concept (we're in a backoff window between
+// attempts).
+export type DisplayState = WsState | "reconnecting";
+
+export interface ReconnectInfo {
+  attempt: number;
+  nextDelayMs: number;
+}
+
 // SSE event shape (mirrored as JSON.stringify(payload)).
 export type InspectorEvent =
-  | { kind: "snapshot"; controllerUrl: string; state: WsState; manifest?: ToolManifest; frames: FrameTap[] }
-  | { kind: "state"; state: WsState }
+  | { kind: "snapshot"; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; manifest?: ToolManifest; frames: FrameTap[] }
+  | { kind: "state"; state: DisplayState; reconnect?: ReconnectInfo }
   | { kind: "frame"; tap: FrameTap }
   | { kind: "manifest"; manifest: ToolManifest };
 
 export interface InspectorState {
   controllerUrl: string;
-  state: WsState;
+  state: DisplayState;
+  reconnect?: ReconnectInfo;
   manifest?: ToolManifest;
 }
 
@@ -34,7 +46,16 @@ export class Inspector {
 
   setState(state: WsState): void {
     this.current.state = state;
+    this.current.reconnect = undefined;
     this.broadcast({ kind: "state", state });
+  }
+
+  // Distinct from setState: the connector is in a backoff window between
+  // tunnel attempts. The tunnel itself is undefined here.
+  setReconnecting(info: ReconnectInfo): void {
+    this.current.state = "reconnecting";
+    this.current.reconnect = info;
+    this.broadcast({ kind: "state", state: "reconnecting", reconnect: info });
   }
 
   setManifest(manifest: ToolManifest): void {
@@ -55,6 +76,7 @@ export class Inspector {
       kind: "snapshot",
       controllerUrl: this.current.controllerUrl,
       state: this.current.state,
+      reconnect: this.current.reconnect,
       manifest: this.current.manifest,
       frames: [...this.frames],
     };

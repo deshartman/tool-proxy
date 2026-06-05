@@ -59,3 +59,13 @@ policy:
   discovery_interval_ms: 30000
   heartbeat_interval_ms: 1500
   tool_timeout_ms: 5000
+  # Auto-reconnect on unexpected WS close. Defaults shown; uncomment to
+  # override. In a deployed container where the orchestrator is the
+  # supervisor (Fargate / Container Apps / GKE with restart policy), set
+  # enabled: false so the connector stays in 'closed' on disconnect and
+  # the orchestrator's restart loop takes over instead.
+  # reconnect:
+  #   enabled: true
+  #   initial_backoff_ms: 1000
+  #   max_backoff_ms: 30000
+  #   max_attempts: 0      # 0 = retry forever

@@ -149,9 +149,12 @@ In production, each connector deployment is its own container — same yaml shap
 
 ## Reconnect semantics
 
-- WS close does **not** kill the connector process. It transitions the inspector to `closed` state and stops timers; the user can hit the reconnect button to redial.
+- WS close does **not** kill the connector process. It transitions the inspector to `closed` state and stops timers.
+- Auto-reconnect is **on by default** (`policy.reconnect.enabled: true`). On an unexpected close the connector schedules a redial via `scheduleAutoReconnect()` in `index.ts` and the inspector enters a fourth `reconnecting` state showing "reconnecting in N.Ns · attempt K". A successful register-ack resets the attempt counter. SIGTERM/SIGINT and a manual click on the inspector's Reconnect button both cancel any pending auto-reconnect timer (`cancelAutoReconnect()`) so a manual click fires immediately.
+- Backoff is computed by `nextReconnectDelay(attempt, policy)` at the bottom of `index.ts`. Today it returns a fixed delay (= `initial_backoff_ms`); swapping in a real backoff curve (full jitter / decorrelated jitter / etc.) is a localized change that doesn't touch the rest of the loop.
+- Set `policy.reconnect.enabled: false` to opt out — useful in deployed containers where the orchestrator (Fargate / Container Apps / GKE) is the supervisor and you want the inspector to surface a hard `closed` state. With auto-reconnect disabled, behavior matches the original PoC: `closed` until a manual click or SIGHUP.
 - Reconnect re-reads the YAML. `sameMcpServers()` in `index.ts` compares name + transport + endpoint + command + dir + env across the prior and new lists. If anything in `mcp_servers` changed, the connector logs a warning and uses the prior list (live MCP server reconnect is out of scope — the spawned children, the stdio transport, the per-entry env are all wired at boot). `policy` changes take effect.
-- Controller-side restarts (e.g. ngrok tunnel cycling) are handled by clicking reconnect.
+- Controller-side restarts (e.g. ngrok tunnel cycling) are recovered automatically; the inspector pill flips through closed → reconnecting → connecting → open as the controller comes back. No action required.
 
 ## Process lifecycle gotcha
 
