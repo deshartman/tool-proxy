@@ -139,6 +139,15 @@ async function main() {
   // unsuccessful attempts since the last successful register-ack.
   let reconnectAttempt = 0;
   let reconnectTimer: NodeJS.Timeout | undefined;
+  // Set when the controller actively rejects our register frame (e.g.
+  // unknown_registration_token after the controller's row was deleted). The
+  // close that follows is permanent until the operator intervenes — clearing
+  // .connector-state.json and clicking Reconnect — so we suppress the
+  // auto-reconnect loop instead of hammering the controller with a token it
+  // already told us it doesn't recognize. Cleared on a successful register-ack
+  // and on every manual reconnect (the operator's click is the signal that
+  // they've fixed it).
+  let registrationRejected = false;
 
   if (inspector) {
     inspector.onReconnect = () => { void reconnect("inspector requested"); };
@@ -184,6 +193,14 @@ async function main() {
       // it to 'reconnecting' below if the policy is enabled.
       if (shuttingDown || reconnecting) return;
       if (!config.policy.reconnect.enabled) return;
+      // A controller-side rejection (e.g. unknown_registration_token) means
+      // retrying with the same identity will fail identically forever. Stay
+      // in 'closed' until the operator clicks Reconnect (which clears the
+      // flag) or restarts the connector with a fresh state file.
+      if (registrationRejected) {
+        log(`auto-reconnect suppressed: controller rejected the registration — clear .connector-state.json and click Reconnect`);
+        return;
+      }
       scheduleAutoReconnect();
     };
 
@@ -206,11 +223,13 @@ async function main() {
       if (frame.type === "register-ack") {
         if (frame.error) {
           log(`register-ack rejected: code=${frame.error.code} message=${frame.error.message}`);
+          registrationRejected = true;
           return;
         }
         // Successful register-ack means we're healthy — clear any
         // accumulated reconnect-attempt count so the next blip restarts
         // the backoff at the bottom of the curve.
+        registrationRejected = false;
         if (reconnectAttempt > 0) {
           log(`tunnel healthy — resetting reconnect attempts (was ${reconnectAttempt})`);
           reconnectAttempt = 0;
@@ -258,6 +277,12 @@ async function main() {
       // an attempt is now in flight — drop any pending backoff timer so we
       // don't stack a second redial on top of this one.
       cancelAutoReconnect();
+      // The operator clicking Reconnect is the signal that they've fixed
+      // whatever caused the rejection (typically: cleared .connector-state.json
+      // so we re-mint, or re-provisioned the controller row). Clear the
+      // suppression so the new attempt can land — and so the next blip
+      // resumes the auto-reconnect loop.
+      registrationRejected = false;
       log(`reconnect requested: ${reason}`);
       stopTimers();
       tunnel?.close("reconnect");
