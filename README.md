@@ -10,7 +10,7 @@ The connector understands three integration patterns. All three go in the same `
 
 - **Type 1 — customer-authored.** Drop tool files (`tools/*.ts`) plus a tiny `server.ts` into a folder under `mcp/local/`. The connector spawns it as a child via `tsx` and auto-assigns a localhost port. No build step, no port wrangling.
 - **Type 2 — connect to an existing MCP.** Pure config — the entry just declares `transport: http` + `endpoint`, or `transport: stdio` + `command`, and optionally a `dir` (under `mcp/external/`) whose `.env` is loaded into the child's environment. Useful for off-the-shelf servers (e.g. Salesforce, Atlassian, the bundled `aviation-weather-mcp`).
-- **Type 3 — bundled, Twilio-authored, pre-installed in this image.** The entry just sets `bundled: <name>`; the connector resolves it against a registry of bundles laid down at image-build time. Bundle source lives in the sibling repo `mcp-shim-bundled/`. Customer supplies only a per-bundle `.env` under `mcp/bundled/<name>/`.
+- **Type 3 — bundled, Twilio-authored, pre-installed in this image.** The entry just sets `bundled: <name>`; the connector resolves it against a registry of bundles laid down at image-build time. Bundle source lives in-tree at `bundles/<name>/` (deliberately outside `mcp/` so the runtime image carries only the installed venv, not the build inputs). Customer supplies only a per-bundle `.env` under `mcp/bundled/<name>/`.
 
 ## Layout
 
@@ -26,7 +26,9 @@ mcp/
   external/
     aviation-weather/         Type 2 — pure config; spawns published `aviation-weather-mcp` via stdio
   bundled/
-    enterprise-knowledge/     Type 3 — .env stub; source lives in sibling mcp-shim-bundled/ repo
+    enterprise-knowledge/     Type 3 — .env stub only (source lives at bundles/enterprise-knowledge/)
+bundles/
+  enterprise-knowledge/       Type 3 source — pip-installed into the image's bundled-mcps venv
 docs/deploy/                  per-cloud deployment guides
 scripts/
   start-connector.sh          boots the connector. Auto-registers with the controller on first run
@@ -90,7 +92,7 @@ No `package.json` if you only need `zod` and the SDK (both resolve from the repo
   dir: ../../mcp/bundled/enterprise-knowledge   # for the .env
 ```
 
-The bundle's source lives in the sibling repo `mcp-shim-bundled/`. The connector image installs it into `/opt/bundled-mcps/enterprise-knowledge/`; in dev, `start-connector.sh` auto-points at the sibling working tree if checked out.
+The bundle's source lives in-tree at [`bundles/enterprise-knowledge/`](bundles/enterprise-knowledge/). The connector image installs it into `/opt/bundled-mcps/enterprise-knowledge/`; in dev, `start-connector.sh` auto-points at the bundle's `dev-launch.sh` in the working tree.
 
 ## Inspector
 

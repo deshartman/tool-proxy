@@ -3,6 +3,18 @@ dist
 *.log
 *.tsbuildinfo
 
+# Python artifacts (Type 3 bundle source lives at bundles/<name>/ and uses
+# pip + venv during dev; in production the connector image ships only the
+# installed venv, not the source tree).
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # Env files. Never commit; templates are *.env.example.
 .env
 *.env
@@ -11,10 +23,9 @@ dist
 
 .DS_Store
 
-# Connector live config — customer-authored copy of *.yaml.example.
-# Per-pairing connector.yaml lives next to each MCP server (e.g. under
-# examples/<server>/). Live copies are gitignored; only the *.example
-# templates ship.
+# Connector live config — customer-authored copy of connector.yaml.example.
+# Lives at packages/connector/connector.yaml. Gitignored; only the *.example
+# template ships.
 **/connector.yaml
 !**/connector.yaml.example
 

@@ -1,20 +1,26 @@
 # Bundles in this connector image
 
-This file lists the [Type 3 bundled MCPs](CLAUDE.md) that the connector image at the current commit is built against. Bundle source lives in the sibling repo [`mcp-shim-bundled/`](../mcp-shim-bundled/); this is a manifest of which bundles + which versions ship in the image.
+This file lists the [Type 3 bundled MCPs](CLAUDE.md) that the connector image at the current commit is built against. Bundle source lives in [`bundles/<name>/`](bundles/) — a sibling tree to the connector itself, deliberately separate from `mcp/` so the runtime image carries only the *installed* venv (`/opt/bundled-mcps/<name>/.venv/`), not the build inputs (`pyproject.toml`, `src/`, `migrations/`).
 
-| Bundle | Source | Version | Entrypoint (in image) | `.env` stub |
-|---|---|---|---|---|
-| `enterprise-knowledge` | [`mcp-shim-bundled/enterprise-knowledge/`](../mcp-shim-bundled/enterprise-knowledge/) | local source (step 2 stub backend) | `/opt/bundled-mcps/enterprise-knowledge/.venv/bin/customer-ek-mcp` | [`mcp/bundled/enterprise-knowledge/.env.example`](mcp/bundled/enterprise-knowledge/.env.example) |
+| Bundle | Source | Entrypoint (in image) | `.env` stub |
+|---|---|---|---|
+| `enterprise-knowledge` | [`bundles/enterprise-knowledge/`](bundles/enterprise-knowledge/) | `/opt/bundled-mcps/enterprise-knowledge/.venv/bin/customer-ek-mcp` | [`mcp/bundled/enterprise-knowledge/.env.example`](mcp/bundled/enterprise-knowledge/.env.example) |
+
+## What ships vs. what doesn't
+
+| Path | In runtime image? |
+|---|---|
+| `bundles/<name>/pyproject.toml`, `src/`, `migrations/` | **No** — read by `pip` in the build stage; never lands in the runtime layer |
+| `/opt/bundled-mcps/<name>/.venv/` | **Yes** — the installed bundle is what runs |
+| `mcp/bundled/<name>/.env.example` | **Yes** — customer copies it to `.env` for credentials |
 
 ## Authoritative registry
 
 [`packages/connector/src/config.ts`](packages/connector/src/config.ts) exports `BUNDLED_MCPS` — the runtime registry the connector consults when resolving a yaml `bundled:` entry. This file is documentation; the registry is code.
 
-## Bumping a bundle version
+## Adding or updating a bundle
 
-1. Bump the version in `mcp-shim-bundled/<bundle>/pyproject.toml` (or `package.json`).
-2. Publish the artifact (PyPI wheel for Python bundles, npm tarball for Node bundles).
-3. In `mcp-shim`, update the `BUNDLED_MCPS` entry's pinned version + this file.
-4. Rebuild the connector image.
-
-While bundles are still installed from local source (today), step 1 is just an update in the sibling repo's working tree and the rebuild picks up whatever is checked out.
+1. Edit `bundles/<bundle>/` source.
+2. Bump the version in `bundles/<bundle>/pyproject.toml` (or `package.json` for a Node bundle).
+3. If the bundle isn't yet registered, add an entry to `BUNDLED_MCPS` in `packages/connector/src/config.ts` and to this file.
+4. Rebuild the connector image (`./scripts/build-image.sh`). The Dockerfile reads `bundles/<name>/` directly; no separate publish step.

@@ -13,8 +13,8 @@
 #     yaml's dir: points here so per-entry .env loading works.
 #   - /opt/bundled-mcps/<name>/.venv/ — one venv per Type 3 bundle
 #     registered in BUNDLED_MCPS (see packages/connector/src/config.ts).
-#     Sourced from the `bundles` build context (sibling `mcp-shim-bundled/`
-#     repo); see scripts/build-image.sh for how it's wired.
+#     Source lives in-tree at mcp/bundled/<name>/ and is installed by the
+#     bundle-build stage below.
 #
 # In production, the customer mounts their own connector.yaml at
 # CONNECTOR_CONFIG and supplies env via container env. dir: paths in that
@@ -46,6 +46,14 @@ RUN npm prune --omit=dev --workspaces --include-workspace-root
 # below for any folder that carries its own package.json so deps don't leak
 # across MCPs and the workspace install graph stays clean.
 COPY mcp mcp
+
+# Type 3 bundle source. Lives outside mcp/ deliberately — bundle source is a
+# build input (read by pip), not a runtime artifact (the connector spawns
+# from /opt/bundled-mcps/<name>/.venv/, populated in bundle-build below).
+# Keeping it under bundles/ here means the runtime stage's `COPY mcp` doesn't
+# carry pyproject.toml + src/ + migrations/ as dead weight.
+COPY bundles bundles
+
 RUN set -e; \
     for dir in mcp/local/*/ mcp/external/*/; do \
       [ -f "$dir/package.json" ] || continue; \
@@ -63,26 +71,23 @@ RUN set -e; \
 # duplicating the venv-build pattern below and registering the bundle in
 # packages/connector/src/config.ts.
 #
-# The `bundles` build context maps to the sibling `mcp-shim-bundled/` repo
-# (see scripts/build-image.sh). When PyPI publishing lands, swap
-# `pip install <local-path>` for `pip install <pkg>==<version>` and drop
-# this stage's dependency on the source tree — the venv path stays the
-# same, so config.ts and the runtime stage are unaffected.
+# Bundle source comes from the in-tree `mcp/bundled/<name>/` folder — the
+# node-build stage already copied `mcp/` so we mount it via `--from=node-build`.
 #
-# Alpine + python3 works for step 2's stub backend (deps: mcp, pydantic).
-# Step 4 (real LlamaIndex backend) brings native deps (psycopg, chromadb)
-# that prefer glibc — switch this stage's base to a glibc image
-# (python:3.12-slim) when LlamaIndex lands. The connector stage stays
-# Alpine; only this stage's base needs to change.
+# Alpine + python3 works for the stub backend (deps: mcp, pydantic).
+# When LlamaIndex lands (real backend) it brings native deps (psycopg,
+# chromadb) that prefer glibc — switch this stage's base to a glibc image
+# (python:3.12-slim) at that point. The connector stage stays Alpine; only
+# this stage's base needs to change.
 FROM python:3.12-alpine AS bundle-build
 WORKDIR /opt/bundled-mcps
 
-# enterprise-knowledge — sourced from the `bundles` build context. The
-# entrypoint `customer-ek-mcp` is declared in the bundle's pyproject.toml;
+# enterprise-knowledge — installed from mcp/bundled/enterprise-knowledge/.
+# The entrypoint `customer-ek-mcp` is declared in the bundle's pyproject.toml;
 # `python -m venv` + `pip install <path>` lays it down at the venv's
 # bin/customer-ek-mcp, which is what BUNDLED_MCPS["enterprise-knowledge"]
-# points at.
-RUN --mount=type=bind,from=bundles,source=enterprise-knowledge,target=/bundle-src \
+# in config.ts points at.
+RUN --mount=type=bind,from=node-build,source=/repo/bundles/enterprise-knowledge,target=/bundle-src \
     python -m venv --copies /opt/bundled-mcps/enterprise-knowledge/.venv \
  && /opt/bundled-mcps/enterprise-knowledge/.venv/bin/pip install --no-cache-dir /bundle-src
 # `--copies` makes the venv's bin/python a real binary instead of a
