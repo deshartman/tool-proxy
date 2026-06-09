@@ -10,31 +10,32 @@ A customer-side **MCP connector**: a process that runs behind a customer's firew
 
 ## Topology — one connector, many MCPs
 
-The repo ships **one connector binary** (`packages/connector`) and **demo MCPs** under `examples/`. A single connector process reads one `packages/connector/connector.yaml` listing all MCPs and either spawns them as Type 1 children (auto-port) or dials them as Type 2 endpoints. In production this is one container per `connector_id`; in dev it's one local process.
+The repo ships **one connector binary** (`packages/connector`) and **demo / config MCPs** under `mcp/` — split into `mcp/local/` (Type 1 customer-authored), `mcp/external/` (Type 2 config-only stubs), and `mcp/bundled/` (Type 3 .env stubs whose source lives in the sibling `mcp-shim-bundled/` repo). A single connector process reads one `packages/connector/connector.yaml` listing all MCPs and either spawns them as Type 1 children (auto-port), dials them as Type 2 endpoints, or launches Type 3 bundle entrypoints. In production this is one container per `connector_id`; in dev it's one local process.
 
-Sample tools: `now`, `slow_echo`, `uuid`, `weather`. Orders: `get_recent`, `issue_refund`. Aviation-weather (Type 2 stdio): `wx_metar`, `wx_taf`, `wx_pireps`, `wx_sigmets`, `wx_icon_d2`, `wx_outlook`, `wx_preflight`, `wx_route`.
+Sample tools: `now`, `slow_echo`, `uuid`, `weather`. Orders: `get_recent`, `issue_refund`. Aviation-weather (Type 2 stdio): `wx_metar`, `wx_taf`, `wx_pireps`, `wx_sigmets`, `wx_icon_d2`, `wx_outlook`, `wx_preflight`, `wx_route`. Enterprise Knowledge (Type 3 bundled stub): `ek_register_source`, `ek_query`, `ek_refresh`, `ek_list_sources`.
 
-The Twilio-authored MCP that used to live here as `examples/twilio-mcp-server/` has moved out to a sibling project `../twilio-mcp-shim/`, which models the production deployment shape (Twilio runs its own connector, customer runs theirs — see [README](README.md)). Don't reintroduce a Twilio MCP under `examples/` without an explicit ask.
+The Twilio-authored MCP that used to live here under the old `examples/twilio-mcp-server/` has moved out to a sibling project `../twilio-mcp-shim/`, which models the production deployment shape (Twilio runs its own connector, customer runs theirs — see [README](README.md)). Don't reintroduce a Twilio MCP under `mcp/local/` without an explicit ask.
 
 The controller is **outside this repo** — this repo only ships the customer side.
 
-### Two MCP integration patterns
+### Three MCP integration patterns
 
-- **Type 1 (customer-authored).** Folder under `examples/<name>/` with `tools/*.ts` + `server.ts` (5 lines: import the SDK factory, list tools, call `createMcpHttpServer`). The yaml entry sets `transport: http` + `dir:` and **omits `endpoint`** — that's how the connector knows to spawn it. The spawner runs `tsx <dir>/server.ts` with `PORT=<auto-assigned>` (probe-bind from `MCP_BASE_PORT`, default 7100), waits for the TCP listener, then sets the spec's `endpoint` to `http://127.0.0.1:<port>/mcp` so the existing connect path works unchanged. No build step per example.
-- **Type 2 (connect to existing MCP).** Pure config — yaml entry sets `transport: http` + `endpoint`, or `transport: stdio` + `command`. Optional `dir` whose `.env` is loaded into the child's environment (handy for stdio servers that need API keys; ignored for Type 2 http unless future features wire it in). No customer-authored code needed.
+- **Type 1 (customer-authored).** Folder under `mcp/local/<name>/` with `tools/*.ts` + `server.ts` (5 lines: import the SDK factory, list tools, call `createMcpHttpServer`). The yaml entry sets `transport: http` + `dir:` and **omits `endpoint`** — that's how the connector knows to spawn it. The spawner runs `tsx <dir>/server.ts` with `PORT=<auto-assigned>` (probe-bind from `MCP_BASE_PORT`, default 7100), waits for the TCP listener, then sets the spec's `endpoint` to `http://127.0.0.1:<port>/mcp` so the existing connect path works unchanged. No build step per MCP.
+- **Type 2 (connect to existing MCP).** Pure config — yaml entry sets `transport: http` + `endpoint`, or `transport: stdio` + `command`. Optional `dir` (under `mcp/external/<name>/`) whose `.env` is loaded into the child's environment (handy for stdio servers that need API keys; ignored for Type 2 http unless future features wire it in). No customer-authored code needed.
+- **Type 3 (bundled, Twilio-authored, pre-installed in this image).** Yaml entry sets `bundled: <name>` plus an optional `dir:` (under `mcp/bundled/<name>/`) for a per-bundle `.env`. The connector resolves `bundled:` against `BUNDLED_MCPS` in [packages/connector/src/config.ts](packages/connector/src/config.ts) — a registry of bundles laid down at image-build time under `/opt/bundled-mcps/<name>/`. Resolution synthesizes a stdio spec, so the rest of the spawner code is unchanged. Bundle source lives in the **sibling repo `mcp-shim-bundled/`** (one repo, all bundles); the connector's Dockerfile fetches each bundle's published artifact at the pinned version into its own venv. Customer surface area: one yaml line + one `.env` file. No code, no `pip install`. Local-dev override: `BUNDLE_DEV_OVERRIDE_<UPPER_NAME>=/abs/path/to/launcher` redirects launch to a working tree (`scripts/start-connector.sh` auto-exports this when `mcp-shim-bundled/` is checked out as a sibling).
 
-The detection helper is [packages/connector/src/config.ts](packages/connector/src/config.ts) `isType1Spawn(spec)` — `http` transport + `dir` set + no `endpoint`. Don't widen this without thinking through the cross-product with sameMcpServers's reconnect-comparison logic.
+The detection helpers in [packages/connector/src/config.ts](packages/connector/src/config.ts) are `isType1Spawn(spec)` (http + dir + no endpoint) and `isType3Bundled(spec)` (stdio + bundled set). Type 3 resolution happens in `loadConfig` *before* the discriminated union parses, because `bundled:` entries have no `transport` field. Don't widen the classifiers without thinking through the cross-product with `sameMcpServers`'s reconnect-comparison logic — `bundled` is part of that equality check so an edit from `bundled: a` to `bundled: b` is detected even when both happen to resolve to identical commands.
 
 ### Adding a new MCP
 
-Edit `packages/connector/connector.yaml` and add one entry. There is no per-folder `connector.yaml` any more. For Type 1, drop tools + `server.ts` under `examples/<name>/`. For Type 2, just point at the endpoint or command; no folder needed unless the entry has its own `.env`.
+Edit `packages/connector/connector.yaml` and add one entry. There is no per-folder `connector.yaml` any more. For Type 1, drop tools + `server.ts` under `mcp/local/<name>/`. For Type 2, just point at the endpoint or command; create a folder under `mcp/external/<name>/` only if the entry has its own `.env`. For Type 3, set `bundled: <name>` against a bundle that's already registered in `BUNDLED_MCPS`; supply only a `.env` in `mcp/bundled/<name>/`.
 
 ## Architecturally load-bearing properties
 
 - **Outbound-only.** The connector opens **no inbound ports** for the tunnel. It dials out; the controller pushes RPC requests back down the same WS the connector opened.
 - **Trust boundary is per MCP server, not per tool.** Every tool a server in `mcp_servers[]` exposes is forwarded to the controller. The customer controls *which* MCP servers run on their machine; that's the gate. We deliberately diverged from MCP-TUNNEL.md §"Configuration surface" (which prescribes a default-deny `allow_list.tools` block) — per-tool gating duplicated authority and forced a YAML edit on every new tool. Don't reintroduce `allow_list` without an explicit ask. The wire format keeps `ToolDescriptor.allowed` (controller may still display it; future enterprise-strict mode might use it) — the connector always sets it to `true`.
 - **Identity established at WS register-frame time.** The yaml carries `tunnel.name`; on first connect the controller mints a row keyed by name and returns a `registrationToken` in the register-ack. The connector persists that token to `packages/connector/.connector-state.json` and presents it on every subsequent register frame so the controller binds to the same row. Strict mode: an unknown token is rejected (`unknown_registration_token`); the customer must clear the state file to mint fresh. There is no `CONNECTOR_ID` env var — identity lives in `tunnel.name` (yaml, customer-chosen) and the state file (token, controller-issued).
-- **No LLM, no agent loop, no document handling.** If you find yourself adding `openai` or anything that reads documents, stop — that belongs on the controller side or in a separate process, not here.
+- **No LLM, no agent loop, no document handling — *in the connector core*.** The connector itself stays a thin dispatcher. Type 3 bundles are a deliberate exception: a bundled MCP child process can do whatever it needs (LlamaIndex, vector stores, document parsers) because it runs in its own venv, isolated from the connector's Node code path, with its own deps and its own per-entry `.env`. The rule applies to `packages/connector/`; it doesn't apply to what the connector spawns. If you find yourself adding `openai` or document-parser deps to `packages/connector/package.json`, stop — that belongs in a Type 3 bundle in the sibling `mcp-shim-bundled/` repo, not here.
 
 ## Wire protocol — frames
 
@@ -52,16 +53,17 @@ Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector sp
 
 npm workspaces, **one package**: `@mcp-shim/connector`. That's the only thing that ships.
 
-Type 1 examples under `examples/` are deliberately **not** workspaces. They have no `package.json` at all — `zod` and `@mcp-shim/connector/sdk` resolve up to the repo-root `node_modules`. An example that needs a third-party SDK should carry its own minimal `package.json` + `node_modules` to keep that dep out of the workspace install graph; today no example in this repo does. The sibling `../twilio-mcp-shim/` project demonstrates the third-party-SDK case for a Twilio-authored deployment.
+Type 1 MCPs under `mcp/local/` are deliberately **not** workspaces. They have no `package.json` at all — `zod` and `@mcp-shim/connector/sdk` resolve up to the repo-root `node_modules`. A Type 1 entry that needs a third-party SDK should carry its own minimal `package.json` + `node_modules` to keep that dep out of the workspace install graph; today none in this repo does. The sibling `../twilio-mcp-shim/` project demonstrates the third-party-SDK case for a Twilio-authored deployment.
 
 The `@mcp-shim/connector` package is publishable (`exports`, `bin`, and `name` are already set) — only `private: true` in [packages/connector/package.json](packages/connector/package.json) blocks publish. Flip when ready. The `twilio-mcp-shim` project consumes it via a `file:` dep in dev today; on publish, that flips to a registry pin with no consumer code change.
 
-- **`packages/connector`** — the customer-side process. Config, MCP clients to local servers, WSS tunnel, dispatcher, spawner (Type 1 child supervisor), inspector UI, CLI (`start` / `init` / `discover` / `register` / `version`). The connector + its `tsx` runtime + the bundled `examples/` are what go in the OCI image.
+- **`packages/connector`** — the customer-side process. Config, MCP clients to local servers, WSS tunnel, dispatcher, spawner (Type 1 child supervisor), inspector UI, CLI (`start` / `init` / `discover` / `register` / `version`). The connector + its `tsx` runtime + the `mcp/` tree are what go in the OCI image.
 - **`packages/connector/src/sdk/`** — the surface customer-authored Type 1 servers import. `Tool` interface + `createMcpHttpServer({name, tools, port?})` factory. Re-exported from `@mcp-shim/connector/sdk`.
 - **`packages/connector/src/spawner.ts`** — auto-port probe + child supervisor for Type 1 entries. Resolves `tsx` from the connector's own `node_modules` (going via `tsx/package.json` because tsx's `exports` map blocks subpath access to `dist/cli.mjs`).
-- **`examples/sample-mcp-server`** — Type 1 demo. `tools/now.ts`, `slow-echo.ts`, `uuid.ts`, `weather.ts` (weather.gov, US-only) + a 5-line `server.ts`. No `package.json` deps; `zod` resolves to repo root.
-- **`examples/orders-mcp-server`** — Type 1 demo with in-memory order fixtures used by the Refund Eligibility procedure on the controller side.
-- **`examples/aviation-weather-mcp`** — Type 2 demo. Pure config — README + `.env.example` only. The yaml entry is `command: [npx, "--yes", aviation-weather-mcp]` and the connector spawns the published npm package via stdio.
+- **`mcp/local/sample`** — Type 1 demo. `tools/now.ts`, `slow-echo.ts`, `uuid.ts`, `weather.ts` (weather.gov, US-only) + a 5-line `server.ts`. No `package.json` deps; `zod` resolves to repo root.
+- **`mcp/local/orders`** — Type 1 demo with in-memory order fixtures used by the Refund Eligibility procedure on the controller side.
+- **`mcp/external/aviation-weather`** — Type 2 demo. Pure config — README + `.env.example` only. The yaml entry is `command: [npx, "--yes", aviation-weather-mcp]` and the connector spawns the published npm package via stdio.
+- **`mcp/bundled/enterprise-knowledge`** — Type 3 config stub. Just a `.env.example` mirrored from `../../mcp-shim-bundled/enterprise-knowledge/.env.example`. Bundle *source* lives in the sibling repo; this folder exists so the customer's yaml can `dir: ../../mcp/bundled/enterprise-knowledge` and the standard per-entry `.env` loader picks up the customer's secrets.
 
 Type 1 servers use a stateful `StreamableHTTPServerTransport` with `randomUUID` session IDs. **Stateless mode does not work** with the SDK's HTTP transport — it requires a per-request transport instance. The factory in `sdk/http-server.ts` is the one place this is set up.
 
@@ -85,11 +87,11 @@ A startup boot log in `main()` prints `auth_token=set (len=N) | absent` so a sil
 npm install
 npm run build
 
-# All Type 1 examples in this repo (sample, orders) have no per-folder
-# package.json — zod and the SDK resolve from repo root, so no per-example
-# install step is needed. (Examples that DO need a third-party SDK should
-# install in their own folder; today the productized example of that
-# pattern lives in the sibling ../twilio-mcp-shim/ project.)
+# Type 1 MCPs in mcp/local/ (sample, orders) have no per-folder
+# package.json — zod and the SDK resolve from repo root, so no per-MCP
+# install step is needed. (Type 1 MCPs that DO need a third-party SDK
+# should install in their own folder; today the productized example of
+# that pattern lives in the sibling ../twilio-mcp-shim/ project.)
 
 # Connector-level env + yaml — single yaml lists every MCP.
 cp packages/connector/.env.example packages/connector/.env
@@ -129,10 +131,10 @@ The left column is draggable; the width is persisted in `localStorage` under `in
 
 `CONTROLLER_URL` is the controller's HTTPS root; it's used for both the register API call and the WS tunnel dial. The connector internally upgrades `https://` → `wss://` and appends the `/mcp-tunnel` path in [packages/connector/src/tunnel/client.ts](packages/connector/src/tunnel/client.ts) before opening the socket. Don't expose the wire scheme or path as a customer-facing config knob — keep it as `https://<host>` everywhere customers touch and let the connector do the upgrade. The controller dispatches `/crelay` (Conversation Relay) and `/mcp-tunnel` on a single port (default 3001), so one DNS entry / one ngrok tunnel covers both.
 | `packages/connector/.env.example`           | template, committed. |
-| `examples/<name>/.env`                      | per-MCP live env. Loaded by the connector into *that child's* process only — never leaks across MCPs. Gitignored. |
-| `examples/<name>/.env.example`              | per-MCP template, committed. |
+| `mcp/{local,external,bundled}/<name>/.env`         | per-MCP live env. Loaded by the connector into *that child's* process only — never leaks across MCPs. Gitignored. |
+| `mcp/{local,external,bundled}/<name>/.env.example` | per-MCP template, committed. |
 
-The YAML supports `${VAR}` and `${VAR:-default}` interpolation; unknown vars without a default throw with the variable name and YAML line so the customer can fix the right line. `start-connector.sh` sources `packages/connector/.env` and invokes `node packages/connector/dist/index.js start`. The connector handles registration inline: on the first WS register frame it presents `tunnel.name`, the controller mints a row + token, the connector persists the token in `.connector-state.json`. Subsequent restarts present the token and re-bind to the same row — no separate provisioning step. In Docker, set the same vars via container env — there is no `.env` inside the image; the customer mounts `connector.yaml` at `CONNECTOR_CONFIG` (default `/etc/mcp-connector/config.yaml`) and a writable volume for `.connector-state.json` (or accepts re-mint on every restart, which the controller's dup-name guard catches). The image bundles `examples/` at `/app/examples/` for Type 1 entries to spawn from.
+The YAML supports `${VAR}` and `${VAR:-default}` interpolation; unknown vars without a default throw with the variable name and YAML line so the customer can fix the right line. `start-connector.sh` sources `packages/connector/.env` and invokes `node packages/connector/dist/index.js start`. The connector handles registration inline: on the first WS register frame it presents `tunnel.name`, the controller mints a row + token, the connector persists the token in `.connector-state.json`. Subsequent restarts present the token and re-bind to the same row — no separate provisioning step. In Docker, set the same vars via container env — there is no `.env` inside the image; the customer mounts `connector.yaml` at `CONNECTOR_CONFIG` (default `/etc/mcp-connector/config.yaml`) and a writable volume for `.connector-state.json` (or accepts re-mint on every restart, which the controller's dup-name guard catches). The image bundles `mcp/` at `/app/mcp/` for Type 1 entries to spawn from and Type 2/3 `dir:` resolution.
 
 ### Per-entry env precedence (subtle)
 
@@ -172,9 +174,9 @@ Primary shape is a signed multi-arch OCI image. Build:
 IMAGE=registry/mcp-connector:0.1.0 PUSH=1 ./scripts/build-image.sh  # multi-arch + push
 ```
 
-[packages/connector/Dockerfile](packages/connector/Dockerfile) is multi-stage; runtime image carries the connector's `dist/` + `public/` + production `node_modules` (incl. `tsx`) + the `examples/` tree. The examples are bundled because Type 1 entries in `connector.yaml` reference them via `dir:` and the spawner must be able to `tsx <dir>/server.ts`. Customers who want their own Type 1 MCPs extend the image with additional folders under `/app/examples/`.
+[packages/connector/Dockerfile](packages/connector/Dockerfile) is multi-stage; runtime image carries the connector's `dist/` + `public/` + production `node_modules` (incl. `tsx`) + the `mcp/` tree + Python venvs for Type 3 bundles under `/opt/bundled-mcps/<name>/`. The `mcp/` tree is bundled because Type 1 entries in `connector.yaml` reference them via `dir:` and the spawner must be able to `tsx <dir>/server.ts`. Customers who want their own Type 1 MCPs extend the image with additional folders under `/app/mcp/local/`.
 
-The build stage runs `npm install --omit=dev --no-package-lock` inside any `examples/*/` that has a non-empty `dependencies` block (today: none — the `for` loop is a no-op until someone drops in a Type 1 example with its own SDK). Examples without `package.json` (sample, orders) need nothing extra — `zod` and `@mcp-shim/connector/sdk` resolve up to `/app/node_modules`.
+The build stage runs `npm install --omit=dev --no-package-lock` inside any `mcp/local/*/` or `mcp/external/*/` that has a non-empty `dependencies` block (today: none — the `for` loop is a no-op until someone drops in an MCP with its own SDK). MCPs without `package.json` (sample, orders, aviation-weather) need nothing extra — `zod` and `@mcp-shim/connector/sdk` resolve up to `/app/node_modules`.
 
 [scripts/build-image.sh](scripts/build-image.sh) defaults to `linux/amd64,linux/arm64` (Graviton + ARM Macs). Per-cloud guides at [docs/deploy/](docs/deploy/) (AWS Fargate, Azure Container Apps, GCP GKE) document the foot-guns of each platform — most importantly, **don't put a load balancer in front of the connector** (nothing inbound) and **don't use Cloud Run / App Service / scale-to-zero anything** (kills the WSS).
 

@@ -4,32 +4,37 @@ A customer-side **MCP connector**: dials out to a controller URL via WSS, advert
 
 The controller is **outside this repo**. This repo is the customer side only.
 
-## Two ways to wire up an MCP
+## Three ways to wire up an MCP
 
-The connector understands two integration patterns. Both go in the same `mcp_servers:` list in `connector.yaml`.
+The connector understands three integration patterns. All three go in the same `mcp_servers:` list in `connector.yaml`.
 
-- **Type 1 — customer-authored.** Drop tool files (`tools/*.ts`) plus a tiny `server.ts` into a folder under `examples/`. The connector spawns it as a child via `tsx` and auto-assigns a localhost port. No build step, no port wrangling.
-- **Type 2 — connect to an existing MCP.** Pure config — the entry just declares `transport: http` + `endpoint`, or `transport: stdio` + `command`, and optionally a `dir` whose `.env` is loaded into the child's environment. Useful for off-the-shelf servers (e.g. Salesforce, Atlassian, the bundled `aviation-weather-mcp` example).
+- **Type 1 — customer-authored.** Drop tool files (`tools/*.ts`) plus a tiny `server.ts` into a folder under `mcp/local/`. The connector spawns it as a child via `tsx` and auto-assigns a localhost port. No build step, no port wrangling.
+- **Type 2 — connect to an existing MCP.** Pure config — the entry just declares `transport: http` + `endpoint`, or `transport: stdio` + `command`, and optionally a `dir` (under `mcp/external/`) whose `.env` is loaded into the child's environment. Useful for off-the-shelf servers (e.g. Salesforce, Atlassian, the bundled `aviation-weather-mcp`).
+- **Type 3 — bundled, Twilio-authored, pre-installed in this image.** The entry just sets `bundled: <name>`; the connector resolves it against a registry of bundles laid down at image-build time. Bundle source lives in the sibling repo `mcp-shim-bundled/`. Customer supplies only a per-bundle `.env` under `mcp/bundled/<name>/`.
 
 ## Layout
 
 ```
 packages/
-  connector/                 the customer-side process (only thing that ships)
-    connector.yaml.example   single yaml listing every MCP — Type 1 and Type 2
-    .env.example             shared tunnel env (CONTROLLER_URL, TUNNEL_AUTH_TOKEN)
-examples/
-  sample-mcp-server/         Type 1 — now, slow_echo, uuid, weather
-  orders-mcp-server/         Type 1 — Refund Eligibility procedure fixtures
-  aviation-weather-mcp/      Type 2 — pure config; spawns published `aviation-weather-mcp` via stdio
-docs/deploy/                 per-cloud deployment guides
+  connector/                  the customer-side process (only thing that ships)
+    connector.yaml.example    single yaml listing every MCP — Type 1, 2, and 3
+    .env.example              shared tunnel env (CONTROLLER_URL, TUNNEL_AUTH_TOKEN)
+mcp/
+  local/
+    sample/                   Type 1 — now, slow_echo, uuid, weather
+    orders/                   Type 1 — Refund Eligibility procedure fixtures
+  external/
+    aviation-weather/         Type 2 — pure config; spawns published `aviation-weather-mcp` via stdio
+  bundled/
+    enterprise-knowledge/     Type 3 — .env stub; source lives in sibling mcp-shim-bundled/ repo
+docs/deploy/                  per-cloud deployment guides
 scripts/
-  start-connector.sh         boots the connector. Auto-registers with the controller on first run
-                             (writes registrationToken to .connector-state.json), reconnects by token after.
-  build-image.sh             builds the multi-arch OCI image
+  start-connector.sh          boots the connector. Auto-registers with the controller on first run
+                              (writes registrationToken to .connector-state.json), reconnects by token after.
+  build-image.sh              builds the multi-arch OCI image
 ```
 
-`packages/connector/connector.yaml` is the **single** source of truth: one entry per MCP. There is no per-folder `connector.yaml` any more. Per-folder `.env` files in `examples/<name>/` carry only that MCP's own credentials and are loaded into that child's process — they don't leak across MCPs.
+`packages/connector/connector.yaml` is the **single** source of truth: one entry per MCP. There is no per-folder `connector.yaml` any more. Per-folder `.env` files under `mcp/<type>/<name>/` carry only that MCP's own credentials and are loaded into that child's process — they don't leak across MCPs.
 
 ## Quick start (development)
 
@@ -53,13 +58,13 @@ That's it — the connector spawns each Type 1 child via `tsx` (no build), dials
 **Type 1** (you write the tools):
 
 ```bash
-mkdir -p examples/my-mcp/tools
-# write examples/my-mcp/tools/<tool>.ts files (Tool interface from @mcp-shim/connector/sdk)
-# write examples/my-mcp/server.ts: createMcpHttpServer({name, tools})
+mkdir -p mcp/local/my-mcp/tools
+# write mcp/local/my-mcp/tools/<tool>.ts files (Tool interface from @mcp-shim/connector/sdk)
+# write mcp/local/my-mcp/server.ts: createMcpHttpServer({name, tools})
 # add an entry to packages/connector/connector.yaml:
 #   - name: my-mcp
 #     transport: http
-#     dir: ../../examples/my-mcp
+#     dir: ../../mcp/local/my-mcp
 ```
 
 No `package.json` if you only need `zod` and the SDK (both resolve from the repo's root `node_modules`). Add a per-folder `package.json` only if you need a third-party SDK — see the sibling `twilio-mcp-shim/` project for a real-world example of a Twilio-authored MCP packaged as its own deployment.
@@ -70,12 +75,22 @@ No `package.json` if you only need `zod` and the SDK (both resolve from the repo
 - name: salesforce
   transport: http
   endpoint: https://salesforce-mcp.example.com/mcp
-  dir: ../../examples/salesforce-mcp     # optional, for the .env
+  dir: ../../mcp/external/salesforce     # optional, for the .env
 
 - name: filesystem
   transport: stdio
   command: [npx, "--yes", "@modelcontextprotocol/server-filesystem", /tmp]
 ```
+
+**Type 3** (use a bundled, Twilio-authored MCP):
+
+```yaml
+- name: enterprise_knowledge
+  bundled: enterprise-knowledge
+  dir: ../../mcp/bundled/enterprise-knowledge   # for the .env
+```
+
+The bundle's source lives in the sibling repo `mcp-shim-bundled/`. The connector image installs it into `/opt/bundled-mcps/enterprise-knowledge/`; in dev, `start-connector.sh` auto-points at the sibling working tree if checked out.
 
 ## Inspector
 

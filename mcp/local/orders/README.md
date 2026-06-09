@@ -39,7 +39,7 @@ entry already exists in `packages/connector/connector.yaml.example`:
 ```yaml
 - name: orders
   transport: http
-  dir: ../../examples/orders-mcp-server
+  dir: ../../mcp/local/orders
 ```
 
 From the repo root:

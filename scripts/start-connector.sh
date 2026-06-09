@@ -56,6 +56,28 @@ fi
 echo "[start-connector] sourcing $ENV_FILE"
 set -a; source "$ENV_FILE"; set +a
 
+# Type 3 bundles: when running on the host (not in the connector image), the
+# in-image path /opt/bundled-mcps/<name>/ doesn't exist. For each bundle that
+# has a dev-launch.sh in the sibling mcp-shim-bundled/ repo, auto-export the
+# BUNDLE_DEV_OVERRIDE_<UPPER_NAME> env var so the connector spawns the local
+# working tree instead. Skips silently if the sibling repo isn't there — the
+# connector will then fail at boot with a clear "unknown bundle" message,
+# which is the right signal.
+BUNDLES_DIR="${BUNDLES_DIR:-$ROOT/../mcp-shim-bundled}"
+if [ -d "$BUNDLES_DIR" ]; then
+  for launcher in "$BUNDLES_DIR"/*/dev-launch.sh; do
+    [ -x "$launcher" ] || continue
+    bundle_name="$(basename "$(dirname "$launcher")")"
+    upper_name="$(printf "%s" "$bundle_name" | tr 'a-z-' 'A-Z_')"
+    var="BUNDLE_DEV_OVERRIDE_${upper_name}"
+    # Don't clobber a user-supplied override.
+    if [ -z "${!var:-}" ]; then
+      export "$var=$launcher"
+      echo "[start-connector] dev-override $var=$launcher"
+    fi
+  done
+fi
+
 echo "[start-connector] starting connector with CONNECTOR_CONFIG=$YAML_FILE"
 CONNECTOR_CONFIG="$YAML_FILE" node "$CONNECTOR_BIN" start &
 
