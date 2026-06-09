@@ -10,11 +10,15 @@ import { randomBytes } from "node:crypto";
 //
 // Asks for tunnel.controller_url, tunnel.name, then walks the user
 // through adding mcp_servers entries:
-//   Type 1 — customer-authored. Folder under examples/<name>/ that holds
+//   Type 1 — customer-authored. Folder under mcp/local/<name>/ that holds
 //            tools/*.ts + server.ts. Renders as `transport: http` + `dir:`,
 //            no endpoint (the connector spawns it + auto-assigns a port).
 //   Type 2 — connect to an existing MCP server. Either http with endpoint
 //            or stdio with a command. Optional dir for the entry's .env.
+//   Type 3 — bundled, Twilio-authored, pre-installed in this image. Set
+//            `bundled: <name>` against a name in BUNDLED_MCPS; supply only
+//            an .env under mcp/bundled/<name>/. Not surfaced in this wizard
+//            yet — edit the yaml directly (see connector.yaml.example).
 //
 // The yaml uses ${VAR} interpolation against process.env, so init prints a
 // .env snippet to paste and never writes secrets to the yaml.
@@ -123,7 +127,7 @@ async function promptServer(rl: ReturnType<typeof createInterface>, n: number): 
 
   if (choice === "1") {
     const name = await askRequired(rl, "  name (used by the controller; appears as a tool prefix)");
-    const dir = resolve(await ask(rl, "  dir (folder for tools/ + server.ts)", `examples/${name}-mcp-server`));
+    const dir = resolve(await ask(rl, "  dir (folder for tools/ + server.ts)", `mcp/local/${name}`));
     return { name, kind: "type1", dir };
   }
   if (choice === "2") {

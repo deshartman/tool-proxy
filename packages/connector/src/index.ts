@@ -435,6 +435,11 @@ function sameMcpServers(
     if (s.transport === "stdio" && t.transport === "stdio") {
       if (s.command.length !== t.command.length) return false;
       if (s.command.some((c, j) => c !== t.command[j])) return false;
+      // `bundled` carries the user-facing Type 3 identifier even after we've
+      // resolved it to a synthetic stdio spec. Compared so an edit from
+      // `bundled: a` to `bundled: b` is detected even if both happen to
+      // resolve to identical commands (or both resolve via dev override).
+      if (s.bundled !== t.bundled) return false;
     }
     if (s.dir !== t.dir) return false;
     return sameStringMap(s.env, t.env);

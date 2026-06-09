@@ -2,7 +2,7 @@
 # (gitignored), then edit the mcp_servers list to declare which MCPs this
 # connector exposes.
 #
-# Two MCP shapes are supported:
+# Three MCP shapes are supported:
 #
 #   Type 1 — customer-authored HTTP MCP server.
 #     The connector spawns server.ts as a child via tsx and auto-assigns a
@@ -13,6 +13,12 @@
 #     The connector dials a server you (or someone else) already runs.
 #     Either `transport: http` with `endpoint:` set, or `transport: stdio`
 #     with `command:` set. No customer-authored code needed.
+#
+#   Type 3 — bundled, Twilio-authored MCP pre-installed in this image.
+#     The connector resolves `bundled: <name>` against the BUNDLED_MCPS
+#     registry baked into the image; the customer supplies only a `.env`
+#     in the entry's `dir:`. No code, no `pip install`. Bundle source
+#     lives in the sibling repo `mcp-shim-bundled/`.
 #
 # Vars like ${CONTROLLER_URL} are interpolated from packages/connector/.env.
 # The connector identifies itself by `name` on first connect; the controller
@@ -33,11 +39,11 @@ mcp_servers:
   # ── Type 1 (customer-authored, auto-spawned) ─────────────────────────
   - name: sample
     transport: http
-    dir: ../../examples/sample-mcp-server
+    dir: ../../mcp/local/sample
 
   - name: orders
     transport: http
-    dir: ../../examples/orders-mcp-server
+    dir: ../../mcp/local/orders
 
   # ── Type 2 (external MCP, pure config) ───────────────────────────────
   # No code in the dir — just .env and a README. Connector spawns the
@@ -45,7 +51,18 @@ mcp_servers:
   - name: aviation-weather
     transport: stdio
     command: [npx, "--yes", aviation-weather-mcp]
-    dir: ../../examples/aviation-weather-mcp
+    dir: ../../mcp/external/aviation-weather
+
+  # ── Type 3 (bundled, pre-installed in the image) ─────────────────────
+  # Bundle source lives in the sibling repo `mcp-shim-bundled/`; the image
+  # build installs each registered bundle into its own venv. Customer
+  # supplies only a `.env` (creds, vector store DSN, embedding config) in
+  # the entry's `dir:`. Uncomment once the connector image is built with
+  # the bundle pinned (see step 3 of LLAMA-INDEX.md).
+  # - name: enterprise_knowledge
+  #   bundled: enterprise-knowledge
+  #   dir: ../../mcp/bundled/enterprise-knowledge
+  #   timeout_ms: 600000   # ingest is slow at save time; runtime queries are fast
 
 policy:
   fail_mode: fail_fast

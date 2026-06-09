@@ -29,7 +29,7 @@ The connector entry is in [`packages/connector/connector.yaml`](../../packages/c
 - name: aviation-weather
   transport: stdio
   command: [npx, "--yes", aviation-weather-mcp]
-  dir: ./examples/aviation-weather-mcp
+  dir: ../../mcp/external/aviation-weather
 ```
 
 `dir:` points the connector at this folder so per-folder `.env` (if any)

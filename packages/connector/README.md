@@ -57,10 +57,10 @@ To pick up `mcp_servers` changes, restart the connector — those connections ar
 
 ### Author a Type 1 MCP
 
-Drop a folder under `examples/<name>/`:
+Drop a folder under `mcp/local/<name>/`:
 
 ```ts
-// examples/my-mcp/tools/echo.ts
+// mcp/local/my-mcp/tools/echo.ts
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
@@ -77,7 +77,7 @@ export const echo: Tool = {
 ```
 
 ```ts
-// examples/my-mcp/server.ts
+// mcp/local/my-mcp/server.ts
 import { createMcpHttpServer } from "@mcp-shim/connector/sdk";
 import { echo } from "./tools/echo.js";
 
@@ -88,7 +88,7 @@ await createMcpHttpServer({ name: "my-mcp", tools: [echo] });
 # packages/connector/connector.yaml
 - name: my-mcp
   transport: http
-  dir: ../../examples/my-mcp
+  dir: ../../mcp/local/my-mcp
 ```
 
 No `package.json`, no build step, no port to pick. The connector spawns `tsx server.ts` for you.
@@ -112,7 +112,10 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 | `public/` | inspector UI assets (HTML/JS/CSS) |
 | `package.json` | metadata + the `bin` entry |
 | `node_modules/` (production only) | `npm prune --omit=dev` in the build stage; includes `tsx` (used by the spawner) |
-| `/app/examples/` | Type 1 source folders; the spawner runs `tsx /app/examples/<name>/server.ts` for entries with `dir:` set |
+| `/app/mcp/local/` | Type 1 source folders; the spawner runs `tsx /app/mcp/local/<name>/server.ts` for entries with `dir:` set |
+| `/app/mcp/external/` | Type 2 stubs (per-MCP `.env.example`); customer mounts a `.env` next to it for credentials |
+| `/app/mcp/bundled/` | Type 3 stubs (per-bundle `.env.example`); customer mounts a `.env` next to it for credentials |
+| `/opt/bundled-mcps/<name>/.venv/` | Pre-installed Python venv per Type 3 bundle; the connector spawns `<entrypoint>` from `BUNDLED_MCPS` |
 
 ## Run standalone
 

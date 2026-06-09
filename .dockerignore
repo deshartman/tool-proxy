@@ -1,9 +1,16 @@
-# Build outputs and deps — rebuilt inside the image.
+# Build outputs and deps — rebuilt inside the image. Need both root and
+# nested patterns: docker's globs don't recurse, so a bare `*.tsbuildinfo`
+# would let `packages/connector/tsconfig.tsbuildinfo` slip through and
+# cause `tsc --build` inside the container to skip emit (it sees the
+# cached buildinfo and thinks the output is already there — but `dist/`
+# was correctly excluded, so postbuild then fails on the missing
+# dist/index.js).
 node_modules
 **/node_modules
 dist
 **/dist
 *.tsbuildinfo
+**/*.tsbuildinfo
 
 # Secrets and live config — never ship these in an image layer.
 .env
@@ -22,8 +29,11 @@ packages/connector/config/connector-*.yaml
 .DS_Store
 *.log
 
-# Examples and docs aren't needed inside the connector image.
-examples
+# Docs and scripts aren't needed inside the connector image. `mcp/` IS
+# shipped — Type 1 entries in connector.yaml reference mcp/local/<name>/
+# at runtime and the spawner needs the source tree on disk; Type 2/3
+# entries reference mcp/external/<name>/ + mcp/bundled/<name>/ via dir:
+# for per-entry .env loading.
 docs
 README.md
 CLAUDE.md
