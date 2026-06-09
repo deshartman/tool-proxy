@@ -1,0 +1,36 @@
+name: enterprise-knowledge
+
+# Smoke-tests the enterprise-knowledge bundle. Lives under mcp/bundled/ so it
+# only runs when the bundle (or this workflow) changes — the connector core
+# has its own CI signal.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bundles/enterprise-knowledge/**"
+      - ".github/workflows/enterprise-knowledge.yml"
+  pull_request:
+    paths:
+      - "bundles/enterprise-knowledge/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bundles/enterprise-knowledge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e .
+      - name: Smoke test (tools/list)
+        run: |
+          {
+            printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
+            printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+            printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+            sleep 1
+          } | customer-ek-mcp | grep -q '"name":"ek_query"'
