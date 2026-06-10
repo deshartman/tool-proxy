@@ -41,9 +41,9 @@ mcp_servers:
     transport: http
     dir: ../../mcp/local/sample
 
-  - name: orders
+  - name: crm
     transport: http
-    dir: ../../mcp/local/orders
+    dir: ../../mcp/local/crm
 
   # ── Type 2 (external MCP, pure config) ───────────────────────────────
   # No code in the dir — just .env and a README. Connector spawns the

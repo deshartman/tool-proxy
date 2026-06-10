@@ -22,7 +22,7 @@ packages/
 mcp/
   local/
     sample/                   Type 1 — now, slow_echo, uuid, weather
-    orders/                   Type 1 — Refund Eligibility procedure fixtures
+    crm/                      Type 1 — get_customer / get_recent / issue_refund (thin client over mock/customers/)
   external/
     aviation-weather/         Type 2 — pure config; spawns published `aviation-weather-mcp` via stdio
   bundled/
