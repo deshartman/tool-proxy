@@ -146,7 +146,7 @@ export class Dispatcher {
   }
 
   private log(line: string): void {
-    (this.deps.log ?? console.log)(`[dispatcher] ${line}`);
+    this.deps.log?.(line);
   }
 }
 

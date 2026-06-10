@@ -12,6 +12,13 @@ import { runDiscover } from "./discover.js";
 import { runInit } from "./init.js";
 import { spawnType1Children, shutdownChildren, type SpawnedChild } from "./spawner.js";
 import { readState, writeState, defaultStatePath, type ConnectorState } from "./state.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("connector");
+// Adapter for downstream callbacks that take `(msg: string) => void`.
+// Spawner and Dispatcher were designed around a plain string callback;
+// .bind() gives them a Pino-info function with that exact shape.
+const logLine = log.info.bind(log);
 
 const USAGE = `usage: mcp-connector <command> [options]
 
@@ -95,25 +102,28 @@ async function main() {
   const identityStatus = state.registrationToken
     ? `reconnect (token len=${state.registrationToken.length})`
     : `first-connect (name="${config.tunnel.name}")`;
-  log(`config loaded: name=${config.tunnel.name} environment=${config.tunnel.environment} auth_token=${authStatus} identity=${identityStatus}`);
+  log.info(
+    { name: config.tunnel.name, environment: config.tunnel.environment, authToken: authStatus, identity: identityStatus },
+    `config loaded`
+  );
 
   // 1a. Spawn Type 1 children (http transport + dir + no endpoint). Mutates
   // the spec list to fill in `endpoint` so the dispatch path below sees a
   // uniform shape.
-  const spawned: SpawnedChild[] = await spawnType1Children(config.mcp_servers, { log });
+  const spawned: SpawnedChild[] = await spawnType1Children(config.mcp_servers, { log: logLine });
   if (spawned.length > 0) {
     const summary = spawned.map((c) => c.name + "=" + c.port).join(", ");
-    log(`spawned ${spawned.length} Type 1 child(ren): ${summary}`);
+    log.info({ count: spawned.length, children: summary }, `spawned Type 1 children`);
   }
 
   // 1b. Connect to all local MCP servers in parallel. Fail fast if any are unreachable.
-  log(`connecting to ${config.mcp_servers.length} local MCP server(s)...`);
+  log.info(`connecting to ${config.mcp_servers.length} local MCP server(s)`);
   const servers = await connectAll(config.mcp_servers);
-  log(`connected to local servers: ${[...servers.keys()].join(", ")}`);
+  log.info({ servers: [...servers.keys()] }, `connected to local servers`);
 
   // 2. Build initial manifest.
   let manifest: ToolManifest = await buildManifest(config, servers, version);
-  log(`built manifest with ${countTools(manifest)} tool(s)`);
+  log.info({ tools: countTools(manifest) }, `built manifest`);
 
   // The yaml carries `controller_url` (HTTPS root, used for the register API
   // and shown in the inspector). TunnelClient upgrades https:// → wss:// and
@@ -162,12 +172,12 @@ async function main() {
   // Graceful shutdown.
   const shutdown = (signal: string) => {
     shuttingDown = true;
-    log(`received ${signal} — shutting down`);
+    log.info({ signal }, `shutting down`);
     cancelAutoReconnect();
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (discoveryTimer) clearInterval(discoveryTimer);
     tunnel?.close(`signal:${signal}`);
-    void shutdownChildren(spawned, log);
+    void shutdownChildren(spawned, logLine);
     void closeServers(servers).then(() => process.exit(0));
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -176,15 +186,15 @@ async function main() {
   // ─── connect / reconnect ────────────────────────────────────────────────
   async function connectTunnel(reason: string): Promise<void> {
     inspector?.setState("connecting");
-    log(`tunnel ${reason}: dialing ${tunnelDialUrl}`);
+    log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
     const t = new TunnelClient(tunnelDialUrl, authToken);
-    t.onerror = (e) => log(`tunnel error: ${e.message}`);
+    t.onerror = (e) => log.error({ err: e }, `tunnel error`);
     if (inspector) {
       t.onstate = (s) => inspector.setState(s);
       t.ontap = (tap) => inspector.recordTap(tap);
     }
     t.onclose = () => {
-      log(`tunnel closed`);
+      log.info(`tunnel closed`);
       stopTimers();
       // SIGTERM/SIGINT and the manual /reconnect path both close the tunnel
       // intentionally — they handle their own bookkeeping. Auto-reconnect
@@ -198,7 +208,7 @@ async function main() {
       // in 'closed' until the operator clicks Reconnect (which clears the
       // flag) or restarts the connector with a fresh state file.
       if (registrationRejected) {
-        log(`auto-reconnect suppressed: controller rejected the registration — clear .connector-state.json and click Reconnect`);
+        log.warn(`auto-reconnect suppressed: controller rejected the registration — clear .connector-state.json and click Reconnect`);
         return;
       }
       scheduleAutoReconnect();
@@ -207,13 +217,13 @@ async function main() {
     try {
       await t.connect();
     } catch (e) {
-      log(`tunnel connect failed: ${(e as Error).message}`);
+      log.error({ err: e as Error }, `tunnel connect failed`);
       inspector?.setState("closed");
       return;
     }
 
     tunnel = t;
-    log(`tunnel connected to ${tunnelDialUrl}`);
+    log.info({ url: tunnelDialUrl }, `tunnel connected`);
 
     // Listen for register-ack to capture a freshly-minted registrationToken
     // on first connect. Mounted before sending register so we don't miss the
@@ -222,7 +232,7 @@ async function main() {
     t.onframe = (frame) => {
       if (frame.type === "register-ack") {
         if (frame.error) {
-          log(`register-ack rejected: code=${frame.error.code} message=${frame.error.message}`);
+          log.error({ code: frame.error.code, message: frame.error.message }, `register-ack rejected`);
           registrationRejected = true;
           return;
         }
@@ -231,20 +241,19 @@ async function main() {
         // the backoff at the bottom of the curve.
         registrationRejected = false;
         if (reconnectAttempt > 0) {
-          log(`tunnel healthy — resetting reconnect attempts (was ${reconnectAttempt})`);
+          log.info({ priorAttempts: reconnectAttempt }, `tunnel healthy — reset reconnect attempts`);
           reconnectAttempt = 0;
         }
         if (frame.registrationToken && frame.registrationToken !== state.registrationToken) {
           state.registrationToken = frame.registrationToken;
           try {
             writeState(state, statePath);
-            log(`register-ack ok — persisted registrationToken to ${statePath}`);
+            log.info({ statePath }, `register-ack ok — persisted registrationToken`);
           } catch (e) {
-            log(`register-ack: failed to persist token: ${(e as Error).message}`);
+            log.error({ err: e as Error }, `register-ack: failed to persist token`);
           }
         } else if (frame.accepted) {
-          const idForLog = frame.connectorId ?? "?";
-          log(`register-ack ok — bound to existing record ${idForLog}`);
+          log.info({ connectorId: frame.connectorId ?? "?" }, `register-ack ok — bound to existing record`);
         }
       }
     };
@@ -255,15 +264,18 @@ async function main() {
       name: config.tunnel.name,
       ...(state.registrationToken ? { registrationToken: state.registrationToken } : {}),
     });
-    log(`register frame sent`);
+    log.info(`register frame sent`);
 
-    // Wire dispatcher to this tunnel instance.
+    // Wire dispatcher to this tunnel instance. Dispatcher gets its own
+    // 'dispatcher' child logger so its lines carry the right component tag
+    // — distinct from the connector's own boot/lifecycle lines.
+    const dispatcherLog = createLogger("dispatcher");
     new Dispatcher({
       config,
       servers,
       getManifest: () => manifest,
       tunnel: t,
-      log,
+      log: dispatcherLog.info.bind(dispatcherLog),
     }).attach();
 
     startTimers();
@@ -283,7 +295,7 @@ async function main() {
       // suppression so the new attempt can land — and so the next blip
       // resumes the auto-reconnect loop.
       registrationRejected = false;
-      log(`reconnect requested: ${reason}`);
+      log.info({ reason }, `reconnect requested`);
       stopTimers();
       tunnel?.close("reconnect");
       tunnel = undefined;
@@ -295,12 +307,12 @@ async function main() {
         const next = loadConfig(configPath!);
         if (sameMcpServers(config.mcp_servers, next.mcp_servers)) {
           Object.assign(config, { policy: next.policy });
-          log(`reconnect: YAML reloaded`);
+          log.info(`reconnect: YAML reloaded`);
         } else {
-          log(`reconnect: mcp_servers list changed in YAML — restart required to pick that up; using prior list`);
+          log.warn(`reconnect: mcp_servers list changed in YAML — restart required to pick that up; using prior list`);
         }
       } catch (e) {
-        log(`reconnect: YAML reload failed (${(e as Error).message}) — using last-known config`);
+        log.warn({ err: e as Error }, `reconnect: YAML reload failed — using last-known config`);
       }
 
       // Rebuild manifest against the (possibly updated) config. Updates
@@ -334,12 +346,12 @@ async function main() {
     const policy = config.policy.reconnect;
     reconnectAttempt += 1;
     if (policy.max_attempts > 0 && reconnectAttempt > policy.max_attempts) {
-      log(`auto-reconnect: gave up after ${policy.max_attempts} attempt(s); inspector stays in 'closed' until manual reconnect`);
+      log.warn({ maxAttempts: policy.max_attempts }, `auto-reconnect: gave up; inspector stays in 'closed' until manual reconnect`);
       reconnectAttempt = 0;
       return;
     }
     const delayMs = nextReconnectDelay(reconnectAttempt, policy);
-    log(`auto-reconnect: attempt ${reconnectAttempt} in ${delayMs}ms`);
+    log.info({ attempt: reconnectAttempt, delayMs }, `auto-reconnect scheduled`);
     inspector?.setReconnecting({ attempt: reconnectAttempt, nextDelayMs: delayMs });
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined;
@@ -362,10 +374,13 @@ async function main() {
       inspector?.setManifest(next);
       if (!isEmptyDelta(delta)) {
         tunnel?.send({ type: "manifest-delta", delta });
-        log(`pushed manifest-delta: +${delta.added.length}/-${delta.removed.length}/~${delta.changed.length}`);
+        log.info(
+          { added: delta.added.length, removed: delta.removed.length, changed: delta.changed.length },
+          `pushed manifest-delta`
+        );
       }
     } catch (e) {
-      log(`discovery refresh failed: ${(e as Error).message}`);
+      log.error({ err: e as Error }, `discovery refresh failed`);
     }
   }
 
@@ -373,14 +388,14 @@ async function main() {
     try {
       const next = loadConfig(configPath!);
       if (!sameMcpServers(config.mcp_servers, next.mcp_servers)) {
-        log(`SIGHUP: mcp_servers list changed — restart required for live reconnect; ignoring this reload`);
+        log.warn(`SIGHUP: mcp_servers list changed — restart required for live reconnect; ignoring this reload`);
         return;
       }
       Object.assign(config, { policy: next.policy });
-      log(`SIGHUP: config reloaded`);
+      log.info(`SIGHUP: config reloaded`);
       await refreshManifestAndPushDelta();
     } catch (e) {
-      log(`SIGHUP reload failed: ${(e as Error).message}`);
+      log.error({ err: e as Error }, `SIGHUP reload failed`);
     }
   }
 }
@@ -457,11 +472,7 @@ async function closeServers(servers: Map<string, McpServerConnection>): Promise<
   await Promise.all([...servers.values()].map((s) => s.close().catch(() => undefined)));
 }
 
-function log(msg: string): void {
-  console.log(`[connector] ${msg}`);
-}
-
 dispatch().catch((e) => {
-  console.error("connector startup failed:", e);
+  log.fatal({ err: e as Error }, `connector startup failed`);
   process.exit(1);
 });

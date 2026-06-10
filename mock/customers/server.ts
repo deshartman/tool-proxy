@@ -10,9 +10,26 @@
 
 import http from "node:http";
 import { URL } from "node:url";
+import { pino } from "pino";
 import { lookupByPhone, lookupByEmail, lookupOrder, mostRecent } from "./data.js";
 
 const PORT = Number(process.env.PORT ?? 7400);
+
+// Mirror the connector's logger shape: pretty in TTY, JSON in non-TTY.
+// This package doesn't depend on @mcp-shim/connector/sdk, so the setup is
+// inlined rather than imported.
+const pretty = process.env.NODE_ENV !== "production" && Boolean(process.stdout.isTTY);
+const log = pino({
+  level: process.env.LOG_LEVEL ?? "info",
+  ...(pretty
+    ? {
+        transport: {
+          target: "pino-pretty",
+          options: { colorize: true, translateTime: "HH:MM:ss.l", ignore: "pid,hostname", messageFormat: "{component} | {msg}" },
+        },
+      }
+    : {}),
+}).child({ component: "mock-customers" });
 
 function send(res: http.ServerResponse, status: number, body: unknown): void {
   const payload = typeof body === "string" ? body : JSON.stringify(body, null, 2);
@@ -70,11 +87,11 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[mock-customers] listening on http://localhost:${PORT}`);
+  log.info({ port: PORT, url: `http://localhost:${PORT}` }, `listening`);
 });
 
 const shutdown = (sig: string) => {
-  console.log(`[mock-customers] received ${sig}, closing`);
+  log.info({ signal: sig }, `received signal — closing`);
   server.close(() => process.exit(0));
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));

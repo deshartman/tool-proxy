@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Tool } from "./tool.js";
+import { createLogger } from "../logger.js";
 
 export interface CreateMcpHttpServerOptions {
   name: string;
@@ -61,7 +62,8 @@ export function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Promise<M
     http.listen(requestedPort, () => {
       const addr = http.address();
       const port = typeof addr === "object" && addr ? addr.port : requestedPort;
-      console.log(`[${opts.name}] listening on http://localhost:${port}/mcp (tools: ${opts.tools.map((t) => t.name).join(", ")})`);
+      const log = createLogger(opts.name);
+      log.info({ port, url: `http://localhost:${port}/mcp`, tools: opts.tools.map((t) => t.name) }, `listening`);
       resolveListen({
         port,
         close: () => new Promise<void>((res) => http.close(() => res())),

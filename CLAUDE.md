@@ -79,7 +79,9 @@ Type 1 servers use a stateful `StreamableHTTPServerTransport` with `randomUUID` 
 | `discover` | [packages/connector/src/discover.ts](packages/connector/src/discover.ts) | non-interactive `tools/list` per server, then exits |
 | `version` | inline | prints `CONNECTOR_VERSION` or `dev` |
 
-A startup boot log in `main()` prints `auth_token=set (len=N) | absent` so a silently-unauthenticated connector is impossible to miss. Don't remove it.
+A startup boot log in `main()` prints `authToken: "set (len=N)" | "absent"` so a silently-unauthenticated connector is impossible to miss. Don't remove it.
+
+Logging is **Pino** ([packages/connector/src/logger.ts](packages/connector/src/logger.ts)) — pretty-printed in dev TTY, raw JSON in non-TTY (CI / `> log.txt` / Docker). Set `LOG_LEVEL=debug` to raise verbosity. Every component (`connector`, `dispatcher`, `inspector`, each Type 1 MCP, `mock-customers`) gets a child logger via `createLogger('component')`, and the bound `component:` field replaces the old `[component]` line prefixes. Type 1 MCP authors get the same logger via `import { createLogger } from "@mcp-shim/connector/sdk"`. Don't reintroduce `console.log` for runtime telemetry — CLI commands (`init`, `discover`, `--help` / `--version`) are the only place direct stdout writes belong, since their output is user-facing CLI text, not telemetry.
 
 ## Common commands
 

@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import type { FrameTap, WsState } from "../tunnel/client.js";
 import type { ToolManifest } from "../tunnel/frames.js";
+import { createLogger } from "../logger.js";
+
+const log = createLogger("inspector");
 
 // Inspector exposes a "reconnecting" state on top of the tunnel's WsState —
 // the tunnel itself only knows connecting/open/closed; the reconnecting
@@ -157,7 +160,7 @@ export function startInspector(port: number, inspector: Inspector): void {
   server.keepAliveTimeout = 0;
   server.listen(port, () => {
     const snap = inspector.snapshot();
-    const url = snap.kind === "snapshot" ? snap.controllerUrl : "?";
-    console.log(`[inspector] http://localhost:${port}/  (watching ${url})`);
+    const controllerUrl = snap.kind === "snapshot" ? snap.controllerUrl : "?";
+    log.info({ port, url: `http://localhost:${port}/`, controllerUrl }, `listening`);
   });
 }
