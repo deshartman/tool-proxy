@@ -61,7 +61,7 @@ The `@mcp-shim/connector` package is publishable (`exports`, `bin`, and `name` a
 - **`packages/connector/src/sdk/`** — the surface customer-authored Type 1 servers import. `Tool` interface + `createMcpHttpServer({name, tools, port?})` factory. Re-exported from `@mcp-shim/connector/sdk`.
 - **`packages/connector/src/spawner.ts`** — auto-port probe + child supervisor for Type 1 entries. Resolves `tsx` from the connector's own `node_modules` (going via `tsx/package.json` because tsx's `exports` map blocks subpath access to `dist/cli.mjs`).
 - **`mcp/local/sample`** — Type 1 demo. `tools/now.ts`, `slow-echo.ts`, `uuid.ts`, `weather.ts` (weather.gov, US-only) + a 5-line `server.ts`. No `package.json` deps; `zod` resolves to repo root.
-- **`mcp/local/orders`** — Type 1 demo with in-memory order fixtures used by the Refund Eligibility procedure on the controller side.
+- **`mcp/local/crm`** — Type 1 demo: thin client over the mock customer service at `mock/customers/`. Exposes `get_customer` (identity), `get_recent` (most-recent order), `issue_refund` (side-effect). Used by the Refund Eligibility procedure on the controller side.
 - **`mcp/external/aviation-weather`** — Type 2 demo. Pure config — README + `.env.example` only. The yaml entry is `command: [npx, "--yes", aviation-weather-mcp]` and the connector spawns the published npm package via stdio.
 - **`mcp/bundled/enterprise-knowledge`** — Type 3 config stub. Just a `.env.example`. Bundle *source* lives at [`bundles/enterprise-knowledge/`](bundles/enterprise-knowledge/); this folder exists so the customer's yaml can `dir: ../../mcp/bundled/enterprise-knowledge` and the standard per-entry `.env` loader picks up the customer's secrets without dragging the bundle's source into the runtime image.
 - **`bundles/enterprise-knowledge`** — Type 3 source. Python package (`pyproject.toml`, `src/customer_ek_mcp/`, `migrations/`, `dev-launch.sh`). Read by `pip install` during the Dockerfile's bundle-build stage to populate `/opt/bundled-mcps/enterprise-knowledge/.venv/` in the runtime image; the source tree itself does *not* ship.
@@ -88,7 +88,7 @@ A startup boot log in `main()` prints `auth_token=set (len=N) | absent` so a sil
 npm install
 npm run build
 
-# Type 1 MCPs in mcp/local/ (sample, orders) have no per-folder
+# Type 1 MCPs in mcp/local/ (sample, crm) have no per-folder
 # package.json — zod and the SDK resolve from repo root, so no per-MCP
 # install step is needed. (Type 1 MCPs that DO need a third-party SDK
 # should install in their own folder; today the productized example of
@@ -177,7 +177,7 @@ IMAGE=registry/mcp-connector:0.1.0 PUSH=1 ./scripts/build-image.sh  # multi-arch
 
 [packages/connector/Dockerfile](packages/connector/Dockerfile) is multi-stage; runtime image carries the connector's `dist/` + `public/` + production `node_modules` (incl. `tsx`) + the `mcp/` tree + Python venvs for Type 3 bundles under `/opt/bundled-mcps/<name>/`. The `mcp/` tree is bundled because Type 1 entries in `connector.yaml` reference them via `dir:` and the spawner must be able to `tsx <dir>/server.ts`. Customers who want their own Type 1 MCPs extend the image with additional folders under `/app/mcp/local/`.
 
-The build stage runs `npm install --omit=dev --no-package-lock` inside any `mcp/local/*/` or `mcp/external/*/` that has a non-empty `dependencies` block (today: none — the `for` loop is a no-op until someone drops in an MCP with its own SDK). MCPs without `package.json` (sample, orders, aviation-weather) need nothing extra — `zod` and `@mcp-shim/connector/sdk` resolve up to `/app/node_modules`.
+The build stage runs `npm install --omit=dev --no-package-lock` inside any `mcp/local/*/` or `mcp/external/*/` that has a non-empty `dependencies` block (today: none — the `for` loop is a no-op until someone drops in an MCP with its own SDK). MCPs without `package.json` (sample, crm, aviation-weather) need nothing extra — `zod` and `@mcp-shim/connector/sdk` resolve up to `/app/node_modules`.
 
 [scripts/build-image.sh](scripts/build-image.sh) defaults to `linux/amd64,linux/arm64` (Graviton + ARM Macs). Per-cloud guides at [docs/deploy/](docs/deploy/) (AWS Fargate, Azure Container Apps, GCP GKE) document the foot-guns of each platform — most importantly, **don't put a load balancer in front of the connector** (nothing inbound) and **don't use Cloud Run / App Service / scale-to-zero anything** (kills the WSS).
 

@@ -1,8 +1,9 @@
-// Inspector UI — vanilla JS. Streams frames from /events (SSE) and renders:
+// Inspector UI — vanilla JS. Streams frames from /events (SSE).
 //   left col:  manifest (with Available Tools) on top + frames log below
-//   right col: each tool's MCP-shape card (registerTool-style) stacked vertically
-// Clicking a row in Available Tools highlights the matching tool card on the
-// right and scrolls it into view.
+//   right col: detail pane — empty until the user clicks a tool or frame.
+// Selection is a single piece of state with two shapes; renderDetail() switches
+// on it. Frame rows in the log are click-to-select; their body is rendered on
+// the right, not inline.
 
 const elStatus = document.getElementById('status');
 const elController = document.getElementById('controller-url');
@@ -18,11 +19,15 @@ const elClear = document.getElementById('clear');
 const elReconnect = document.getElementById('reconnect');
 const elMain = document.getElementById('main');
 const elResizer = document.getElementById('col-resizer');
-const elToolsEmpty = document.getElementById('tools-empty');
-const elToolsList = document.getElementById('tools-list');
+const elDetailTitle = document.getElementById('detail-title');
+const elDetailEmpty = document.getElementById('detail-empty');
+const elDetailContent = document.getElementById('detail-content');
 
 let showHeartbeats = false;
-let selectedToolKey = null;     // `${server}.${tool}`
+// selection: null | { kind: 'tool', key, tool, serverName } | { kind: 'frame', tap, frameId }
+let selection = null;
+let lastManifest = null;
+let frameSeq = 0;
 
 elShowHb.addEventListener('change', () => {
   showHeartbeats = elShowHb.checked;
@@ -37,6 +42,7 @@ elClear.addEventListener('click', () => {
   li.className = 'empty-msg';
   li.textContent = 'No frames yet.';
   elFrames.appendChild(li);
+  if (selection?.kind === 'frame') setSelection(null);
 });
 
 elReconnect.addEventListener('click', async () => {
@@ -76,7 +82,6 @@ function escapeHtml(s) {
 
 function jsonStr(v) { return JSON.stringify(v); }
 
-// JSON Schema property → Zod-like syntax.
 function zodExpr(prop) {
   if (!prop || typeof prop !== 'object') return 'z.unknown()';
   if (Array.isArray(prop.enum)) {
@@ -94,9 +99,6 @@ function zodExpr(prop) {
   }
 }
 
-// Token-based rendering: each token is [cssClass | null, text].
-// At the end we map to escaped HTML, so source text never goes through innerHTML
-// without escaping.
 function appendSchemaTokens(tokens, schema, indent) {
   const T = (cls, text) => tokens.push([cls, text]);
   const NL = () => tokens.push([null, '\n']);
@@ -164,10 +166,12 @@ function renderToolShape(tool) {
 }
 
 function renderManifest(m) {
+  lastManifest = m;
   if (!m) {
     elManifest.hidden = true;
     elManifestEmpty.hidden = false;
-    renderTools(null);
+    elMServers.replaceChildren();
+    if (selection?.kind === 'tool') setSelection(null);
     return;
   }
   elManifest.hidden = false;
@@ -178,11 +182,16 @@ function renderManifest(m) {
 
   elMServers.replaceChildren();
   for (const s of m.servers) {
-    const card = buildServerCard(s);
-    elMServers.appendChild(card);
+    elMServers.appendChild(buildServerCard(s));
   }
-  renderTools(m);
-  applySelection();
+  // Drop selection if the selected tool no longer exists.
+  if (selection?.kind === 'tool') {
+    const stillThere = m.servers.some(
+      (s) => s.name === selection.serverName && s.tools.some((t) => t.name === selection.tool.name)
+    );
+    if (stillThere) applySelectionHighlight();
+    else setSelection(null);
+  }
 }
 
 function buildServerCard(s) {
@@ -214,51 +223,126 @@ function buildToolRow(serverName, t) {
     <span class="verdict ready">Ready</span>
   `;
   row.addEventListener('click', () => {
-    selectedToolKey = row.dataset.key;
-    applySelection();
-    const card = document.querySelector(`.tool-card[data-key="${CSS.escape(selectedToolKey)}"]`);
-    card?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    setSelection({ kind: 'tool', key: row.dataset.key, tool: t, serverName });
   });
   return row;
 }
 
-function renderTools(m) {
-  if (!m || m.servers.every((s) => s.tools.length === 0)) {
-    elToolsEmpty.hidden = false;
-    elToolsList.replaceChildren();
+function setSelection(next) {
+  selection = next;
+  applySelectionHighlight();
+  renderDetail();
+}
+
+function applySelectionHighlight() {
+  const toolKey = selection?.kind === 'tool' ? selection.key : null;
+  document.querySelectorAll('.tool-row').forEach((el) => {
+    el.classList.toggle('selected', el.dataset.key === toolKey);
+  });
+  const frameId = selection?.kind === 'frame' ? selection.frameId : null;
+  document.querySelectorAll('.frame-item').forEach((el) => {
+    el.classList.toggle('selected', Number(el.dataset.frameId) === frameId);
+  });
+}
+
+function renderDetail() {
+  if (!selection) {
+    elDetailContent.hidden = true;
+    elDetailEmpty.hidden = false;
+    elDetailTitle.textContent = 'Detail';
+    elDetailContent.replaceChildren();
     return;
   }
-  elToolsEmpty.hidden = true;
-  elToolsList.replaceChildren();
-  for (const s of m.servers) {
-    for (const t of s.tools) {
-      elToolsList.appendChild(buildToolCard(s.name, t));
-    }
+  elDetailEmpty.hidden = true;
+  elDetailContent.hidden = false;
+  elDetailContent.replaceChildren();
+
+  if (selection.kind === 'tool') {
+    elDetailTitle.textContent = `${selection.serverName}.${selection.tool.name}`;
+    const card = document.createElement('div');
+    card.className = 'tool-card selected';
+    card.innerHTML = `
+      <div class="tool-card-head">
+        <span class="name">${escapeHtml(selection.serverName)}.${escapeHtml(selection.tool.name)}</span>
+        <span class="verdict ready">Ready</span>
+      </div>
+      <pre>${renderToolShape(selection.tool)}</pre>
+    `;
+    elDetailContent.appendChild(card);
+    return;
+  }
+
+  if (selection.kind === 'frame') {
+    const tap = selection.tap;
+    elDetailTitle.textContent = `${tap.direction === 'out' ? '→' : '←'} ${tap.frame.type}`;
+    elDetailContent.appendChild(renderFrameDetail(tap));
   }
 }
 
-function buildToolCard(serverName, t) {
-  const key = `${serverName}.${t.name}`;
-  const card = document.createElement('div');
-  card.className = 'tool-card';
-  card.dataset.key = key;
-  card.innerHTML = `
-    <div class="tool-card-head">
-      <span class="name">${escapeHtml(serverName)}.${escapeHtml(t.name)}</span>
-      <span class="verdict ready">Ready</span>
-    </div>
-    <pre>${renderToolShape(t)}</pre>
+function renderFrameDetail(tap) {
+  const wrap = document.createElement('div');
+  wrap.className = 'detail-frame';
+
+  const head = document.createElement('div');
+  head.className = 'detail-head';
+  head.innerHTML = `
+    <span class="frame-ts">${fmtTs(tap.ts)}</span>
+    <span class="frame-dir ${tap.direction}">${tap.direction === 'out' ? '→' : '←'}</span>
+    <span class="frame-type ${tap.frame.type}">${escapeHtml(tap.frame.type)}</span>
+    <span class="frame-summary">${escapeHtml(summarizeFrame(tap.frame))}</span>
   `;
-  return card;
+  wrap.appendChild(head);
+
+  if (tap.frame.type === 'rpc') {
+    const rpc = renderRpcDetail(tap.frame.payload);
+    if (rpc) wrap.appendChild(rpc);
+  }
+
+  const pre = document.createElement('pre');
+  pre.className = 'detail-json';
+  pre.textContent = JSON.stringify(tap.frame, null, 2);
+  wrap.appendChild(pre);
+
+  return wrap;
 }
 
-function applySelection() {
-  document.querySelectorAll('.tool-row').forEach((el) => {
-    el.classList.toggle('selected', el.dataset.key === selectedToolKey);
-  });
-  document.querySelectorAll('.tool-card').forEach((el) => {
-    el.classList.toggle('selected', el.dataset.key === selectedToolKey);
-  });
+// Per-type detail renderer for `rpc` frames. Surfaces the JSON-RPC structure
+// — request: method + qualified tool name + arguments; response: result body
+// or error code/kind/message — above the raw JSON dump rendered below.
+function renderRpcDetail(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const box = document.createElement('div');
+  box.className = 'detail-rpc';
+
+  if ('method' in payload) {
+    const params = payload.params ?? {};
+    const toolName = typeof params.name === 'string' ? params.name : null;
+    box.innerHTML = `
+      <div class="kv"><span class="k">method</span><code class="v">${escapeHtml(payload.method)}</code></div>
+      <div class="kv"><span class="k">id</span><code class="v">${escapeHtml(String(payload.id ?? ''))}</code></div>
+      ${toolName ? `<div class="kv"><span class="k">tool</span><code class="v">${escapeHtml(toolName)}</code></div>` : ''}
+      ${params.arguments === undefined ? '' : `<div class="kv block"><span class="k">arguments</span><pre class="v">${escapeHtml(JSON.stringify(params.arguments, null, 2))}</pre></div>`}
+    `;
+    return box;
+  }
+  if ('result' in payload) {
+    box.innerHTML = `
+      <div class="kv"><span class="k">id</span><code class="v">${escapeHtml(String(payload.id ?? ''))}</code></div>
+      <div class="kv block"><span class="k">result</span><pre class="v">${escapeHtml(JSON.stringify(payload.result, null, 2))}</pre></div>
+    `;
+    return box;
+  }
+  if ('error' in payload) {
+    const err = payload.error ?? {};
+    box.innerHTML = `
+      <div class="kv"><span class="k">id</span><code class="v">${escapeHtml(String(payload.id ?? ''))}</code></div>
+      <div class="kv"><span class="k">code</span><code class="v">${escapeHtml(String(err.code ?? ''))}</code></div>
+      ${err.data?.kind ? `<div class="kv"><span class="k">kind</span><code class="v">${escapeHtml(err.data.kind)}</code></div>` : ''}
+      <div class="kv"><span class="k">message</span><code class="v">${escapeHtml(err.message ?? '')}</code></div>
+    `;
+    return box;
+  }
+  return null;
 }
 
 function summarizeRpcFrame(p) {
@@ -296,6 +380,8 @@ function appendFrame(tap) {
     elFrames.replaceChildren();
   }
   const li = document.createElement('li');
+  const frameId = ++frameSeq;
+  li.dataset.frameId = String(frameId);
   li.className = `frame-item ${tap.frame.type}`;
   if (tap.frame.type === 'heartbeat' && !showHeartbeats) li.style.display = 'none';
   li.innerHTML = `
@@ -305,11 +391,9 @@ function appendFrame(tap) {
       <span class="frame-type ${tap.frame.type}">${tap.frame.type}</span>
       <span class="frame-summary">${escapeHtml(summarizeFrame(tap.frame))}</span>
     </div>
-    <div class="frame-body"><pre></pre></div>
   `;
-  li.querySelector('.frame-body pre').textContent = JSON.stringify(tap.frame, null, 2);
-  li.querySelector('.frame-head').addEventListener('click', () => {
-    li.classList.toggle('expanded');
+  li.addEventListener('click', () => {
+    setSelection({ kind: 'frame', tap, frameId });
   });
   elFrames.insertBefore(li, elFrames.firstChild);
   while (elFrames.children.length > 500) elFrames.lastChild?.remove();
@@ -330,6 +414,8 @@ function applySnapshot(s) {
     li.textContent = 'No frames yet.';
     elFrames.appendChild(li);
   }
+  // SSE reconnect: any selected frame is from a prior snapshot — drop it.
+  if (selection?.kind === 'frame') setSelection(null);
 }
 
 function connectSse() {
@@ -346,10 +432,9 @@ function connectSse() {
   es.onerror = () => { /* EventSource auto-retries */ };
 }
 
-// Column resizer — drag the divider to widen/narrow the left pane.
 const LEFT_COL_KEY = 'inspector.leftColPx';
 const LEFT_COL_MIN = 280;
-const LEFT_COL_MAX_FRAC = 0.7; // never let it eat more than 70% of the viewport
+const LEFT_COL_MAX_FRAC = 0.7;
 
 function applyLeftColWidth(px) {
   const clamped = Math.max(LEFT_COL_MIN, Math.min(px, window.innerWidth * LEFT_COL_MAX_FRAC));
@@ -383,10 +468,35 @@ elResizer.addEventListener('pointerdown', (e) => {
   elResizer.addEventListener('pointercancel', onUp);
 });
 
-// Re-clamp on window resize so the saved width never exceeds the new viewport.
 window.addEventListener('resize', () => {
   const current = Number.parseInt(getComputedStyle(elMain).getPropertyValue('--left-col'), 10) || 0;
   if (current > 0) applyLeftColWidth(current);
+});
+
+// Collapsible left-pane sections — click the header to toggle. State persists
+// per section via localStorage so the layout you set sticks across reloads.
+// Stops propagation from inner controls (heartbeats checkbox, reconnect/clear
+// buttons) so clicking those doesn't collapse the section.
+const COLLAPSE_KEY = 'inspector.collapsed';
+function loadCollapsed() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '[]')); }
+  catch { return new Set(); }
+}
+function saveCollapsed(set) {
+  localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...set]));
+}
+const collapsed = loadCollapsed();
+document.querySelectorAll('.collapsible').forEach((sec) => {
+  const key = sec.dataset.key;
+  if (collapsed.has(key)) sec.classList.add('collapsed');
+  const head = sec.querySelector('.section-head');
+  head.addEventListener('click', (e) => {
+    if (e.target.closest('.controls')) return;
+    sec.classList.toggle('collapsed');
+    if (sec.classList.contains('collapsed')) collapsed.add(key);
+    else collapsed.delete(key);
+    saveCollapsed(collapsed);
+  });
 });
 
 connectSse();

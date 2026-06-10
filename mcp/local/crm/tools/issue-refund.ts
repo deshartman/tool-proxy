@@ -3,17 +3,15 @@ import { randomBytes } from "node:crypto";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
 // In-memory ledger of refunds we've issued, keyed by orderId. The connector
-// process is the only thing reading/writing this; restart wipes it. The
-// demo's two real failure modes are both checked here:
+// process is the only thing reading/writing this; restart wipes it.
 //
-//   1. amount > the order total we'd return from get_recent — caller is
-//      asking for more than was paid.
-//   2. orderId already refunded in this process's lifetime — caller is
-//      double-refunding.
+// Two business failure modes:
+//   1. amount > the order total fetched from the mock service.
+//   2. orderId already refunded in this process's lifetime (double-refund).
 //
-// Real systems consult a payments DB; the in-memory map is enough to show
-// the side-effect tool returning a structured business failure that the LLM
-// has to handle.
+// Order totals come from the mock customer service so this tool stays in
+// sync with what get_recent returns. Idempotency stays here — it's a
+// process-local concern, not customer data.
 interface RefundRecord {
   refundId: string;
   amount: number;
@@ -23,14 +21,22 @@ interface RefundRecord {
 
 const REFUND_LEDGER = new Map<string, RefundRecord>();
 
-// Mirror of the order totals get_recent returns. Kept in sync by hand —
-// these are demo fixtures, not a shared source of truth.
-const ORDER_TOTALS: Record<string, number> = {
-  ord_42: 42.10,
-  ord_77: 128.99,
-  ord_91: 19.50,
-  ord_gift_5: 65.00,
-};
+const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
+const REQ_TIMEOUT_MS = 4000;
+
+async function fetchOrderTotal(orderId: string): Promise<number | undefined> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), REQ_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${MOCK_URL}/orders/${encodeURIComponent(orderId)}`, { signal: ctl.signal });
+    if (res.status === 404) return undefined;
+    if (!res.ok) throw new Error(`mock-customers ${res.status}`);
+    const body = await res.json() as { amount?: number };
+    return body.amount;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function newRefundId(): string {
   return `ref_${randomBytes(6).toString("hex")}`;
@@ -70,7 +76,7 @@ export const issueRefund: Tool = {
           };
         }
 
-        const orderTotal = ORDER_TOTALS[orderId];
+        const orderTotal = await fetchOrderTotal(orderId);
         if (orderTotal !== undefined && amount > orderTotal + 0.001) {
           return {
             content: [
