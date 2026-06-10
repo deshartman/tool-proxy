@@ -19,36 +19,44 @@
 
   <main id="main">
     <aside id="left-col">
-      <section id="manifest-pane">
-        <h2>Manifest</h2>
-        <div id="manifest-empty" class="empty">No manifest yet — connector hasn't built one.</div>
-        <div id="manifest" hidden>
-          <div class="meta-row"><span class="muted">connectorId</span><code id="m-connector"></code></div>
-          <div class="meta-row"><span class="muted">environment</span><code id="m-env"></code></div>
-          <div class="meta-row"><span class="muted">version</span><code id="m-ver"></code></div>
-          <div id="m-servers"></div>
+      <section id="manifest-pane" class="collapsible" data-key="manifest">
+        <h2 class="section-head">
+          <span class="caret">▾</span>
+          <span class="section-title">MCP Servers</span>
+        </h2>
+        <div class="section-body">
+          <div id="manifest-empty" class="empty">No manifest yet — connector hasn't built one.</div>
+          <div id="manifest" hidden>
+            <div class="meta-row"><span class="muted">connectorId</span><code id="m-connector"></code></div>
+            <div class="meta-row"><span class="muted">environment</span><code id="m-env"></code></div>
+            <div class="meta-row"><span class="muted">version</span><code id="m-ver"></code></div>
+            <div id="m-servers"></div>
+          </div>
         </div>
       </section>
 
-      <section id="frames-pane">
-        <h2>
-          Frames
+      <section id="frames-pane" class="collapsible" data-key="frames">
+        <h2 class="section-head">
+          <span class="caret">▾</span>
+          <span class="section-title">Frames</span>
           <span class="controls">
             <label><input type="checkbox" id="show-heartbeats"> heartbeats</label>
             <button id="reconnect">reconnect</button>
             <button id="clear">clear</button>
           </span>
         </h2>
-        <ol id="frames" class="empty"><li class="empty-msg">No frames yet.</li></ol>
+        <div class="section-body">
+          <ol id="frames" class="empty"><li class="empty-msg">No frames yet.</li></ol>
+        </div>
       </section>
     </aside>
 
     <button id="col-resizer" type="button" aria-label="Resize columns"></button>
 
-    <section id="tools-pane">
-      <h2>Tools</h2>
-      <div id="tools-empty" class="empty">No tools yet.</div>
-      <div id="tools-list"></div>
+    <section id="detail-pane">
+      <h2 id="detail-title">Detail</h2>
+      <div id="detail-empty" class="empty">Click a tool or frame on the left to inspect.</div>
+      <div id="detail-content" hidden></div>
     </section>
   </main>
 

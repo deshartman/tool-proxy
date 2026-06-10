@@ -41,12 +41,29 @@ main {
   overflow: hidden;
 }
 
-/* Left column = manifest + frames stacked */
+/* Left column = manifest + frames stacked, each section's body scrolls
+   independently. Flex-column with min-height:0 on children is what allows them
+   to shrink below content and let their own .section-body do the scrolling. */
 #left-col {
-  display: grid;
-  grid-template-rows: minmax(150px, auto) 1fr;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
+#left-col > .collapsible {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+#left-col > .collapsible + .collapsible { border-top: 1px solid var(--border); }
+#left-col > .collapsible.collapsed { flex: 0 0 auto; }
+#left-col > .collapsible.collapsed .section-body { display: none; }
+.section-body { overflow: auto; padding: 0 1rem 1rem; min-height: 0; }
+.section-head { cursor: pointer; user-select: none; }
+.section-head .caret { display: inline-block; width: 1em; transition: transform 0.15s; color: var(--muted); }
+.collapsible.collapsed .section-head .caret { transform: rotate(-90deg); }
+.section-title { flex: 1; }
 
 #col-resizer {
   /* Native <button> reset: strip default UA chrome so it looks like a divider. */
@@ -81,30 +98,22 @@ main {
 #col-resizer:hover::after, #col-resizer.dragging::after { opacity: 1; background: var(--bg); }
 body.col-resizing { cursor: col-resize; user-select: none; }
 body.col-resizing iframe { pointer-events: none; }
-#manifest-pane { overflow: auto; padding: 0 1rem 1rem; }
-#frames-pane {
-  overflow: auto;
-  padding: 0 1rem 1rem;
-  border-top: 1px solid var(--border);
-}
-
-#tools-pane { overflow: auto; padding: 0 1rem 1rem; }
+#detail-pane { overflow: auto; padding: 0 1rem 1rem; }
 
 h2 {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted);
-  padding: 0.75rem 0 0.5rem;
+  padding: 0.75rem 1rem 0.5rem;
   margin: 0;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  position: sticky;
-  top: 0;
+  gap: 8px;
   background: var(--bg);
   z-index: 1;
 }
+#detail-pane h2 { padding: 0.75rem 0 0.5rem; position: sticky; top: 0; }
 
 .empty { color: var(--muted); font-style: italic; padding: 1rem 0; }
 .empty-msg { color: var(--muted); font-style: italic; list-style: none; padding: 1rem 0; }
@@ -179,9 +188,8 @@ h2 {
 .frame-type.rpc             { background: rgba(188, 140, 255, 0.15); color: var(--purple); }
 .frame-type.manifest-delta  { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
 .frame-summary { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.frame-body { display: none; margin-top: 6px; padding: 8px; background: var(--panel); border-radius: 4px; }
-.frame-item.expanded .frame-body { display: block; }
-.frame-body pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 0.72rem; color: var(--text); }
+.frame-item.selected { background: rgba(88, 166, 255, 0.1); }
+.frame-item.selected .frame-head { color: var(--accent); }
 
 /* Tools pane (right column) — vertical stack of MCP-shape cards */
 .tool-card {
@@ -222,3 +230,50 @@ h2 {
 .tool-card pre .string    { color: var(--green); }
 .tool-card pre .zod       { color: var(--purple); }
 .tool-card pre .punct     { color: var(--muted); }
+
+/* Detail pane — frame body rendered on the right when a frame row is clicked */
+.detail-frame { font-family: var(--mono); font-size: 0.82rem; }
+.detail-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0.5rem 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 0.6rem;
+}
+.detail-rpc {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.6rem;
+  display: grid;
+  gap: 6px;
+}
+.detail-rpc .kv { display: grid; grid-template-columns: 100px 1fr; gap: 8px; align-items: baseline; }
+.detail-rpc .kv.block { grid-template-columns: 100px 1fr; align-items: start; }
+.detail-rpc .k { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.detail-rpc .v { font-family: var(--mono); color: var(--text); }
+.detail-rpc code.v { color: var(--accent); }
+.detail-rpc pre.v {
+  margin: 0;
+  padding: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+.detail-json {
+  margin: 0;
+  padding: 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
