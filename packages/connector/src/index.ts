@@ -229,6 +229,20 @@ async function main() {
     } catch (e) {
       log.error({ err: e as Error }, `tunnel connect failed`);
       inspector?.setState("closed");
+      // A handshake failure (e.g. WS 502 because the controller is briefly
+      // unreachable, or ngrok cycling) is the same recoverable state as a
+      // mid-session close — schedule the same auto-reconnect path with the
+      // same gates. Without this, a transient 502 leaves the connector
+      // stranded in 'closed' until manual intervention. The onclose path
+      // never fires for a connection that never reached OPEN, so this is
+      // the only place we can hook the recovery.
+      if (shuttingDown || reconnecting) return;
+      if (!config.policy.reconnect.enabled) return;
+      if (registrationRejected) {
+        log.warn(`auto-reconnect suppressed: controller rejected the registration — clear .connector-state.json and click Reconnect`);
+        return;
+      }
+      scheduleAutoReconnect();
       return;
     }
 

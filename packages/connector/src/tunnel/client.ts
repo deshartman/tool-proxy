@@ -15,9 +15,10 @@ export interface FrameTap {
 // (used inbound by the dispatcher) does its own JSON-RPC framing inside
 // `rpc` payloads; this layer is just typed-frame transport.
 //
-// Reconnect / heartbeat-miss recovery is intentionally NOT implemented this
-// branch. On unexpected close the process exits 1 — let the supervisor
-// restart it. See plan's "Out of scope" section.
+// Reconnect orchestration lives in index.ts (scheduleAutoReconnect /
+// connectTunnel). Both failure modes — WS handshake rejection (e.g. 502)
+// and mid-session close — feed into the same backoff path. Set
+// policy.reconnect.enabled=false in connector.yaml to opt out.
 export class TunnelClient {
   onframe?: (frame: InboundTunnelFrame) => void;
   onclose?: () => void;
