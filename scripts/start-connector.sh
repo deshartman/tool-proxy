@@ -48,6 +48,28 @@ if [ ! -f "$YAML_FILE" ]; then
   exit 1
 fi
 
+# Per-MCP install: every Type 1 folder that ships its own package.json with
+# third-party SDK deps is self-contained — those SDKs live in the folder's
+# own node_modules so they never hoist into the connector workspace. On
+# first run (or any time a folder's node_modules has been blown away)
+# install its deps before booting. The Dockerfile runs the same loop at
+# image-build time; this is the dev-mode mirror.
+# Folders with no package.json, or with an empty `dependencies` block
+# (sample, crm today) skip cleanly — their imports (zod, the connector
+# SDK) resolve via Node's parent-dir walk to the workspace root.
+# Note: if you bump a dep version in package.json but node_modules
+# already exists, this loop won't notice — run `npm install` in that
+# folder yourself to pick up the new version.
+for dir in "$ROOT"/mcp/local/*/ "$ROOT"/mcp/external/*/ "$ROOT"/mcp/bundled/*/; do
+  [ -f "$dir/package.json" ] || continue
+  depcount=$(node -e "console.log(Object.keys(require('$dir/package.json').dependencies||{}).length)" 2>/dev/null || echo 0)
+  [ "$depcount" = "0" ] && continue
+  if [ ! -d "$dir/node_modules" ]; then
+    echo "[start-connector] installing deps in ${dir#$ROOT/}"
+    (cd "$dir" && npm install --omit=dev --no-package-lock --silent)
+  fi
+done
+
 # Source the connector .env so CONTROLLER_URL / TUNNEL_AUTH_TOKEN land in env
 # before yaml interpolation. The connector identifies itself to the controller
 # by tunnel.name on first connect; the persisted registrationToken in

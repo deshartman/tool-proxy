@@ -1,6 +1,7 @@
 {
-  "name": "sample-mcp-server-example",
+  "name": "@mcp-shim/local-sample",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "description": "Sample Type 1 MCP. Demonstrates the minimal customer-authored shape (now, slow_echo, uuid, weather). No third-party SDKs today — when this MCP needs one, declare it in a `dependencies` block here so it stays out of the connector workspace."
 }
