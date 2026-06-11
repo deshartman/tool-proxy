@@ -12,6 +12,15 @@ export interface ToolDescriptor {
 export interface ServerDescriptor {
   name: string;
   transport: "http" | "stdio";
+  // Who authored this MCP — derived by the connector from the spec, not
+  // configured. Today: "twilio" for anything under mcp/bundled/ (resolved
+  // either via `bundled:` yaml form or a `dir:` that lives under
+  // mcp/bundled/), "customer" for everything else. The controller uses
+  // this to group MCPs in the UI (e.g. Twilio-shipped vs customer-side
+  // MCPs in different sections of the connector detail view). Typed as
+  // `string` rather than a union so the controller forward-compats new
+  // values added later (e.g. partner-authored MCPs).
+  author: string;
   tools: ToolDescriptor[];
 }
 

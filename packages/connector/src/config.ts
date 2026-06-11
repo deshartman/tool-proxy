@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { parse as parseDotenv } from "dotenv";
@@ -112,6 +112,26 @@ export function isType3Bundled(
   spec: McpServerSpec,
 ): spec is z.infer<typeof StdioServer> & { bundled: string } {
   return spec.transport === "stdio" && spec.bundled !== undefined;
+}
+
+// Derive the MCP's author from its spec — surfaced on the wire as
+// ServerDescriptor.author so the controller can group Twilio-shipped MCPs
+// separately from customer-authored ones in the UI. Two signals point at
+// "twilio": the entry has a `bundled:` field set (Type 3, by definition
+// shipped by Twilio in the connector image), or its `dir:` resolves under
+// `mcp/bundled/` relative to the yaml file (covers Type 1 MCPs that live
+// under mcp/bundled/ — e.g. mcp/bundled/twilio/). Anything else is
+// "customer". yamlDir is the absolute directory of the yaml file, so a
+// relative `dir:` like `../../mcp/bundled/twilio` resolves correctly.
+export function authorOf(spec: McpServerSpec, yamlDir: string): string {
+  if (spec.transport === "stdio" && spec.bundled) return "twilio";
+  if (spec.dir) {
+    const abs = resolve(yamlDir, spec.dir);
+    if (abs.includes(`${sep}mcp${sep}bundled${sep}`) || abs.endsWith(`${sep}mcp${sep}bundled`)) {
+      return "twilio";
+    }
+  }
+  return "customer";
 }
 
 // Registry of bundled MCPs the connector image carries. Populated by the

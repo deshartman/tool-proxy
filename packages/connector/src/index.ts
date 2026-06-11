@@ -122,7 +122,7 @@ async function main() {
   log.info({ servers: [...servers.keys()] }, `connected to local servers`);
 
   // 2. Build initial manifest.
-  let manifest: ToolManifest = await buildManifest(config, servers, version);
+  let manifest: ToolManifest = await buildManifest(config, servers, version, configPath);
   log.info({ tools: countTools(manifest) }, `built manifest`);
 
   // The yaml carries `controller_url` (HTTPS root, used for the register API
@@ -317,7 +317,7 @@ async function main() {
 
       // Rebuild manifest against the (possibly updated) config. Updates
       // inspector view too.
-      manifest = await buildManifest(config, servers, version);
+      manifest = await buildManifest(config, servers, version, configPath!);
       inspector?.setManifest(manifest);
 
       await connectTunnel("reconnect");
@@ -368,7 +368,7 @@ async function main() {
 
   async function refreshManifestAndPushDelta(): Promise<void> {
     try {
-      const next = await buildManifest(config, servers, version);
+      const next = await buildManifest(config, servers, version, configPath!);
       const delta = diffManifest(manifest, next);
       manifest = next;
       inspector?.setManifest(next);

@@ -51,6 +51,8 @@ Defined in [packages/connector/src/tunnel/frames.ts](packages/connector/src/tunn
 
 Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector splits on the first `.`. Some controllers also send a `register-ack` frame back; the connector parses and ignores it (non-spec, but harmless).
 
+Each `ServerDescriptor` in the manifest carries an `author: string` field — derived by the connector from the spec, never configured. Today's values: `"twilio"` for any MCP under `mcp/bundled/` (resolved via `bundled:` yaml form *or* a `dir:` that lives under `mcp/bundled/`), `"customer"` for everything else. The controller uses this to group MCPs in its UI (e.g. Twilio-shipped vs customer-side MCPs in different sections of the connector detail view). Typed as `string` rather than a union literal so the controller forward-compats new author values without a wire-format break. The derivation lives in `authorOf(spec, yamlDir)` in [packages/connector/src/config.ts](packages/connector/src/config.ts) and is invoked once per server in [packages/connector/src/manifest/build.ts](packages/connector/src/manifest/build.ts) — change the rule there if the folder convention shifts.
+
 ## Workspaces
 
 npm workspaces, **one package**: `@mcp-shim/connector`. That's the only thing that ships.
