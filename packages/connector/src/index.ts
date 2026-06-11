@@ -92,7 +92,17 @@ async function main() {
 
   const config = loadConfig(configPath);
   const authToken = config.tunnel.auth_token;
-  const authStatus = authToken ? `set (len=${authToken.length})` : "absent";
+  if (!authToken) {
+    // Fail-fast: registering against a controller without a shared secret
+    // is a misconfiguration, not a degraded state. Symmetric with the
+    // CONNECTOR_NAME interpolation in connector.yaml — both are required
+    // and both refuse to boot if missing, rather than silently dialing
+    // with an empty string and letting the controller reject mid-handshake.
+    throw new Error(
+      "TUNNEL_AUTH_TOKEN is required but missing. Set it in packages/connector/.env (see .env.example).",
+    );
+  }
+  const authStatus = `set (len=${authToken.length})`;
 
   // Identity: read the persisted registrationToken (if any). On first connect
   // it's absent and we send `name` only — the controller mints a row and
