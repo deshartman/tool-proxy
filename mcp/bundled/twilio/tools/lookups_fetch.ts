@@ -2,13 +2,13 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { getTwilioClient } from "../twilio-client.js";
 
-export const lookupPhoneNumber: Tool = {
-  name: "lookup_phone_number",
+export const lookupsFetch: Tool = {
+  name: "lookups_fetch",
   register(server) {
     server.registerTool(
-      "lookup_phone_number",
+      "lookups_fetch",
       {
-        description: "Twilio Lookup v2: validate an E.164 number and return carrier info. Read-only.",
+        description: "Validates a phone number and returns its country, national format, and whether it is a real, reachable number.",
         inputSchema: {
           phone_number: z.string().describe("E.164 number, e.g. +15551234567"),
         },

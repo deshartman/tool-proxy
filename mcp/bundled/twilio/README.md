@@ -10,45 +10,61 @@ connector image's `node_modules`.
 
 ## Tools
 
+Tools have plain names (no `twilio_` prefix). The cloud-side qualifier is
+`${author}.${serverName}.${toolName}` — for this MCP that resolves to
+`twilio.apis.<tool>`, which flattens to e.g. `twilio_apis_messages_create`
+on OpenAI's tool surface. Adding a `twilio_` tool prefix on top of that
+would stutter (`twilio_apis_twilio_messages_create`).
+
 | Tool | Description | Cost |
 |---|---|---|
-| `lookup_phone_number({phone_number})` | Twilio Lookup v2 — validate an E.164 number, return carrier info | free |
-| `list_recent({kind, limit?})` | Last N calls or messages on the account | free |
-| `send_sms({to, body, from?})` | Send an SMS via Programmable Messaging | **incurs charges** |
+| `messages_create({channel, to, body?, contentSid?, ...})` | Send a message via SMS / WhatsApp / RCS | **incurs charges** |
+| `messages_fetch({sid})` | Look up a message by SID | free |
+| `messaging_services_fetch({sid?})` | Inspect a Messaging Service's config | free |
+| `content_templates_fetch({sid})` | Inspect a Content template (HXxxxx) for use with `messages_create.contentSid` | free |
+| `calls_create({to, twiml?, url?, from?})` | Place an outbound voice call | **incurs charges** |
+| `calls_fetch({sid})` | Look up a call by SID | free |
+| `verify_send({to, channel, serviceSid?})` | Send an OTP via Verify | **incurs charges** |
+| `verify_check({to, code, serviceSid?})` | Validate an OTP a user submitted | free |
+| `verify_services_fetch({sid?})` | Inspect a Verify Service's config | free |
+| `lookups_fetch({phone_number})` | Twilio Lookup v2 — validate a number | free |
 
 ## Setup
 
 ```bash
 # From the repo root.
 npm install                              # workspace install (installs tsx for the connector spawner)
-(cd examples/twilio-mcp-server && npm install)  # twilio SDK lives here, not in the workspace
+(cd mcp/bundled/twilio && npm install)   # twilio SDK lives here, not in the workspace
 
-cp examples/twilio-mcp-server/.env.example examples/twilio-mcp-server/.env
-# Fill in TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER.
+cp mcp/bundled/twilio/.env.example mcp/bundled/twilio/.env
+# Fill in TWILIO_ACCOUNT_SID and either:
+#   - TWILIO_API_KEY_SID + TWILIO_API_KEY_SECRET (preferred), or
+#   - TWILIO_AUTH_TOKEN (dev fallback).
+# Plus TWILIO_FROM_NUMBER for messages/calls.
 ```
 
 The entry already exists in `packages/connector/connector.yaml.example`:
 
 ```yaml
-- name: twilio
+- name: apis
   transport: http
-  dir: ../../examples/twilio-mcp-server
+  dir: ../../mcp/bundled/twilio
 ```
 
 `./scripts/start-connector.sh` from the repo root will boot the connector,
 which in turn spawns this server at an auto-assigned port and dials the
 tunnel. The first boot registers itself with the controller using the
 `tunnel.name` in `packages/connector/connector.yaml`. The inspector at
-<http://localhost:9090/> shows `twilio.lookup_phone_number`,
-`twilio.list_recent`, and `twilio.send_sms`.
+<http://localhost:9090/> shows the `apis.*` tools (server name = `apis`,
+folder = `mcp/bundled/twilio`).
 
 ## Notes
 
 - Real Twilio infrastructure would call these APIs in-process, not through
   an external MCP server. This example exists to show the connector path,
   not to recommend an architecture.
-- `TWILIO_AUTH_TOKEN` is the raw account auth token. For production usage
-  prefer an API Key + Secret pair (`twilio(sid, secret, { accountSid })`).
-  Out of scope for the demo.
-- The connector loads `examples/twilio-mcp-server/.env` into *this child's*
-  process only — `TWILIO_AUTH_TOKEN` does not reach other MCP children.
+- For production usage prefer an API Key + Secret pair over `TWILIO_AUTH_TOKEN`
+  — the client picks the key pair when both are set
+  (`twilio-client.ts`).
+- The connector loads `mcp/bundled/twilio/.env` into *this child's* process
+  only — credentials do not reach other MCP children.
