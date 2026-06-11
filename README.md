@@ -10,7 +10,9 @@ The connector understands three integration patterns. All three go in the same `
 
 - **Type 1 — customer-authored.** Drop tool files (`tools/*.ts`) plus a tiny `server.ts` into a folder under `mcp/local/`. The connector spawns it as a child via `tsx` and auto-assigns a localhost port. No build step, no port wrangling.
 - **Type 2 — connect to an existing MCP.** Pure config — the entry just declares `transport: http` + `endpoint`, or `transport: stdio` + `command`, and optionally a `dir` (under `mcp/external/`) whose `.env` is loaded into the child's environment. Useful for off-the-shelf servers (e.g. Salesforce, Atlassian, the bundled `aviation-weather-mcp`).
-- **Type 3 — bundled, Twilio-authored, pre-installed in this image.** The entry just sets `bundled: <name>`; the connector resolves it against a registry of bundles laid down at image-build time. Bundle source lives in-tree at `bundles/<name>/` (deliberately outside `mcp/` so the runtime image carries only the installed venv, not the build inputs). Customer supplies only a per-bundle `.env` under `mcp/bundled/<name>/`.
+- **Type 3 — bundled, Twilio-authored Python venv, pre-installed in this image.** The entry just sets `bundled: <name>`; the connector resolves it against a registry of bundles laid down at image-build time. Bundle source lives in-tree at `bundles/<name>/` (deliberately outside `mcp/` so the runtime image carries only the installed venv, not the build inputs). Customer supplies only a per-bundle `.env` under `mcp/bundled/<name>/`.
+
+`mcp/bundled/` carries Twilio-shipped MCPs of *any* type — Type 1 Node MCPs (`mcp/bundled/twilio/`) and Type 3 Python venv MCPs (`mcp/bundled/enterprise-knowledge/`) cohabit. The folder marks "who ships it"; the YAML entry shape decides "how it's wired". The connector adds an `author: "twilio" | "customer"` field to each MCP on the wire, derived from the folder location, so the controller can group Twilio-shipped MCPs separately from customer-authored ones in its UI.
 
 ## Layout
 
@@ -26,7 +28,8 @@ mcp/
   external/
     aviation-weather/         Type 2 — pure config; spawns published `aviation-weather-mcp` via stdio
   bundled/
-    enterprise-knowledge/     Type 3 — .env stub only (source lives at bundles/enterprise-knowledge/)
+    twilio/                   Type 1 (Node) — Twilio-authored; ships its own twilio SDK locally
+    enterprise-knowledge/     Type 3 (Python venv) — .env stub only (source lives at bundles/enterprise-knowledge/)
 bundles/
   enterprise-knowledge/       Type 3 source — pip-installed into the image's bundled-mcps venv
 docs/deploy/                  per-cloud deployment guides
@@ -69,7 +72,7 @@ mkdir -p mcp/local/my-mcp/tools
 #     dir: ../../mcp/local/my-mcp
 ```
 
-No `package.json` if you only need `zod` and the SDK (both resolve from the repo's root `node_modules`). Add a per-folder `package.json` only if you need a third-party SDK — see the sibling `twilio-mcp-shim/` project for a real-world example of a Twilio-authored MCP packaged as its own deployment.
+Every Type 1 folder carries its own `package.json` (lists name + identity). When you only need `zod` and the SDK, leave `dependencies` empty — both resolve from the repo's root `node_modules` via the workspace hoist. When you need a third-party SDK (e.g. Salesforce, HubSpot, `axios`), add it to the folder's `dependencies` block and `start-connector.sh` will install it on first boot. [`mcp/bundled/twilio/`](mcp/bundled/twilio/) is the live example: a Twilio-authored Type 1 carrying the `twilio` SDK in its own `node_modules`, never hoisted to the workspace.
 
 **Type 2** (you point at an existing MCP):
 
@@ -84,7 +87,7 @@ No `package.json` if you only need `zod` and the SDK (both resolve from the repo
   command: [npx, "--yes", "@modelcontextprotocol/server-filesystem", /tmp]
 ```
 
-**Type 3** (use a bundled, Twilio-authored MCP):
+**Type 3** (use a bundled, Twilio-authored Python venv MCP):
 
 ```yaml
 - name: enterprise_knowledge
@@ -93,6 +96,8 @@ No `package.json` if you only need `zod` and the SDK (both resolve from the repo
 ```
 
 The bundle's source lives in-tree at [`bundles/enterprise-knowledge/`](bundles/enterprise-knowledge/). The connector image installs it into `/opt/bundled-mcps/enterprise-knowledge/`; in dev, `start-connector.sh` auto-points at the bundle's `dev-launch.sh` in the working tree.
+
+Twilio-authored Node MCPs follow the Type 1 shape but live under `mcp/bundled/<name>/` (e.g. [`mcp/bundled/twilio/`](mcp/bundled/twilio/)) so they're tagged `author: "twilio"` on the wire. Same `transport: http` + `dir:` yaml shape as customer-authored Type 1; only the path differs.
 
 ## Inspector
 

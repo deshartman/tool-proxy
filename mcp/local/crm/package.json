@@ -1,6 +1,7 @@
 {
-  "name": "crm-mcp-server-example",
+  "name": "@mcp-shim/local-crm",
   "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "description": "Customer-side CRM Type 1 MCP. Today it talks to the local mock customer service over HTTP and needs no third-party SDKs. When it grows real CRM integrations (Salesforce, HubSpot, Zendesk, etc.) declare those SDKs in a `dependencies` block here — they stay local to this folder so they don't bloat the connector workspace."
 }

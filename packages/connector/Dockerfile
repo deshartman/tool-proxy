@@ -55,7 +55,7 @@ COPY mcp mcp
 COPY bundles bundles
 
 RUN set -e; \
-    for dir in mcp/local/*/ mcp/external/*/; do \
+    for dir in mcp/local/*/ mcp/external/*/ mcp/bundled/*/; do \
       [ -f "$dir/package.json" ] || continue; \
       depcount=$(node -e \
         "console.log(Object.keys(require('./$dir/package.json').dependencies||{}).length)"); \

@@ -45,6 +45,15 @@ mcp_servers:
     transport: http
     dir: ../../mcp/local/crm
 
+  # Twilio-authored Type 1 living under mcp/bundled/. "Bundled" describes
+  # who ships it (Twilio, pre-installed in the connector image); the wire
+  # shape is still Type 1 — connector spawns server.ts as an HTTP child.
+  # Requires TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN in mcp/bundled/twilio/.env
+  # — boot fails-fast otherwise. Comment out to disable.
+  - name: twilio
+    transport: http
+    dir: ../../mcp/bundled/twilio
+
   # ── Type 2 (external MCP, pure config) ───────────────────────────────
   # No code in the dir — just .env and a README. Connector spawns the
   # published npm package via stdio.
