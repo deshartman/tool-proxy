@@ -12,10 +12,10 @@ Stub backend — the four MCP tools are wired and runnable end-to-end via stdio,
 
 | Tool | When | Purpose |
 |---|---|---|
-| `ek_register_source` | Procedure save (build time) | Synchronously fetch + parse + chunk + embed + index a URL. Returns a stable `source_id`. Idempotent on URL. |
-| `ek_query` | Hydration / mid-procedure (runtime) | Vector lookup against an indexed source. Pure retrieval. |
-| `ek_refresh` | Controller-driven cron | Re-fetch a source, diff, re-embed only changed chunks. |
-| `ek_list_sources` | Admin UI / scheduler | List every indexed source with its metadata. |
+| `sources_register` | Procedure save (build time) | Synchronously fetch + parse + chunk + embed + index a URL. Returns a stable `source_id`. Idempotent on URL. |
+| `knowledge_query` | Hydration / mid-procedure (runtime) | Vector lookup against an indexed source. Pure retrieval. |
+| `sources_refresh` | Controller-driven cron | Re-fetch a source, diff, re-embed only changed chunks. |
+| `sources_fetch` | Admin UI / scheduler | List every indexed source with its metadata. |
 
 ## Running locally (host dev)
 

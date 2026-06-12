@@ -33,4 +33,4 @@ jobs:
             printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
             printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
             sleep 1
-          } | customer-ek-mcp | grep -q '"name":"ek_query"'
+          } | customer-ek-mcp | grep -q '"name":"knowledge_query"'

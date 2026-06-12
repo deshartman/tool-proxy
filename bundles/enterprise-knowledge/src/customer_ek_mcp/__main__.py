@@ -29,7 +29,7 @@ server: Server = Server(name="enterprise-knowledge", version=__version__)
 async def _list_tools() -> list[Tool]:
     return [
         Tool(
-            name="ek_register_source",
+            name="sources_register",
             description=(
                 "Synchronously fetch, parse, chunk, embed, and index a "
                 "document URL. Returns a stable source_id. Idempotent on URL."
@@ -52,7 +52,7 @@ async def _list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="ek_query",
+            name="knowledge_query",
             description=(
                 "Vector lookup against an indexed source. Returns top-K chunks "
                 "with citations. Pure retrieval — no fetching or embedding "
@@ -70,7 +70,7 @@ async def _list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="ek_refresh",
+            name="sources_refresh",
             description=(
                 "Re-fetch a source, diff against the existing index, and "
                 "re-embed only changed chunks. Background-safe; runs from the "
@@ -91,7 +91,7 @@ async def _list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="ek_list_sources",
+            name="sources_fetch",
             description="List every indexed source with its metadata.",
             inputSchema={
                 "type": "object",
@@ -105,20 +105,20 @@ async def _list_tools() -> list[Tool]:
 @server.call_tool()
 async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     result: Any
-    if name == "ek_register_source":
+    if name == "sources_register":
         result = storage.register_source(url=arguments["url"])
-    elif name == "ek_query":
+    elif name == "knowledge_query":
         result = storage.query(
             source_id=arguments["source_id"],
             query_text=arguments["query"],
             k=int(arguments.get("k", 5)),
         )
-    elif name == "ek_refresh":
+    elif name == "sources_refresh":
         result = storage.refresh(
             source_id=arguments["source_id"],
             force=bool(arguments.get("force", False)),
         )
-    elif name == "ek_list_sources":
+    elif name == "sources_fetch":
         result = storage.list_sources()
     else:
         raise ValueError(f"unknown tool: {name}")
