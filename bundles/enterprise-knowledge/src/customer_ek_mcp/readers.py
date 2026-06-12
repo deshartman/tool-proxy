@@ -42,12 +42,28 @@ def pick_reader(url: str, kind: str | None = None) -> tuple[list[Document], str]
             docs = SimpleDirectoryReader(input_dir=path, recursive=True).load_data()
         else:
             docs = SimpleDirectoryReader(input_files=[path]).load_data()
+        _stabilize_doc_ids(docs)
         return docs, KIND_LOCAL_FILES
 
     raise NotImplementedError(
         f"source kind not yet supported for url={url!r}. "
         "v1 supports local files only (file:// or absolute paths)."
     )
+
+
+def _stabilize_doc_ids(docs: list[Document]) -> None:
+    """Replace SimpleDirectoryReader's auto-generated UUIDs with deterministic
+    IDs based on the source file path.
+
+    Stable doc IDs are required for the refresh diff path: PGVectorStore.delete
+    (ref_doc_id=...) only matches stored chunks if the ref_doc_id is the same
+    as when those chunks were inserted. Without this, every refresh would
+    accumulate stale chunks in the per-source vector table.
+    """
+    for doc in docs:
+        file_path = doc.metadata.get("file_path") or doc.metadata.get("filename")
+        if file_path:
+            doc.doc_id = f"file:{file_path}"
 
 
 def _local_path(url: str) -> str | None:

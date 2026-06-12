@@ -94,6 +94,55 @@ def _node_text(node: BaseNode) -> str:
     return node.get_content(metadata_mode="none")
 
 
+def _index_from_scratch(
+    source_id: str, url: str, kind_hint: str | None = None
+) -> tuple[int, int, datetime]:
+    """Fetch+chunk+embed every chunk; persist row. Returns (doc_count, chunk_count, indexed_at).
+
+    Used by register_source for new sources and by refresh(force=True) after
+    the per-source vector table has been dropped.
+    """
+    documents, kind = readers.pick_reader(url, kind=kind_hint)
+    if not documents:
+        raise ValueError(f"no documents found at {url!r}")
+
+    nodes = _node_parser.get_nodes_from_documents(documents)
+    chunk_hashes = [_hash_chunk(_node_text(n)) for n in nodes]
+
+    vector_store = _vector_store(source_id)
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    VectorStoreIndex(nodes=nodes, storage_context=storage_context)
+
+    indexed_at = _now_utc()
+    metadata.record_source_metadata(
+        dsn=_settings.pgvector_dsn,
+        source_id=source_id,
+        url=url,
+        kind=kind,
+        indexed_at=indexed_at,
+        doc_count=len(documents),
+        chunk_hashes=chunk_hashes,
+        embedder_signature=_embedder.signature,
+    )
+    logger.info(
+        "indexed source_id=%s url=%s docs=%d chunks=%d",
+        source_id, url, len(documents), len(nodes),
+    )
+    return len(documents), len(nodes), indexed_at
+
+
+def _drop_source_table(source_id: str) -> None:
+    """Drop the per-source vector table so a fresh index can be built.
+
+    PGVectorStore prefixes its own 'data_' onto the table_name we pass it,
+    so the actual table name in Postgres is data_data_<source_id>.
+    """
+    table = f"data_{_table_name(source_id)}"
+    with psycopg.connect(_settings.pgvector_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f'DROP TABLE IF EXISTS "{table}"')
+    logger.info("dropped vector table %s for source_id=%s", table, source_id)
+
+
 def register_source(url: str) -> dict[str, Any]:
     source_id = _stable_source_id(url)
     with _lock:
@@ -107,38 +156,11 @@ def register_source(url: str) -> dict[str, Any]:
                 "doc_count": existing.doc_count,
                 "indexed_at": existing.indexed_at.isoformat(),
             }
-
-        documents, kind = readers.pick_reader(url)
-        if not documents:
-            raise ValueError(f"no documents found at {url!r}")
-
-        nodes = _node_parser.get_nodes_from_documents(documents)
-        chunk_hashes = [_hash_chunk(_node_text(n)) for n in nodes]
-
-        vector_store = _vector_store(source_id)
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        VectorStoreIndex(nodes=nodes, storage_context=storage_context)
-
-        indexed_at = _now_utc()
-        metadata.record_source_metadata(
-            dsn=_settings.pgvector_dsn,
-            source_id=source_id,
-            url=url,
-            kind=kind,
-            indexed_at=indexed_at,
-            doc_count=len(documents),
-            chunk_hashes=chunk_hashes,
-            embedder_signature=_embedder.signature,
-        )
-
-        logger.info(
-            "indexed source_id=%s url=%s docs=%d chunks=%d",
-            source_id, url, len(documents), len(nodes),
-        )
+        doc_count, _, indexed_at = _index_from_scratch(source_id, url)
         return {
             "source_id": source_id,
             "status": "indexed",
-            "doc_count": len(documents),
+            "doc_count": doc_count,
             "indexed_at": indexed_at.isoformat(),
         }
 
@@ -182,24 +204,113 @@ def query(source_id: str, query_text: str, k: int) -> dict[str, Any]:
 
 
 def refresh(source_id: str, force: bool = False) -> dict[str, Any]:
-    """Phase 1 stub — full implementation lands in phase 3.
+    """Re-fetch and re-index a source.
 
-    `force` is part of the MCP tool schema (see __main__.py) so the
-    parameter stays in the signature even though phase 1 ignores it.
+    With force=True: drop the per-source vector table and re-embed every
+    chunk. Use after switching EK_EMBEDDER (signature mismatch on query)
+    or when the source format changed in ways the chunk-hash diff can't
+    detect.
+
+    With force=False: re-fetch, re-chunk, hash each chunk, embed only the
+    documents whose chunks differ from what's stored. Embedder calls drop
+    sharply on small edits.
+
+    Refresh always runs under the bundle's currently-loaded embedder. If
+    that's a different embedder than the source was originally indexed
+    with, force=False would mix vector spaces in one table — we refuse
+    in that case and tell the caller to retry with force=True.
     """
-    del force
-    meta = metadata.load_source_metadata(
-        dsn=_settings.pgvector_dsn, source_id=source_id
-    )
-    if meta is None:
-        raise ValueError(f"unknown source_id {source_id!r}")
-    return {
-        "source_id": source_id,
-        "changed": False,
-        "doc_count": meta.doc_count,
-        "indexed_at": meta.indexed_at.isoformat(),
-        "note": "refresh implementation pending (phase 3)",
-    }
+    with _lock:
+        meta = metadata.load_source_metadata(
+            dsn=_settings.pgvector_dsn, source_id=source_id
+        )
+        if meta is None:
+            raise ValueError(f"unknown source_id {source_id!r}")
+
+        if force:
+            _drop_source_table(source_id)
+            doc_count, chunk_count, indexed_at = _index_from_scratch(
+                source_id=source_id, url=meta.url, kind_hint=meta.kind
+            )
+            return {
+                "source_id": source_id,
+                "changed": True,
+                "force": True,
+                "doc_count": doc_count,
+                "chunks_reembedded": chunk_count,
+                "indexed_at": indexed_at.isoformat(),
+            }
+
+        if meta.embedder_signature and meta.embedder_signature != _embedder.signature:
+            raise RuntimeError(
+                f"embedder mismatch on source {source_id!r}: indexed with "
+                f"{meta.embedder_signature!r}, current embedder is "
+                f"{_embedder.signature!r}. Re-run sources_refresh with "
+                f"force=true to re-index under the current embedder."
+            )
+
+        documents, _ = readers.pick_reader(meta.url, kind=meta.kind)
+        if not documents:
+            raise ValueError(f"no documents found at {meta.url!r}")
+
+        new_nodes = _node_parser.get_nodes_from_documents(documents)
+        new_hashes = [_hash_chunk(_node_text(n)) for n in new_nodes]
+        old_hashes = set(meta.chunk_hashes)
+
+        if set(new_hashes) == old_hashes:
+            logger.info("refresh source_id=%s unchanged (%d chunks)", source_id, len(new_hashes))
+            return {
+                "source_id": source_id,
+                "changed": False,
+                "force": False,
+                "doc_count": meta.doc_count,
+                "chunks_reembedded": 0,
+                "indexed_at": meta.indexed_at.isoformat(),
+            }
+
+        # Identify which ref_doc_ids contain new (i.e. previously unseen)
+        # chunks — those documents get fully re-indexed. Documents whose
+        # every chunk hash already appears in old_hashes are left alone.
+        changed_ref_doc_ids: set[str] = set()
+        for node, h in zip(new_nodes, new_hashes):
+            if h not in old_hashes and node.ref_doc_id:
+                changed_ref_doc_ids.add(node.ref_doc_id)
+
+        nodes_to_insert = [
+            n for n in new_nodes if n.ref_doc_id in changed_ref_doc_ids
+        ]
+
+        vector_store = _vector_store(source_id)
+        for ref_doc_id in changed_ref_doc_ids:
+            vector_store.delete(ref_doc_id=ref_doc_id)
+
+        index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
+        if nodes_to_insert:
+            index.insert_nodes(nodes_to_insert)
+
+        indexed_at = _now_utc()
+        metadata.record_source_metadata(
+            dsn=_settings.pgvector_dsn,
+            source_id=source_id,
+            url=meta.url,
+            kind=meta.kind,
+            indexed_at=indexed_at,
+            doc_count=len(documents),
+            chunk_hashes=new_hashes,
+            embedder_signature=_embedder.signature,
+        )
+        logger.info(
+            "refresh source_id=%s changed_docs=%d reembedded_chunks=%d",
+            source_id, len(changed_ref_doc_ids), len(nodes_to_insert),
+        )
+        return {
+            "source_id": source_id,
+            "changed": True,
+            "force": False,
+            "doc_count": len(documents),
+            "chunks_reembedded": len(nodes_to_insert),
+            "indexed_at": indexed_at.isoformat(),
+        }
 
 
 def list_sources() -> list[dict[str, Any]]:
