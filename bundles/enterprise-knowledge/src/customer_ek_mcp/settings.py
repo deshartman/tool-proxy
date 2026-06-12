@@ -1,36 +1,36 @@
 """Configuration loaded from the bundle's `.env` (passed in by the connector
 as the child process's environment).
 
-Step 2 reads only what the stub backend needs. Step 4 grows this to cover
-embedding model choice, source-system credentials, and refresh cadence
-hints.
+pgvector is the only backend in v1. EK_PGVECTOR_DSN is required at boot —
+missing or empty fails fast in `load()`. The Confluence-related env vars
+land later (see EK-IMPLEMENTATION.md "Phase 2 (parked)") and are read by
+`readers.py` not here.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Literal
 
 
-VectorStoreBackend = Literal["pgvector", "chroma", "stub"]
+DEFAULT_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 
 
 @dataclass(frozen=True)
 class Settings:
-    backend: VectorStoreBackend
-    pgvector_dsn: str | None
-    chroma_path: str | None
+    pgvector_dsn: str
+    embed_model: str
 
 
 def load() -> Settings:
-    backend = os.environ.get("EK_VECTOR_STORE", "stub").lower()
-    if backend not in {"pgvector", "chroma", "stub"}:
-        raise ValueError(
-            f"EK_VECTOR_STORE must be one of pgvector|chroma|stub; got {backend!r}"
+    dsn = os.environ.get("EK_PGVECTOR_DSN", "").strip()
+    if not dsn:
+        raise RuntimeError(
+            "EK_PGVECTOR_DSN is required. Set it in "
+            "mcp/bundled/enterprise-knowledge/.env (see .env.example)."
         )
     return Settings(
-        backend=backend,  # type: ignore[arg-type]
-        pgvector_dsn=os.environ.get("EK_PGVECTOR_DSN"),
-        chroma_path=os.environ.get("EK_CHROMA_PATH"),
+        pgvector_dsn=dsn,
+        embed_model=os.environ.get("EK_EMBED_MODEL", DEFAULT_EMBED_MODEL).strip()
+        or DEFAULT_EMBED_MODEL,
     )

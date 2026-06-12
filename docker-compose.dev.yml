@@ -1,0 +1,23 @@
+services:
+  ek-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mcp-shim-ek-postgres
+    environment:
+      POSTGRES_DB: enterprise_knowledge
+      POSTGRES_USER: ek
+      POSTGRES_PASSWORD: ${EK_PG_PASSWORD:-ek-dev-password}
+    ports:
+      # Host 5433 (not 5432) to avoid colliding with another local Postgres
+      # — e.g. a sibling project's container. Container-internal port stays
+      # 5432; only the host-side mapping moves.
+      - "5433:5432"
+    volumes:
+      - ek-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ek -d enterprise_knowledge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ek-postgres-data:

@@ -1,9 +1,12 @@
-"""Enterprise Knowledge MCP — stub backend.
+"""Enterprise Knowledge MCP — LlamaIndex-backed RAG over pgvector.
 
-Step 2 of LLAMA-INDEX.md ships a runnable shape with placeholder data so the
-controller-side hydration / scheduler / schema work has a stable contract to
-build against. Step 4 swaps the stub for a real LlamaIndex backend
-(VectorStoreIndex + pgvector/Chroma + local embedder).
+v1 supports local files (file:// URLs and absolute paths). The four MCP
+tools — sources_register, knowledge_query, sources_refresh, sources_fetch —
+are wired through the bare `mcp` SDK in __main__.py and dispatch to
+storage.py, which sits over LlamaIndex + PGVectorStore + a local
+HuggingFace embedder.
+
+See ../../.claude/plans/EK-IMPLEMENTATION.md for the full plan.
 """
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
