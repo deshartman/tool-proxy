@@ -27,6 +27,7 @@ class SourceMeta:
     indexed_at: datetime
     doc_count: int
     chunk_hashes: list[str]
+    embedder_signature: str
 
 
 def record_source_metadata(
@@ -38,28 +39,30 @@ def record_source_metadata(
     indexed_at: datetime,
     doc_count: int,
     chunk_hashes: list[str],
+    embedder_signature: str,
 ) -> None:
     """Insert or update the row for `source_id`. Idempotent on re-register."""
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO ek_sources (source_id, url, kind, indexed_at, doc_count, chunk_hashes)
-            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+            INSERT INTO ek_sources (source_id, url, kind, indexed_at, doc_count, chunk_hashes, embedder_signature)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
             ON CONFLICT (source_id) DO UPDATE SET
               url = EXCLUDED.url,
               kind = EXCLUDED.kind,
               indexed_at = EXCLUDED.indexed_at,
               doc_count = EXCLUDED.doc_count,
-              chunk_hashes = EXCLUDED.chunk_hashes
+              chunk_hashes = EXCLUDED.chunk_hashes,
+              embedder_signature = EXCLUDED.embedder_signature
             """,
-            (source_id, url, kind, indexed_at, doc_count, json.dumps(chunk_hashes)),
+            (source_id, url, kind, indexed_at, doc_count, json.dumps(chunk_hashes), embedder_signature),
         )
 
 
 def load_source_metadata(*, dsn: str, source_id: str) -> SourceMeta | None:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT source_id, url, kind, indexed_at, doc_count, chunk_hashes "
+            "SELECT source_id, url, kind, indexed_at, doc_count, chunk_hashes, embedder_signature "
             "FROM ek_sources WHERE source_id = %s",
             (source_id,),
         )
@@ -70,14 +73,14 @@ def load_source_metadata(*, dsn: str, source_id: str) -> SourceMeta | None:
 def all_source_metadata(*, dsn: str) -> list[SourceMeta]:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT source_id, url, kind, indexed_at, doc_count, chunk_hashes "
+            "SELECT source_id, url, kind, indexed_at, doc_count, chunk_hashes, embedder_signature "
             "FROM ek_sources ORDER BY indexed_at DESC"
         )
         return [_row_to_meta(row) for row in cur.fetchall()]
 
 
 def _row_to_meta(row: tuple[Any, ...]) -> SourceMeta:
-    source_id, url, kind, indexed_at, doc_count, chunk_hashes = row
+    source_id, url, kind, indexed_at, doc_count, chunk_hashes, embedder_signature = row
     return SourceMeta(
         source_id=source_id,
         url=url,
@@ -85,4 +88,5 @@ def _row_to_meta(row: tuple[Any, ...]) -> SourceMeta:
         indexed_at=indexed_at,
         doc_count=doc_count,
         chunk_hashes=list(chunk_hashes) if chunk_hashes else [],
+        embedder_signature=embedder_signature or "",
     )

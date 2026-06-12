@@ -7,7 +7,8 @@ MCP wire contract with the controller doesn't move.
 Module import does three things, once per process:
   1. Load Settings (raises if EK_PGVECTOR_DSN is unset).
   2. Apply migrations from migrations/*.sql idempotently.
-  3. Configure the global LlamaIndex embedder.
+  3. Load the embedder via `embedder.load_embedder()` and bind it
+     globally on `LlamaSettings.embed_model`.
 
 Per-source-id table model: each registered source gets its own
 `data_<source_id>` table created lazily by PGVectorStore. `force=True`
@@ -29,10 +30,9 @@ from llama_index.core import Settings as LlamaSettings
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import BaseNode
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.postgres import PGVectorStore
 
-from . import metadata, readers, settings
+from . import embedder, metadata, readers, settings
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,9 @@ def _apply_migrations() -> None:
 
 
 _apply_migrations()
-LlamaSettings.embed_model = HuggingFaceEmbedding(model_name=_settings.embed_model)
+_embedder = embedder.load_embedder()
+LlamaSettings.embed_model = _embedder.model
+logger.info("embedder loaded: %s (dim=%d)", _embedder.signature, _embedder.embed_dim)
 
 
 def _stable_source_id(url: str) -> str:
@@ -80,7 +82,7 @@ def _vector_store(source_id: str) -> PGVectorStore:
         user=parsed.username or "",
         password=parsed.password or "",
         table_name=_table_name(source_id),
-        embed_dim=384,
+        embed_dim=_embedder.embed_dim,
     )
 
 
@@ -126,6 +128,7 @@ def register_source(url: str) -> dict[str, Any]:
             indexed_at=indexed_at,
             doc_count=len(documents),
             chunk_hashes=chunk_hashes,
+            embedder_signature=_embedder.signature,
         )
 
         logger.info(
@@ -146,6 +149,14 @@ def query(source_id: str, query_text: str, k: int) -> dict[str, Any]:
     )
     if meta is None:
         raise ValueError(f"unknown source_id {source_id!r}")
+
+    if meta.embedder_signature and meta.embedder_signature != _embedder.signature:
+        raise RuntimeError(
+            f"embedder mismatch on source {source_id!r}: indexed with "
+            f"{meta.embedder_signature!r}, current embedder is "
+            f"{_embedder.signature!r}. Re-index with sources_refresh "
+            f"(force=true), or restore the original EK_EMBEDDER setting."
+        )
 
     vector_store = _vector_store(source_id)
     index = VectorStoreIndex.from_vector_store(vector_store=vector_store)
