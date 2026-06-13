@@ -1,11 +1,69 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
-// Hydrates the customer's most recent order from the mock customer service
-// (see mock/customers/). The MCP is a thin client — no fixtures live here
-// any more.
+// Hydration-role tool: takes a phone number and returns the customer's
+// recent orders in a shape the cloud server can field-project against
+// (e.g. [get-recent-orders.orders[0].id]). The outputSchema below is the
+// contract: when the controller-side procedure references a field, it
+// resolves against this shape.
 const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
 const REQ_TIMEOUT_MS = 4000;
+
+interface Interaction {
+  orderId: string;
+  date: string;
+  status: string;
+  channel: string;
+  amount: number;
+  currency: string;
+  reason: string;
+  resolution: string;
+}
+
+interface CustomerLookupResponse {
+  customer: {
+    name: string;
+    surname: string;
+    phone?: string;
+    email?: string;
+    interactions: Interaction[];
+  };
+  mostRecent: Interaction | null;
+}
+
+// outputSchema describes the projection target — what authors reference as
+// [get-recent-orders.orders[0].id], NOT the {success, data} transport
+// envelope. The downstream consumer strips success/data before projecting.
+// Same convention for any future hydration tool: schema = post-unwrap shape.
+const OrderSchema = {
+  id: z.string().describe("Stable order identifier."),
+  status: z.string().describe("Fulfillment status (e.g. delivered, shipped, pending, cancelled)."),
+  total: z.number().describe("Order total in the order's currency, as a decimal number."),
+  currency: z.string().describe("ISO 4217 currency code, e.g. USD."),
+  placedAt: z.string().describe("Order placement timestamp, ISO 8601."),
+};
+
+const OutputSchema = {
+  orders: z.array(z.object(OrderSchema)),
+  customerId: z.string().describe("Stable identifier for the customer; today this is their E.164 phone."),
+};
+
+// Map the mock's Interaction onto the public Order shape. Reference syntax
+// like [get-recent-orders.orders[0].total] inlines these values into the
+// runtime LLM prompt as-is, so anything that needs further formatting before
+// it's customer-quotable (minor-unit math, tz-offset arithmetic, status
+// casing) is a missed normalisation at this boundary.
+function interactionToOrder(
+  i: Interaction
+): { id: string; status: string; total: number; currency: string; placedAt: string } {
+  return {
+    id: i.orderId,
+    status: i.status.toLowerCase(),
+    total: Number(i.amount.toFixed(2)),
+    currency: i.currency,
+    placedAt: new Date(i.date).toISOString(),
+  };
+}
 
 async function fetchJson(url: string): Promise<{ status: number; body: unknown }> {
   const ctl = new AbortController();
@@ -19,20 +77,6 @@ async function fetchJson(url: string): Promise<{ status: number; body: unknown }
   }
 }
 
-interface CustomerLookupResponse {
-  customer: { name: string; surname: string; phone?: string; email?: string };
-  mostRecent: {
-    orderId: string;
-    date: string;
-    status: string;
-    channel: string;
-    amount: number;
-    currency: string;
-    reason: string;
-    resolution: string;
-  } | null;
-}
-
 export const getRecent: Tool = {
   name: "get_recent",
   register(server) {
@@ -40,61 +84,42 @@ export const getRecent: Tool = {
       "get_recent",
       {
         description:
-          "Returns the customer's most recent order keyed by phone (preferred) or email (fallback). " +
-          "Used by the Refund Eligibility procedure as a hydration tool.",
-        // Property names are spelled with spaces deliberately: they match the
-        // hydration reference labels in the controller-side procedure
-        // ("customer phone", "original purchaser email") so the
-        // HydrationService can pass the ctx bag through verbatim.
+          "Returns the customer's recent orders keyed by phone. Hydration tool: " +
+          "the cloud server projects fields like [get-recent-orders.orders[0].id] " +
+          "from the outputSchema below.",
         inputSchema: {
-          "customer phone": z
+          phone: z
             .string()
-            .optional()
             .describe("Customer phone number, E.164 format (e.g. +14155550101)."),
-          "original purchaser email": z
-            .string()
-            .optional()
-            .describe("Optional fallback used by gift-order edge cases."),
         },
+        outputSchema: OutputSchema,
       },
       async (args) => {
-        const phone = args["customer phone"];
-        const email = args["original purchaser email"];
+        const phone = args.phone;
 
-        let response: CustomerLookupResponse | null = null;
-        if (phone) {
-          const r = await fetchJson(`${MOCK_URL}/customers?phone=${encodeURIComponent(phone)}`);
-          if (r.status === 200) response = r.body as CustomerLookupResponse;
-          else if (r.status !== 404) throw new Error(`mock-customers ${r.status}`);
+        const r = await fetchJson(
+          `${MOCK_URL}/customers?phone=${encodeURIComponent(phone)}`
+        );
+        if (r.status !== 200 && r.status !== 404) {
+          throw new Error(`mock-customers ${r.status}`);
         }
-        if (!response && email) {
-          const r = await fetchJson(`${MOCK_URL}/customers?email=${encodeURIComponent(email)}`);
-          if (r.status === 200) response = r.body as CustomerLookupResponse;
-          else if (r.status !== 404) throw new Error(`mock-customers ${r.status}`);
-        }
+        const response = r.status === 200 ? (r.body as CustomerLookupResponse) : null;
 
-        if (!response?.mostRecent) {
-          return {
-            content: [
-              { type: "text", text: JSON.stringify({ error: "no_orders" }) },
-            ],
-          };
-        }
+        // Mock service ships interactions unsorted; mirror what mostRecent()
+        // does (newest first by ISO date) so orders[0] is the most recent.
+        const interactions = [...(response?.customer.interactions ?? [])].sort(
+          (a, b) => b.date.localeCompare(a.date)
+        );
+        const orders = interactions.map(interactionToOrder);
+        const data = { orders, customerId: phone };
+        const envelope = { success: true as const, data };
 
-        const recent = response.mostRecent;
-        const ageDays = Math.floor((Date.now() - Date.parse(recent.date)) / (24 * 60 * 60 * 1000));
-        const order = {
-          orderId: recent.orderId,
-          placedAt: recent.date,
-          ageDays,
-          status: recent.status,
-          channel: recent.channel,
-          amount: recent.amount,
-          currency: recent.currency,
-        };
-
+        // structuredContent matches outputSchema (unwrapped projection
+        // shape); content[] carries the wrapped {success, data} envelope
+        // the downstream consumer expects on the wire.
         return {
-          content: [{ type: "text", text: JSON.stringify(order, null, 2) }],
+          structuredContent: data,
+          content: [{ type: "text", text: JSON.stringify(envelope, null, 2) }],
         };
       }
     );
