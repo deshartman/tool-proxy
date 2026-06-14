@@ -11,7 +11,7 @@ import { Inspector, startInspector } from "./inspector/server.js";
 import { runDiscover } from "./discover.js";
 import { runInit } from "./init.js";
 import { spawnType1Children, shutdownChildren, type SpawnedChild } from "./spawner.js";
-import { readState, writeState, defaultStatePath, type ConnectorState } from "./state.js";
+import { readState, writeState, clearRegistrationToken, defaultStatePath, type ConnectorState } from "./state.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("connector");
@@ -171,6 +171,11 @@ async function main() {
 
   if (inspector) {
     inspector.onReconnect = () => { void reconnect("inspector requested"); };
+    inspector.setIdentity(
+      state.registrationToken
+        ? { kind: "bound", tokenLen: state.registrationToken.length }
+        : { kind: "first-connect" }
+    );
     startInspector(inspectorPort, inspector);
   }
 
@@ -206,12 +211,14 @@ async function main() {
     t.onclose = () => {
       log.info(`tunnel closed`);
       stopTimers();
-      // SIGTERM/SIGINT and the manual /reconnect path both close the tunnel
-      // intentionally — they handle their own bookkeeping. Auto-reconnect
-      // only triggers on an *unexpected* close (network blip, controller
-      // restart). The inspector still goes 'closed' first; we then transition
-      // it to 'reconnecting' below if the policy is enabled.
-      if (shuttingDown || reconnecting) return;
+      // SIGTERM/SIGINT closes the tunnel intentionally — that path sets
+      // shuttingDown so we bail. The manual /reconnect path also closes
+      // intentionally, but TunnelClient.close() suppresses onclose for those
+      // (sets this.closed=true, so handleClose returns early), so we don't
+      // need to gate on `reconnecting` here. We *do* want to fire auto-reconnect
+      // when a dial that was kicked off by reconnect() then fails or drops —
+      // that's the controller-restart recovery path.
+      if (shuttingDown) return;
       if (!config.policy.reconnect.enabled) return;
       // A controller-side rejection (e.g. unknown_registration_token) means
       // retrying with the same identity will fail identically forever. Stay
@@ -236,7 +243,12 @@ async function main() {
       // stranded in 'closed' until manual intervention. The onclose path
       // never fires for a connection that never reached OPEN, so this is
       // the only place we can hook the recovery.
-      if (shuttingDown || reconnecting) return;
+      //
+      // Don't gate on `reconnecting`: this catch *fires inside* an in-flight
+      // reconnect attempt, so reconnecting=true is normal here. Skipping the
+      // schedule would leave us stuck after a single 502 from a controller
+      // that's still mid-restart. `reconnect()` itself guards re-entry.
+      if (shuttingDown) return;
       if (!config.policy.reconnect.enabled) return;
       if (registrationRejected) {
         log.warn(`auto-reconnect suppressed: controller rejected the registration — clear .connector-state.json and click Reconnect`);
@@ -256,8 +268,43 @@ async function main() {
     t.onframe = (frame) => {
       if (frame.type === "register-ack") {
         if (frame.error) {
+          // unknown_registration_token: our persisted token no longer maps to
+          // a row controller-side (DB reset, row deleted, fresh volume). The
+          // recovery used to require the operator to delete .connector-state.json
+          // by hand and click Reconnect — instead, we clear the token ourselves
+          // and let auto-reconnect retry with no token, which the controller
+          // treats as a first-connect and mints a fresh row. registrationRejected
+          // stays false so onclose schedules the next attempt.
+          if (frame.error.code === "unknown_registration_token") {
+            log.warn(
+              { code: frame.error.code },
+              `controller no longer recognizes our registrationToken — clearing local state to re-mint on next attempt`
+            );
+            state.registrationToken = undefined;
+            try {
+              clearRegistrationToken(statePath);
+            } catch (e) {
+              log.error({ err: e as Error }, `failed to clear connector-state.json — next attempt may still present a stale token`);
+            }
+            inspector?.setIdentity({ kind: "cleared" });
+            return;
+          }
+          // name_taken: a different connector row already owns CONNECTOR_NAME.
+          // Self-healing isn't safe — silently retrying could mask a config
+          // mistake. Stay sticky and log an action-oriented message so the
+          // operator knows exactly what to do.
+          if (frame.error.code === "name_taken") {
+            log.error(
+              { code: frame.error.code, name: config.tunnel.name },
+              `name "${config.tunnel.name}" is already bound to another connector row — delete that row controller-side, or change CONNECTOR_NAME and restart. auto-reconnect suppressed.`
+            );
+            registrationRejected = true;
+            inspector?.setIdentity({ kind: "rejected", reason: "name_taken", message: `name "${config.tunnel.name}" already bound to another connector row` });
+            return;
+          }
           log.error({ code: frame.error.code, message: frame.error.message }, `register-ack rejected`);
           registrationRejected = true;
+          inspector?.setIdentity({ kind: "rejected", reason: frame.error.code, message: frame.error.message });
           return;
         }
         // Successful register-ack means we're healthy — clear any
@@ -268,6 +315,7 @@ async function main() {
           log.info({ priorAttempts: reconnectAttempt }, `tunnel healthy — reset reconnect attempts`);
           reconnectAttempt = 0;
         }
+        resetReconnectDelay();
         if (frame.registrationToken && frame.registrationToken !== state.registrationToken) {
           state.registrationToken = frame.registrationToken;
           try {
@@ -279,6 +327,7 @@ async function main() {
         } else if (frame.accepted) {
           log.info({ connectorId: frame.connectorId ?? "?" }, `register-ack ok — bound to existing record`);
         }
+        inspector?.setIdentity({ kind: "bound", tokenLen: state.registrationToken?.length ?? 0 });
       }
     };
 
@@ -367,6 +416,11 @@ async function main() {
 
   // ─── auto-reconnect ─────────────────────────────────────────────────────
   function scheduleAutoReconnect(): void {
+    // Idempotent: a failed dial typically triggers both ws 'error' (caught
+    // in connectTunnel) and ws 'close' (routed through onclose) — both call
+    // here. The first one wins; the second is a no-op so we don't
+    // double-increment reconnectAttempt or stomp the timer.
+    if (reconnectTimer) return;
     const policy = config.policy.reconnect;
     reconnectAttempt += 1;
     if (policy.max_attempts > 0 && reconnectAttempt > policy.max_attempts) {
@@ -430,31 +484,27 @@ function countTools(m: ToolManifest): number {
 
 // Compute the delay before the next auto-reconnect attempt.
 //
-//   attempt: 1-indexed attempt count (1 = first retry after an unexpected close,
-//            reset to 0 on a successful register-ack)
-//   policy:  the policy.reconnect block from the yaml — initial_backoff_ms,
-//            max_backoff_ms, max_attempts (the caller already applied
-//            max_attempts; this fn doesn't need to re-check it)
-//
-// USER CONTRIBUTION POINT — the current implementation is the trivial
-// baseline: a fixed delay equal to initial_backoff_ms. It works (the
-// connector recovers from blips) but it's not what you'd want behind a real
-// controller serving many connectors after an outage.
-//
-// Replace with a real backoff. Trade-offs to weigh (see plan doc for the
-// long version — /Users/dhartman/.claude/plans/logical-spinning-badger.md):
-//   - Pure exponential is predictable but synchronizes — bad if many
-//     connectors reconnect to one controller after an outage.
-//   - Full jitter (random(0, cap)) avoids thundering herds but can also
-//     retry very fast on small attempt counts.
-//   - Equal jitter (half + random(0, half)) keeps a floor while spreading.
-//   - Decorrelated jitter (AWS) is the smoothest spread for many clients.
-//
-// Use policy.initial_backoff_ms and policy.max_backoff_ms as the bounds.
-// Drop a one-line comment naming the strategy you picked.
+// Strategy: decorrelated jitter (AWS pattern). Each delay is drawn from
+//   uniform(initial_backoff_ms, lastDelay * 3), capped at max_backoff_ms.
+// This produces a spread that climbs without synchronizing across many
+// connectors recovering from the same outage, with a known floor and ceiling.
+// `lastDelay` is module-level state so the curve resumes where it left off
+// across attempts; `resetReconnectDelay()` is called from the success path
+// (alongside reconnectAttempt = 0) so the next blip restarts at the floor.
+let lastDelay = 0;
+
 function nextReconnectDelay(_attempt: number, policy: ReconnectPolicyConfig): number {
-  // Strategy: fixed delay (placeholder). Replace with a backoff curve.
-  return policy.initial_backoff_ms;
+  if (lastDelay === 0) lastDelay = policy.initial_backoff_ms;
+  const upper = Math.max(policy.initial_backoff_ms, lastDelay * 3);
+  const span = upper - policy.initial_backoff_ms;
+  const draw = policy.initial_backoff_ms + Math.floor(Math.random() * (span + 1));
+  const next = Math.min(policy.max_backoff_ms, draw);
+  lastDelay = next;
+  return next;
+}
+
+function resetReconnectDelay(): void {
+  lastDelay = 0;
 }
 
 function sameMcpServers(
