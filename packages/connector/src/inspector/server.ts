@@ -18,10 +18,21 @@ export interface ReconnectInfo {
   nextDelayMs: number;
 }
 
+// Identity status — surfaces the connector↔controller binding state in the
+// inspector header. Distinct from the WS state (connecting/open/closed):
+// even an open WS can be in 'first-connect' (no token yet) or 'rejected'
+// (controller said no) at register-ack time.
+export type Identity =
+  | { kind: "first-connect" }                                              // no token on disk; will be minted on register-ack
+  | { kind: "bound"; tokenLen: number }                                    // token persisted, last register-ack succeeded
+  | { kind: "cleared" }                                                    // controller returned unknown_registration_token; we cleared the token and will re-mint
+  | { kind: "rejected"; reason: string; message?: string };                // controller rejected with a sticky error (e.g. name_taken) — operator action required
+
 // SSE event shape (mirrored as JSON.stringify(payload)).
 export type InspectorEvent =
-  | { kind: "snapshot"; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; manifest?: ToolManifest; frames: FrameTap[] }
+  | { kind: "snapshot"; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; identity?: Identity; manifest?: ToolManifest; frames: FrameTap[] }
   | { kind: "state"; state: DisplayState; reconnect?: ReconnectInfo }
+  | { kind: "identity"; identity: Identity }
   | { kind: "frame"; tap: FrameTap }
   | { kind: "manifest"; manifest: ToolManifest };
 
@@ -29,6 +40,7 @@ export interface InspectorState {
   controllerUrl: string;
   state: DisplayState;
   reconnect?: ReconnectInfo;
+  identity?: Identity;
   manifest?: ToolManifest;
 }
 
@@ -66,6 +78,11 @@ export class Inspector {
     this.broadcast({ kind: "manifest", manifest });
   }
 
+  setIdentity(identity: Identity): void {
+    this.current.identity = identity;
+    this.broadcast({ kind: "identity", identity });
+  }
+
   recordTap(tap: FrameTap): void {
     this.frames.push(tap);
     if (this.frames.length > RING_SIZE) {
@@ -80,6 +97,7 @@ export class Inspector {
       controllerUrl: this.current.controllerUrl,
       state: this.current.state,
       reconnect: this.current.reconnect,
+      identity: this.current.identity,
       manifest: this.current.manifest,
       frames: [...this.frames],
     };

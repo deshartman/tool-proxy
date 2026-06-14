@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 // Persistent state for a registered connector. Currently holds just the
@@ -39,5 +39,26 @@ export function readState(path: string = defaultStatePath()): ConnectorState {
 
 export function writeState(state: ConnectorState, path: string = defaultStatePath()): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(state, null, 2) + "\n", "utf8");
+  // Write to a sibling tmp file then rename, so a crash mid-write can never
+  // leave a half-written .connector-state.json on disk. POSIX rename is
+  // atomic — readers see either the old file or the new one.
+  const tmp = path + ".tmp";
+  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", "utf8");
+  renameSync(tmp, path);
+}
+
+// Clear the persisted registrationToken — used by the connector when the
+// controller returns `unknown_registration_token` in register-ack, signalling
+// our token no longer maps to a row (typically: controller DB reset, or the
+// row was deleted out from under us). Removes the file entirely if no other
+// fields remain so the next boot is a clean first-connect.
+export function clearRegistrationToken(path: string = defaultStatePath()): void {
+  if (!existsSync(path)) return;
+  try {
+    unlinkSync(path);
+  } catch {
+    // Best-effort: if unlink fails (e.g. permissions), fall back to writing
+    // an empty state object so readState() at least returns no token.
+    writeState({}, path);
+  }
 }

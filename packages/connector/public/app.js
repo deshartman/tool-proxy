@@ -7,6 +7,7 @@
 
 const elStatus = document.getElementById('status');
 const elController = document.getElementById('controller-url');
+const elIdentity = document.getElementById('identity');
 const elManifestEmpty = document.getElementById('manifest-empty');
 const elManifest = document.getElementById('manifest');
 const elMConnector = document.getElementById('m-connector');
@@ -57,6 +58,42 @@ elReconnect.addEventListener('click', async () => {
     elReconnect.textContent = original;
   }, 1500);
 });
+
+function setIdentity(identity) {
+  if (!elIdentity) return;
+  if (!identity) {
+    elIdentity.className = 'identity identity-unknown';
+    elIdentity.textContent = '…';
+    elIdentity.title = '';
+    return;
+  }
+  switch (identity.kind) {
+    case 'bound':
+      elIdentity.className = 'identity identity-bound';
+      elIdentity.textContent = `bound (token len=${identity.tokenLen})`;
+      elIdentity.title = 'Connector is bound to a controller record. The registrationToken is persisted in .connector-state.json.';
+      break;
+    case 'first-connect':
+      elIdentity.className = 'identity identity-first';
+      elIdentity.textContent = 'first-connect pending';
+      elIdentity.title = 'No registrationToken on disk yet. Controller will mint one on the next successful register-ack.';
+      break;
+    case 'cleared':
+      elIdentity.className = 'identity identity-cleared';
+      elIdentity.textContent = 'cleared — re-minting';
+      elIdentity.title = 'Controller returned unknown_registration_token. The local state file was cleared; auto-reconnect will mint a fresh row on the next attempt.';
+      break;
+    case 'rejected':
+      elIdentity.className = 'identity identity-rejected';
+      elIdentity.textContent = `rejected: ${identity.reason}`;
+      elIdentity.title = identity.message || `Controller rejected the register frame with code "${identity.reason}". Operator intervention required.`;
+      break;
+    default:
+      elIdentity.className = 'identity identity-unknown';
+      elIdentity.textContent = identity.kind;
+      elIdentity.title = '';
+  }
+}
 
 function setStatus(state, reconnect) {
   elStatus.className = `status status-${state}`;
@@ -402,6 +439,7 @@ function appendFrame(tap) {
 function applySnapshot(s) {
   elController.textContent = s.controllerUrl;
   setStatus(s.state, s.reconnect);
+  setIdentity(s.identity);
   renderManifest(s.manifest);
   elFrames.replaceChildren();
   elFrames.classList.add('empty');
@@ -425,6 +463,7 @@ function connectSse() {
     switch (ev.kind) {
       case 'snapshot': applySnapshot(ev); break;
       case 'state':    setStatus(ev.state, ev.reconnect); break;
+      case 'identity': setIdentity(ev.identity); break;
       case 'manifest': renderManifest(ev.manifest); break;
       case 'frame':    appendFrame(ev.tap); break;
     }
