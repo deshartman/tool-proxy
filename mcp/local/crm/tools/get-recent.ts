@@ -32,9 +32,9 @@ interface CustomerLookupResponse {
 }
 
 // outputSchema describes the projection target — what authors reference as
-// [get-recent-orders.orders[0].id], NOT the {success, data} transport
-// envelope. The downstream consumer strips success/data before projecting.
-// Same convention for any future hydration tool: schema = post-unwrap shape.
+// [get-recent-orders.orders[0].id]. content[0].text and structuredContent
+// both carry this same shape; success/failure is signalled via isError, not
+// an in-payload envelope (per MCP Tools / Tool Result spec).
 const OrderSchema = {
   id: z.string().describe("Stable order identifier."),
   status: z.string().describe("Fulfillment status (e.g. delivered, shipped, pending, cancelled)."),
@@ -112,14 +112,10 @@ export const getRecent: Tool = {
         );
         const orders = interactions.map(interactionToOrder);
         const data = { orders, customerId: phone };
-        const envelope = { success: true as const, data };
 
-        // structuredContent matches outputSchema (unwrapped projection
-        // shape); content[] carries the wrapped {success, data} envelope
-        // the downstream consumer expects on the wire.
         return {
           structuredContent: data,
-          content: [{ type: "text", text: JSON.stringify(envelope, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         };
       }
     );
