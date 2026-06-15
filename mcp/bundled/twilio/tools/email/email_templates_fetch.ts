@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { getSendGridClient } from "../sendgrid-client.js";
+import { getSendGridClient } from "../../sendgrid-client.js";
 
 export const emailTemplatesFetch: Tool = {
   name: "email_templates_fetch",

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { getTwilioClient } from "../twilio-client.js";
+import { getTwilioClient } from "../../twilio-client.js";
 
 type Channel = "sms" | "whatsapp" | "rcs";
 
