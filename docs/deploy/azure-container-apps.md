@@ -6,8 +6,10 @@ Run the connector as a Container App. Outbound-only.
 
 - Image pushed to ACR (or another registry the Container App can pull from).
 - A Container Apps environment.
-- Two Container App secrets: `tunnel-auth-token` and (if mounting from a
-  secret) the YAML content.
+- A Tunnel Security row on the controller (Tools → Connectors → Tunnel
+  Security) — gives you a `ts_<...>` bearer. See the [overview](./README.md).
+- Two Container App secrets: `tunnel-auth-token` (the `ts_<...>` value)
+  and (if mounting from a secret) the YAML content.
 
 ## Footgun
 
@@ -39,6 +41,7 @@ az containerapp create \
   --secrets tunnel-auth-token="$TUNNEL_AUTH_TOKEN" \
   --env-vars \
       TUNNEL_AUTH_TOKEN=secretref:tunnel-auth-token \
+      CONNECTOR_NAME=prod-customer \
       CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml \
       INSPECTOR_PORT=0
 ```
@@ -46,7 +49,9 @@ az containerapp create \
 Then mount the YAML via an Azure File share or build it into the image.
 For per-environment configs (dev/stage/prod) bake `${...}` interpolation
 into a single YAML and set `CONTROLLER_URL` per app. Pick distinct
-`tunnel.name` values per deployment (or maintain per-environment yamls).
+`tunnel.name` values per deployment — and remember each one needs its own
+Tunnel Security row on the controller (the Name on that row must match
+`CONNECTOR_NAME` here, case-sensitive).
 
 ## Inspector UI
 

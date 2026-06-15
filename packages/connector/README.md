@@ -31,21 +31,29 @@ Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector sp
 
 ## Quick start (development)
 
+The WS handshake is gated by a per-tunnel bearer that the controller mints. Before booting, create a row in the controller UI: **Tools → Connectors → Tunnel Security → New Tunnel Security**. Pick a Name (this becomes `CONNECTOR_NAME` — case-sensitive), paste Twilio AccountSid + AuthToken (or AccountSid + ApiKey), Save. The controller verifies against Twilio's API and shows you a `ts_<...>` secret once — copy it.
+
 ```bash
 # from repo root
 npm install
 npm run build
 
-# Connector-level config — one yaml lists every MCP, one .env carries shared tunnel secrets.
+# Connector-level config — one yaml lists every MCP, one .env carries the tunnel bearer.
 cp packages/connector/connector.yaml.example packages/connector/connector.yaml
 cp packages/connector/.env.example packages/connector/.env
-# edit .env: CONTROLLER_URL + TUNNEL_AUTH_TOKEN must match the controller's
-# edit connector.yaml: pick a unique tunnel.name
+# edit .env:
+#   CONTROLLER_URL=https://your-controller.example.com
+#   CONNECTOR_NAME=<exact Name from the Tunnel Security row>
+#   TUNNEL_AUTH_TOKEN=ts_<...>  (the secret the UI just showed you)
 
 ./scripts/start-connector.sh
 ```
 
-First boot the connector registers itself with the controller (mints a row keyed to `tunnel.name`, persists the controller-issued registrationToken to `packages/connector/.connector-state.json`). Subsequent boots reconnect by token. Clear the state file to mint fresh.
+The WS upgrade sends `Authorization: Bearer <ts_…>` plus `X-Connector-Name: <CONNECTOR_NAME>`. The controller looks up the `tunnel_security_configs` row by `(tenant_id, name)` and bcrypt-compares the bearer. Mismatch / missing header / unknown name → HTTP 401, no socket.
+
+Once the WS is up, the connector also registers a `connectors` row using `tunnel.name` and persists the controller-issued `registrationToken` to `packages/connector/.connector-state.json`. Subsequent boots reconnect by token. Clear the state file to mint fresh — note that the Tunnel Security row is independent of the connectors row, so you don't need to recreate the bearer for that.
+
+Rotate the bearer via the row's **Rotate Secret** button; the previous hash stays valid 24h so the connector can roll without coordinated downtime.
 
 The connector serves an **inspector UI at http://localhost:9090/** showing:
 - live WS state (connecting / open / closed)
@@ -123,9 +131,11 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 # Inside a container the entrypoint is `node dist/index.js`. Mount your config:
 docker run --rm \
   -v "$PWD/connector.yaml:/etc/mcp-connector/config.yaml:ro" \
-  -e TUNNEL_AUTH_TOKEN=... \
+  -e TUNNEL_AUTH_TOKEN=ts_... \
+  -e CONNECTOR_NAME=my-customer \
   -e CONTROLLER_URL=https://controller.example.com \
-  # tunnel.name comes from connector.yaml; first boot mints, restart reconnects via state file
+  # CONNECTOR_NAME must match the Tunnel Security row's Name on the controller (case-sensitive).
+  # tunnel.name comes from connector.yaml; first boot mints a connectors row, restart reconnects via state file
   -p 9090:9090 \
   mcp-connector:0.1.0 start
 
@@ -143,10 +153,11 @@ See [docs/deploy/README.md](../../docs/deploy/README.md) plus the per-cloud guid
 
 ## Out of scope (production hardening)
 
-- mTLS / cert rotation / Account-SID-bound tunnel auth
+- mTLS / cert rotation
 - OAuth 2.1 + RFC 8707 audience-bound MCP tokens
 - QUIC transport (stays on WS)
-- Auto-reconnect with backoff (manual reconnect button only)
 - Live reconnect on `mcp_servers` YAML changes (requires process restart)
+
+(Done: per-tunnel handshake auth bound to the customer's Twilio AccountSid via the controller's Tunnel Security UI; auto-reconnect with backoff.)
 
 See `MCP-TUNNEL.md` (held outside this repo) for the full productization roadmap.

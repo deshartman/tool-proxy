@@ -6,8 +6,10 @@ Run the connector as a one-replica Deployment on GKE.
 
 - Image pushed to Artifact Registry.
 - A GKE cluster (Autopilot is fine).
-- A Secret Manager secret containing `TUNNEL_AUTH_TOKEN` and a ConfigMap or
-  Secret containing the YAML.
+- A Tunnel Security row on the controller (Tools → Connectors → Tunnel
+  Security) — gives you a `ts_<...>` bearer. See the [overview](./README.md).
+- A Secret Manager secret containing the `ts_<...>` bearer (referenced as
+  `TUNNEL_AUTH_TOKEN`) and a ConfigMap or Secret containing the YAML.
 
 ## Footgun
 
@@ -29,6 +31,8 @@ kind: Secret
 metadata: { name: mcp-connector-token }
 type: Opaque
 stringData:
+  # The ts_<...> bearer minted by the controller's Tunnel Security UI.
+  # Synced from Secret Manager via the CSI driver (link below).
   TUNNEL_AUTH_TOKEN: "REPLACE_VIA_SECRET_MANAGER_SYNC"
 ---
 apiVersion: v1
@@ -64,6 +68,10 @@ spec:
             - secretRef: { name: mcp-connector-token }
           env:
             - { name: CONTROLLER_URL, value: "https://controller.example.com" }
+            # CONNECTOR_NAME must match the Name on the controller's Tunnel
+            # Security row exactly (case-sensitive). The connector sends it
+            # as X-Connector-Name on the WS upgrade and the controller looks
+            # the row up by it.
             - { name: CONNECTOR_NAME, value: "prod-customer" }
             - { name: CONNECTOR_CONFIG, value: "/etc/mcp-connector/config.yaml" }
             - { name: INSPECTOR_PORT,   value: "0" }

@@ -7,7 +7,12 @@ needed for the tunnel itself.
 
 - Image pushed to ECR (or any registry your task role can pull from).
 - ECS cluster + Fargate-compatible task execution role.
-- A Secrets Manager secret holding `TUNNEL_AUTH_TOKEN`.
+- A Tunnel Security row created on the controller (Tools → Connectors →
+  Tunnel Security) — gives you a `ts_<...>` bearer. The Name on that row
+  is the value you'll set as `CONNECTOR_NAME` below; the bearer is the
+  value you'll store as `TUNNEL_AUTH_TOKEN`. See the [overview](./README.md).
+- A Secrets Manager secret holding the `ts_<...>` bearer (referenced as
+  `TUNNEL_AUTH_TOKEN`).
 - The `connector.yaml` stored as another Secrets Manager secret (or
   parameter store entry, S3 object, etc.).
 
@@ -37,7 +42,8 @@ for exposing the inspector UI (separate concern, see below).
     ],
     "environment": [
       { "name": "CONNECTOR_CONFIG", "value": "/etc/mcp-connector/config.yaml" },
-      { "name": "INSPECTOR_PORT",  "value": "0" }
+      { "name": "CONNECTOR_NAME",   "value": "prod-customer" },
+      { "name": "INSPECTOR_PORT",   "value": "0" }
     ],
     "mountPoints": [
       { "containerPath": "/etc/mcp-connector", "sourceVolume": "config" }
@@ -56,7 +62,11 @@ for exposing the inspector UI (separate concern, see below).
 Mount the YAML at `/etc/mcp-connector/config.yaml`. For a Secrets Manager
 secret, use a small init container or sidecar that writes the secret into
 the shared volume; or build a derived image with the YAML baked in and use
-`${TUNNEL_AUTH_TOKEN}` interpolation at runtime.
+`${TUNNEL_AUTH_TOKEN}` / `${CONNECTOR_NAME}` interpolation at runtime.
+
+`CONNECTOR_NAME` must match the Name on the controller's Tunnel Security
+row exactly (case-sensitive) — that's the lookup key the controller uses
+to find the row and bcrypt-compare the bearer.
 
 ## Inspector UI
 
