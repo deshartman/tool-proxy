@@ -20,6 +20,10 @@ The [orders MCP](../../mcp/local/orders/) reads from this service via
 | `GET` | `/customers?phone=<E.164>` | `{ customer, mostRecent }` or 404 `{ error: "no_customer" }` |
 | `GET` | `/customers?email=<addr>` | same shape; fallback for gift orders |
 | `GET` | `/orders/:orderId` | interaction + customer name/surname, or 404 |
+| `GET` | `/appointments?phone=<E.164>` | next upcoming appointment, or 404 `{ error: "no_appointment" }` |
+| `GET` | `/appointments/:apptId` | appointment by id, or 404 |
+| `GET` | `/availability?start=<ISO>` | `{ available, reason?, daysFromNow, isSameDay, technician, suggestions[] }` |
+| `POST` | `/appointments/:apptId/reschedule` | body `{ newStart }` → updated appointment, or 409 `{ error }` |
 | `GET` | `/healthz` | `ok` |
 
 ## Seeded customers
