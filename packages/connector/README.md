@@ -31,7 +31,10 @@ Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector sp
 
 ## Quick start (development)
 
-The WS handshake is gated by a per-tunnel bearer that the controller mints. Before booting, create a row in the controller UI: **Tools → Connectors → Tunnel Security → New Tunnel Security**. Pick a Name (this becomes `CONNECTOR_NAME` — case-sensitive), paste Twilio AccountSid + AuthToken (or AccountSid + ApiKey), Save. The controller verifies against Twilio's API and shows you a `ts_<...>` secret once — copy it.
+The WS handshake is gated by per-tunnel auth that the controller mints. Before booting, create a row in the controller UI: **Tools → Connectors → Tunnel Security → New Tunnel Security**. Pick a Name (this becomes `CONNECTOR_NAME` — case-sensitive). Pick a security type and paste credentials:
+
+- **Twilio Auth Token** or **Twilio API Key** → controller mints a long-lived `ts_<...>` bearer, shown once. Paste it into `TUNNEL_AUTH_TOKEN`.
+- **OAuth 2.0 (client_credentials)** → controller mints a `client_id` + `client_secret`. Paste them into `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`, and set `OAUTH_TOKEN_URL` to the URL the UI shows. The connector mints a fresh 1h JWT against that endpoint on each reconnect (and refreshes <60s before expiry mid-session).
 
 ```bash
 # from repo root
@@ -44,16 +47,23 @@ cp packages/connector/.env.example packages/connector/.env
 # edit .env:
 #   CONTROLLER_URL=https://your-controller.example.com
 #   CONNECTOR_NAME=<exact Name from the Tunnel Security row>
-#   TUNNEL_AUTH_TOKEN=ts_<...>  (the secret the UI just showed you)
+# then ONE of:
+#   TUNNEL_AUTH_TOKEN=ts_<...>                     (Twilio Auth Token / API Key row)
+# OR
+#   OAUTH_CLIENT_ID=cid_tsec...                    (OAuth 2.0 row)
+#   OAUTH_CLIENT_SECRET=cs_...
+#   OAUTH_TOKEN_URL=https://your-controller.example.com/oauth2/token
 
 ./scripts/start-connector.sh
 ```
 
-The WS upgrade sends `Authorization: Bearer <ts_…>` plus `X-Connector-Name: <CONNECTOR_NAME>`. The controller looks up the `tunnel_security_configs` row by `(tenant_id, name)` and bcrypt-compares the bearer. Mismatch / missing header / unknown name → HTTP 401, no socket.
+The WS upgrade sends `Authorization: Bearer <bearer>` plus `X-Connector-Name: <CONNECTOR_NAME>`. The controller looks up the `tunnel_security_configs` row by `(tenant_id, name)` and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). Mismatch / missing header / unknown name → HTTP 401, no socket.
 
 Once the WS is up, the connector also registers a `connectors` row using `tunnel.name` and persists the controller-issued `registrationToken` to `packages/connector/.connector-state.json`. Subsequent boots reconnect by token. Clear the state file to mint fresh — note that the Tunnel Security row is independent of the connectors row, so you don't need to recreate the bearer for that.
 
-Rotate the bearer via the row's **Rotate Secret** button; the previous hash stays valid 24h so the connector can roll without coordinated downtime.
+Rotate via the row's **Rotate Secret** (long-lived bearer) or by issuing a new client secret (OAuth2); previous credentials stay valid 24h so the connector can roll without coordinated downtime.
+
+**Twilio takeover:** when Twilio takes over as the canonical OAuth issuer, an OAuth2 deployment flips `OAUTH_TOKEN_URL` to `https://oauth.twilio.com/v2/token`. No connector code change. The long-lived `ts_<...>` posture has no Twilio-takeover story — re-issue as OAuth2 if you want that property.
 
 The connector serves an **inspector UI at http://localhost:9090/** showing:
 - live WS state (connecting / open / closed)

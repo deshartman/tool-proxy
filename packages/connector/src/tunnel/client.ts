@@ -35,7 +35,8 @@ export class TunnelClient {
   constructor(
     private readonly url: string,
     private readonly authToken?: string,
-    private readonly connectorName?: string
+    private readonly connectorName?: string,
+    private readonly authProvider?: { accessToken(): Promise<string> }
   ) {}
 
   get state(): WsState { return this._state; }
@@ -63,7 +64,11 @@ export class TunnelClient {
     }
     const wsUrl = parsed.toString();
     const headers: Record<string, string> = {};
-    if (this.authToken) headers["authorization"] = `Bearer ${this.authToken}`;
+    if (this.authProvider) {
+      headers["authorization"] = `Bearer ${await this.authProvider.accessToken()}`;
+    } else if (this.authToken) {
+      headers["authorization"] = `Bearer ${this.authToken}`;
+    }
     if (this.connectorName) headers["x-connector-name"] = this.connectorName;
 
     await new Promise<void>((resolve, reject) => {

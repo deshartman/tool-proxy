@@ -13,6 +13,7 @@ import { runInit } from "./init.js";
 import { spawnType1Children, shutdownChildren, type SpawnedChild } from "./spawner.js";
 import { readState, writeState, clearRegistrationToken, defaultStatePath, type ConnectorState } from "./state.js";
 import { createLogger } from "./logger.js";
+import { OAuthClientCredentialsProvider } from "./auth/oauth-provider.js";
 
 const log = createLogger("connector");
 // Adapter for downstream callbacks that take `(msg: string) => void`.
@@ -92,17 +93,30 @@ async function main() {
 
   const config = loadConfig(configPath);
   const authToken = config.tunnel.auth_token;
-  if (!authToken) {
-    // Fail-fast: registering against a controller without a shared secret
-    // is a misconfiguration, not a degraded state. Symmetric with the
-    // CONNECTOR_NAME interpolation in connector.yaml — both are required
-    // and both refuse to boot if missing, rather than silently dialing
-    // with an empty string and letting the controller reject mid-handshake.
+  // Two postures, env-driven dispatch: OAuth2 client_credentials (preferred
+  // when OAUTH_CLIENT_ID is set) or the static ts_<...> bearer. Mutually
+  // exclusive — operator picks one per controller-side row. Either path
+  // must produce a bearer; refusing to boot here matches the symmetry with
+  // ${CONNECTOR_NAME} (both required, both fail fast at boot rather than
+  // silently dialing and getting rejected mid-handshake).
+  const oauthClientId = process.env.OAUTH_CLIENT_ID;
+  const oauthClientSecret = process.env.OAUTH_CLIENT_SECRET;
+  const oauthTokenUrl = process.env.OAUTH_TOKEN_URL;
+  const authProvider = oauthClientId
+    ? new OAuthClientCredentialsProvider(
+        oauthClientId,
+        requireOauthEnv("OAUTH_CLIENT_SECRET", oauthClientSecret),
+        requireOauthEnv("OAUTH_TOKEN_URL", oauthTokenUrl),
+      )
+    : undefined;
+  if (!authProvider && !authToken) {
     throw new Error(
-      "TUNNEL_AUTH_TOKEN is required but missing. Set it in packages/connector/.env (see .env.example).",
+      "tunnel auth missing. Set TUNNEL_AUTH_TOKEN (static bearer) or OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL (OAuth2). See packages/connector/.env.example.",
     );
   }
-  const authStatus = `set (len=${authToken.length})`;
+  const authStatus = authProvider
+    ? `oauth2 (clientId=${oauthClientId})`
+    : `set (len=${authToken!.length})`;
 
   // Identity: read the persisted registrationToken (if any). On first connect
   // it's absent and we send `name` only — the controller mints a row and
@@ -202,7 +216,7 @@ async function main() {
   async function connectTunnel(reason: string): Promise<void> {
     inspector?.setState("connecting");
     log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
-    const t = new TunnelClient(tunnelDialUrl, authToken, config.tunnel.name);
+    const t = new TunnelClient(tunnelDialUrl, authToken, config.tunnel.name, authProvider);
     t.onerror = (e) => log.error({ err: e }, `tunnel error`);
     if (inspector) {
       t.onstate = (s) => inspector.setState(s);
@@ -480,6 +494,15 @@ async function main() {
 
 function countTools(m: ToolManifest): number {
   return m.servers.reduce((n, s) => n + s.tools.length, 0);
+}
+
+function requireOauthEnv(name: string, value: string | undefined): string {
+  if (!value) {
+    throw new Error(
+      `${name} is required when OAUTH_CLIENT_ID is set. See packages/connector/.env.example for the OAuth2 posture.`,
+    );
+  }
+  return value;
 }
 
 // Compute the delay before the next auto-reconnect attempt.
