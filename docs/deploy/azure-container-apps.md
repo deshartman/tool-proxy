@@ -7,9 +7,12 @@ Run the connector as a Container App. Outbound-only.
 - Image pushed to ACR (or another registry the Container App can pull from).
 - A Container Apps environment.
 - A Tunnel Security row on the controller (Tools → Connectors → Tunnel
-  Security) — gives you a `ts_<...>` bearer. See the [overview](./README.md).
-- Two Container App secrets: `tunnel-auth-token` (the `ts_<...>` value)
-  and (if mounting from a secret) the YAML content.
+  Security) — see the [overview](./README.md). Pick the credential shape
+  that matches the row's type: `ts_<...>` bearer (Twilio Auth Token /
+  API Key) or `client_id` + `client_secret` + token URL (OAuth 2.0).
+- Container App secrets: `tunnel-auth-token` for the long-lived bearer,
+  or `oauth-client-id` + `oauth-client-secret` for OAuth 2.0. Plus the
+  YAML content if you're mounting it from a secret.
 
 ## Footgun
 
@@ -41,6 +44,19 @@ az containerapp create \
   --secrets tunnel-auth-token="$TUNNEL_AUTH_TOKEN" \
   --env-vars \
       TUNNEL_AUTH_TOKEN=secretref:tunnel-auth-token \
+      CONNECTOR_NAME=prod-customer \
+      CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml \
+      INSPECTOR_PORT=0
+```
+
+For an OAuth 2.0 row swap the secret + env block:
+
+```bash
+  --secrets oauth-client-id="$OAUTH_CLIENT_ID" oauth-client-secret="$OAUTH_CLIENT_SECRET" \
+  --env-vars \
+      OAUTH_CLIENT_ID=secretref:oauth-client-id \
+      OAUTH_CLIENT_SECRET=secretref:oauth-client-secret \
+      OAUTH_TOKEN_URL=https://controller.example.com/oauth2/token \
       CONNECTOR_NAME=prod-customer \
       CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml \
       INSPECTOR_PORT=0

@@ -33,7 +33,13 @@ tunnel:
   # first connect the controller mints a fresh row keyed to this name.
   # Set CONNECTOR_NAME in .env — no default here, so an unset var fails
   # fast at boot rather than silently binding to a placeholder identity.
+  # Also sent on the WS upgrade as `X-Connector-Name` for tunnel-security
+  # row lookup.
   name: ${CONNECTOR_NAME}
+  # Static bearer for the long-lived `ts_<...>` posture. Leave the default
+  # empty (`${...:-}`) when using the OAuth2 posture — the connector picks
+  # the path purely from env (OAUTH_CLIENT_ID set → OAuth2). See .env.example
+  # for both shapes.
   auth_token: ${TUNNEL_AUTH_TOKEN:-}
   environment: dev
 

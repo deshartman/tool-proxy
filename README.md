@@ -20,7 +20,7 @@ The connector understands three integration patterns. All three go in the same `
 packages/
   connector/                  the customer-side process (only thing that ships)
     connector.yaml.example    single yaml listing every MCP — Type 1, 2, and 3
-    .env.example              tunnel env (CONTROLLER_URL, CONNECTOR_NAME, TUNNEL_AUTH_TOKEN minted by the controller)
+    .env.example              tunnel env (CONTROLLER_URL, CONNECTOR_NAME, plus EITHER TUNNEL_AUTH_TOKEN OR OAUTH_CLIENT_ID/SECRET/TOKEN_URL — minted by the controller)
 mcp/
   local/
     sample/                   Type 1 — now, slow_echo, uuid, weather
@@ -43,12 +43,15 @@ scripts/
 
 ## Quick start (development)
 
-Before booting the connector you need a **Tunnel Security row** on the controller — that's where the connector's bearer token comes from. In the controller UI go to **Tools → Connectors → Tunnel Security → New Tunnel Security**, enter:
+Before booting the connector you need a **Tunnel Security row** on the controller — that's where the connector's handshake credential comes from. In the controller UI go to **Tools → Connectors → Tunnel Security → New Tunnel Security**, enter:
 
 - **Name** — pick a unique connector name (case-sensitive). This must match `CONNECTOR_NAME` in your `.env` exactly.
-- **Twilio credentials** — Account SID + Auth Token, or Account SID + API Key SID + API Key Secret. The controller verifies these against Twilio's API at save time.
+- **Security type** — pick one:
+  - **Twilio Auth Token** or **Twilio API Key** → controller mints a long-lived `ts_<...>` bearer (paste into `TUNNEL_AUTH_TOKEN`).
+  - **OAuth 2.0 (client_credentials)** → controller mints a `client_id` + `client_secret`. The connector POSTs them to `OAUTH_TOKEN_URL` to get a fresh 1h JWT on each connect. Best when you want a config-flip migration to `oauth.twilio.com` once Twilio takes over as the issuer.
+- **Twilio credentials** — Account SID + Auth Token, or Account SID + API Key SID + API Key Secret. The controller verifies against Twilio's API at save time.
 
-Click Save. The controller mints a `ts_<...>` secret and shows it once — copy it.
+Click Save. The controller shows the minted credentials once — copy.
 
 ```bash
 npm install
@@ -57,15 +60,20 @@ npm run build
 # Connector-level config: one yaml, one .env.
 cp packages/connector/connector.yaml.example packages/connector/connector.yaml
 cp packages/connector/.env.example packages/connector/.env
-# edit packages/connector/.env:
+# edit packages/connector/.env. Always:
 #   CONTROLLER_URL=https://your-controller.example.com
-#   CONNECTOR_NAME=<exact Name from the Tunnel Security row above>
-#   TUNNEL_AUTH_TOKEN=ts_<...>  (the secret the UI just showed you)
+#   CONNECTOR_NAME=<exact Name from the Tunnel Security row>
+# then EITHER (Twilio Auth Token / API Key row):
+#   TUNNEL_AUTH_TOKEN=ts_<...>
+# OR (OAuth 2.0 row):
+#   OAUTH_CLIENT_ID=cid_tsec...
+#   OAUTH_CLIENT_SECRET=cs_...
+#   OAUTH_TOKEN_URL=https://your-controller.example.com/oauth2/token
 
 ./scripts/start-connector.sh
 ```
 
-That's it — the connector spawns each Type 1 child via `tsx` (no build), dials each Type 2 entry, and surfaces them all in the inspector at <http://localhost:9090/>. The WS upgrade carries `Authorization: Bearer <ts_…>` plus `X-Connector-Name: <CONNECTOR_NAME>`; the controller looks up the row by name and bcrypt-compares the bearer. On the **first** run, after the WS is up, the connector also registers a `connectors` row using `tunnel.name` and persists the controller-issued `registrationToken` to `packages/connector/.connector-state.json`. Subsequent restarts reconnect by both the bearer (handshake) and the token (register frame).
+That's it — the connector spawns each Type 1 child via `tsx` (no build), dials each Type 2 entry, and surfaces them all in the inspector at <http://localhost:9090/>. The WS upgrade carries `Authorization: Bearer <bearer>` plus `X-Connector-Name: <CONNECTOR_NAME>`; the controller looks up the row by name and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). On the **first** run, after the WS is up, the connector also registers a `connectors` row using `tunnel.name` and persists the controller-issued `registrationToken` to `packages/connector/.connector-state.json`. Subsequent restarts reconnect by both the handshake credential and the registration token.
 
 Rotate the bearer via **Rotate Secret** on the row's detail page; the previous secret stays valid for 24h so connectors can roll without coordinated downtime.
 

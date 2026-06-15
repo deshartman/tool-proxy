@@ -8,11 +8,13 @@ needed for the tunnel itself.
 - Image pushed to ECR (or any registry your task role can pull from).
 - ECS cluster + Fargate-compatible task execution role.
 - A Tunnel Security row created on the controller (Tools → Connectors →
-  Tunnel Security) — gives you a `ts_<...>` bearer. The Name on that row
-  is the value you'll set as `CONNECTOR_NAME` below; the bearer is the
-  value you'll store as `TUNNEL_AUTH_TOKEN`. See the [overview](./README.md).
-- A Secrets Manager secret holding the `ts_<...>` bearer (referenced as
-  `TUNNEL_AUTH_TOKEN`).
+  Tunnel Security) — see the [overview](./README.md). The Name is what
+  you set as `CONNECTOR_NAME` below; the credential the controller mints
+  is what you store in Secrets Manager.
+- A Secrets Manager secret holding *one* of:
+  - `TUNNEL_AUTH_TOKEN=ts_<...>` (Twilio Auth Token / API Key row), or
+  - `OAUTH_CLIENT_ID` + `OAUTH_CLIENT_SECRET` + `OAUTH_TOKEN_URL`
+    (OAuth 2.0 row).
 - The `connector.yaml` stored as another Secrets Manager secret (or
   parameter store entry, S3 object, etc.).
 
@@ -38,11 +40,16 @@ for exposing the inspector UI (separate concern, see below).
     "image": "<account>.dkr.ecr.<region>.amazonaws.com/mcp-connector:0.1.0",
     "essential": true,
     "secrets": [
+      // Pick the one matching your Tunnel Security row's type:
       { "name": "TUNNEL_AUTH_TOKEN", "valueFrom": "arn:aws:secretsmanager:...:secret:tunnel-token" }
+      // — or, for an OAuth 2.0 row:
+      // { "name": "OAUTH_CLIENT_ID",     "valueFrom": "arn:...:secret:oauth-id" },
+      // { "name": "OAUTH_CLIENT_SECRET", "valueFrom": "arn:...:secret:oauth-secret" }
     ],
     "environment": [
       { "name": "CONNECTOR_CONFIG", "value": "/etc/mcp-connector/config.yaml" },
       { "name": "CONNECTOR_NAME",   "value": "prod-customer" },
+      // For OAuth 2.0, add: { "name": "OAUTH_TOKEN_URL", "value": "https://controller.example.com/oauth2/token" }
       { "name": "INSPECTOR_PORT",   "value": "0" }
     ],
     "mountPoints": [

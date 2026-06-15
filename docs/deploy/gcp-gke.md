@@ -7,9 +7,12 @@ Run the connector as a one-replica Deployment on GKE.
 - Image pushed to Artifact Registry.
 - A GKE cluster (Autopilot is fine).
 - A Tunnel Security row on the controller (Tools → Connectors → Tunnel
-  Security) — gives you a `ts_<...>` bearer. See the [overview](./README.md).
-- A Secret Manager secret containing the `ts_<...>` bearer (referenced as
-  `TUNNEL_AUTH_TOKEN`) and a ConfigMap or Secret containing the YAML.
+  Security) — see the [overview](./README.md). Pick the credential shape
+  that matches the row's type: `ts_<...>` bearer (Twilio Auth Token /
+  API Key) or `client_id` + `client_secret` + token URL (OAuth 2.0).
+- A Secret Manager secret containing either the `ts_<...>` bearer
+  (`TUNNEL_AUTH_TOKEN`) or the OAuth pair (`OAUTH_CLIENT_ID` +
+  `OAUTH_CLIENT_SECRET`), plus a ConfigMap or Secret containing the YAML.
 
 ## Footgun
 
@@ -31,9 +34,14 @@ kind: Secret
 metadata: { name: mcp-connector-token }
 type: Opaque
 stringData:
-  # The ts_<...> bearer minted by the controller's Tunnel Security UI.
+  # ONE of the two postures, matching the controller's Tunnel Security row.
   # Synced from Secret Manager via the CSI driver (link below).
+  #
+  # ── Twilio Auth Token / API Key row ──
   TUNNEL_AUTH_TOKEN: "REPLACE_VIA_SECRET_MANAGER_SYNC"
+  # ── OAuth 2.0 row ──
+  # OAUTH_CLIENT_ID: "REPLACE_VIA_SECRET_MANAGER_SYNC"
+  # OAUTH_CLIENT_SECRET: "REPLACE_VIA_SECRET_MANAGER_SYNC"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -73,6 +81,8 @@ spec:
             # as X-Connector-Name on the WS upgrade and the controller looks
             # the row up by it.
             - { name: CONNECTOR_NAME, value: "prod-customer" }
+            # For an OAuth 2.0 row, also add:
+            # - { name: OAUTH_TOKEN_URL, value: "https://controller.example.com/oauth2/token" }
             - { name: CONNECTOR_CONFIG, value: "/etc/mcp-connector/config.yaml" }
             - { name: INSPECTOR_PORT,   value: "0" }
           # Mount a writable volume at /etc/mcp-connector for
