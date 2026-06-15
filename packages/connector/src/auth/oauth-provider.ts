@@ -48,6 +48,16 @@ export class OAuthClientCredentialsProvider {
       throw new Error(`OAuth token mint failed: ${res.status}`);
     }
     const data = (await res.json()) as TokenResponse;
+    // Defensive floor: contract guarantees expires_in is a positive integer
+    // seconds ≥ 300. Anything below 60 would cause a tight refresh loop
+    // (the cache check uses 60s headroom) — fail loudly instead, so a
+    // controller-side regression surfaces as a clear error rather than a
+    // log flood.
+    if (typeof data.expires_in !== "number" || data.expires_in < 60) {
+      throw new Error(
+        `OAuth token mint returned invalid expires_in: ${String(data.expires_in)} (expected positive integer seconds ≥ 60)`,
+      );
+    }
     this.cached = {
       jwt: data.access_token,
       expiresAt: Date.now() + data.expires_in * 1000,
