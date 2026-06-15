@@ -20,6 +20,16 @@ The connector dials the controller with `Authorization: Bearer <bearer>` plus `X
 
 Rotate via the row's **Rotate Secret** (long-lived) or by issuing a new client secret (OAuth2); previous credentials stay valid for 24h so the connector can pick up the new value on its next restart without coordinated downtime.
 
+## Webhook ingress
+
+If any of your MCPs need to receive inbound HTTPS POSTs (Twilio `statusCallback`, message-status updates, recording / fax / video status, etc.), the connector consumes them over the existing tunnel — **not** by opening a port. The public URL lives on the controller; the controller dispatches `/api/webhook/<connectorId>/<token>` on the same port that already serves `/mcp-tunnel` and `/crelay`. So the connector deployment shape doesn't change for webhook ingress:
+
+- **No load balancer in front of the connector.** Same rule that already applies to the tunnel — connector dials out, nothing reaches it inbound.
+- **No new DNS, no new TLS cert.** All webhook traffic terminates on the controller's existing public hostname.
+- **Inspector port stays 127.0.0.1-only.** The inspector exposes the bcrypt-protected webhook URL with a copy button (operators paste it into Twilio configs). Bridging `INSPECTOR_PORT` to a public LB would leak the secret — don't.
+
+When the WSS is down (deploy, restart, blip), the controller returns 503 to the upstream and Twilio retries per its documented retry policy. The connector does not buffer.
+
 ## Cloud-specific guides
 
 - [AWS Fargate](./aws-fargate.md)

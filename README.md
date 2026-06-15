@@ -14,6 +14,31 @@ The connector understands three integration patterns. All three go in the same `
 
 `mcp/bundled/` carries Twilio-shipped MCPs of *any* type — Type 1 Node MCPs (`mcp/bundled/twilio/`) and Type 3 Python venv MCPs (`mcp/bundled/enterprise-knowledge/`) cohabit. The folder marks "who ships it"; the YAML entry shape decides "how it's wired". The connector adds an `author: "twilio" | "customer"` field to each MCP on the wire, derived from the folder location, so the controller can group Twilio-shipped MCPs separately from customer-authored ones in its UI.
 
+### Receiving webhooks
+
+MCPs that need to receive inbound HTTPS POSTs (Twilio `statusCallback`, message-status updates, recording / fax / video status, anything that asks for a public URL) use the connector's webhook ingress instead of running a local listener or an ngrok tunnel. The public URL lives on the **controller** (`https://<controller-host>/api/webhook/<connectorId>/<token>`); the connector consumes events as `webhook` frames over the existing tunnel WS. The connector still opens **no inbound port**.
+
+```ts
+// inside any MCP's server.ts (Type 1 or Type 3 alike)
+import { createWebhookEndpoint } from "@mcp-shim/connector/sdk";
+
+const cb = await createWebhookEndpoint({ mcp: "apis" });   // matches the yaml entry's name
+cb.on("callback", ({ body, queryParameters, headers }) => {
+  // body is already JSON-parsed by the controller — DO NOT call JSON.parse on it.
+  // headers is allowlisted to X-Twilio-* + Content-Type.
+});
+
+// pass cb.url into any Twilio API that accepts a callback
+await twilio.messages.create({ to, body, statusCallback: cb.url });
+```
+
+URL contract:
+- Stable **prefix** (rowId follows `connectorId`); pasted Twilio configs keep resolving across connector restarts.
+- Random **tail** re-mints on every reconnect — listen for `cb.on("url", …)` if you cache the URL anywhere (most authors don't need to).
+- Bcrypt-protected on the controller; the connector never persists it.
+
+When the WS is down the controller returns 503 and Twilio retries upstream — the connector does **not** buffer. See [`.claude/plans/STATUS-CALLBACK-MCP.md`](.claude/plans/STATUS-CALLBACK-MCP.md) for the full design.
+
 ## Layout
 
 ```

@@ -23,6 +23,8 @@ const elResizer = document.getElementById('col-resizer');
 const elDetailTitle = document.getElementById('detail-title');
 const elDetailEmpty = document.getElementById('detail-empty');
 const elDetailContent = document.getElementById('detail-content');
+const elWebhooksEmpty = document.getElementById('webhooks-empty');
+const elWebhooksList = document.getElementById('webhooks-list');
 
 let showHeartbeats = false;
 // selection: null | { kind: 'tool', key, tool, serverName } | { kind: 'frame', tap, frameId }
@@ -406,6 +408,14 @@ function summarizeFrame(frame) {
       return frame.reason ?? '';
     case 'rpc':
       return summarizeRpcFrame(frame.payload);
+    case 'webhook-allocate':
+      return `mcp=${frame.mcp}`;
+    case 'webhook-allocate-ack':
+      return frame.error ? `${frame.mcp} error=${frame.error.code}` : `${frame.mcp} url=${frame.url ?? '?'}`;
+    case 'webhook':
+      return `mcp=${frame.mcp}`;
+    case 'webhook-revoke':
+      return `mcp=${frame.mcp}`;
     default:
       return '';
   }
@@ -441,6 +451,7 @@ function applySnapshot(s) {
   setStatus(s.state, s.reconnect);
   setIdentity(s.identity);
   renderManifest(s.manifest);
+  renderWebhooks(s.webhooks);
   elFrames.replaceChildren();
   elFrames.classList.add('empty');
   if (s.frames && s.frames.length > 0) {
@@ -456,6 +467,43 @@ function applySnapshot(s) {
   if (selection?.kind === 'frame') setSelection(null);
 }
 
+function renderWebhooks(list) {
+  if (!list || list.length === 0) {
+    elWebhooksList.hidden = true;
+    elWebhooksList.replaceChildren();
+    elWebhooksEmpty.hidden = false;
+    return;
+  }
+  elWebhooksEmpty.hidden = true;
+  elWebhooksList.hidden = false;
+  elWebhooksList.replaceChildren();
+  for (const w of list) {
+    const li = document.createElement('li');
+    li.className = 'webhook-row';
+    const url = w.url ?? '(allocating…)';
+    li.innerHTML = `
+      <div class="webhook-mcp">${escapeHtml(w.mcp)}</div>
+      <div class="webhook-url"><code>${escapeHtml(url)}</code></div>
+      <div class="webhook-meta">${w.listeners} listener${w.listeners === 1 ? '' : 's'}</div>
+    `;
+    if (w.url) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'webhook-copy';
+      btn.textContent = 'copy';
+      btn.addEventListener('click', () => {
+        navigator.clipboard?.writeText(w.url).then(() => {
+          const original = btn.textContent;
+          btn.textContent = 'copied';
+          setTimeout(() => { btn.textContent = original; }, 1200);
+        });
+      });
+      li.appendChild(btn);
+    }
+    elWebhooksList.appendChild(li);
+  }
+}
+
 function connectSse() {
   const es = new EventSource('/events');
   es.onmessage = (e) => {
@@ -466,6 +514,7 @@ function connectSse() {
       case 'identity': setIdentity(ev.identity); break;
       case 'manifest': renderManifest(ev.manifest); break;
       case 'frame':    appendFrame(ev.tap); break;
+      case 'webhooks': renderWebhooks(ev.webhooks); break;
     }
   };
   es.onerror = () => { /* EventSource auto-retries */ };

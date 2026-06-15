@@ -69,14 +69,66 @@ export interface RpcFrame            { type: "rpc";            payload: unknown 
 export interface HeartbeatFrame      { type: "heartbeat";      ts: number }
 export interface GoodbyeFrame        { type: "goodbye";        reason?: string }
 
+// Webhook ingress (see .claude/plans/STATUS-CALLBACK-MCP.md). The controller
+// is the synchronous HTTPS responder; the connector consumes events here as
+// `webhook` frames over the existing tunnel WS. No inbound port on the
+// connector — that invariant is load-bearing (CLAUDE.md "Architecturally
+// load-bearing properties").
+
+// Connector → controller. "Mint a public URL for this MCP." Idempotent per
+// (connectorId, mcp): a re-issue after restart returns the same URL `rowId`
+// (so customer-pasted Twilio configs keep resolving) but a freshly-minted
+// plaintext token. Echo `mcp` on the ack matches the existing `register-ack`
+// shape — no requestId needed because the connector serializes alloc per-MCP.
+export interface WebhookAllocateFrame {
+  type: "webhook-allocate";
+  mcp: string;                        // ServerDescriptor.name from the manifest
+  ttlSeconds?: number;                // optional; default = lifetime of the WS session
+}
+
+// Controller → connector. Response to webhook-allocate.
+export interface WebhookAllocateAckFrame {
+  type: "webhook-allocate-ack";
+  mcp: string;
+  url?: string;                       // present on success
+  error?: { code: string; message: string };
+}
+
+// Controller → connector. A webhook arrived upstream; the controller answered
+// HTTP 200 synchronously and is forwarding the contents here. `body` is
+// already JSON-normalized by the controller (form-urlencoded → JSON), so the
+// MCP doesn't see Content-Type or raw bodies. `headers` is an allowlisted
+// subset (X-Twilio-* forwarded verbatim, everything else stripped — see
+// STATUS-CALLBACK-CTRL.md "Header forwarding allowlist").
+export interface WebhookFrame {
+  type: "webhook";
+  mcp: string;                        // routing key — controller looked this up by token
+  queryParameters: Record<string, string | string[]>;
+  body: unknown;
+  headers?: Record<string, string>;
+  receivedAt: number;                 // ms epoch — when the controller logged the POST
+}
+
+// Connector → controller. Clean up on shutdown / yaml reload that removed the MCP.
+export interface WebhookRevokeFrame {
+  type: "webhook-revoke";
+  mcp: string;
+}
+
 // Frames the connector originates.
 export type TunnelFrame =
   | RegisterFrame
   | ManifestDeltaFrame
   | RpcFrame
   | HeartbeatFrame
-  | GoodbyeFrame;
+  | GoodbyeFrame
+  | WebhookAllocateFrame
+  | WebhookRevokeFrame;
 
 // Frames the connector receives (inbound). Register-ack is a non-spec but
 // useful response from the controller — see RegisterAckFrame above.
-export type InboundTunnelFrame = TunnelFrame | RegisterAckFrame;
+export type InboundTunnelFrame =
+  | TunnelFrame
+  | RegisterAckFrame
+  | WebhookAllocateAckFrame
+  | WebhookFrame;
