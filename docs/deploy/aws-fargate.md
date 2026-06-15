@@ -50,7 +50,11 @@ for exposing the inspector UI (separate concern, see below).
       { "name": "CONNECTOR_CONFIG", "value": "/etc/mcp-connector/config.yaml" },
       { "name": "CONNECTOR_NAME",   "value": "prod-customer" },
       // For OAuth 2.0, add: { "name": "OAUTH_TOKEN_URL", "value": "https://controller.example.com/oauth2/token" }
-      { "name": "INSPECTOR_PORT",   "value": "0" }
+      // INSPECTOR_PORT defaults to 9090 and binds to 127.0.0.1 only — keep
+      // it on. The bundled twilio MCP (and any MCP using createWebhookEndpoint)
+      // requires the inspector loopback for SDK ↔ connector IPC. Setting
+      // INSPECTOR_PORT=0 disables both the operator UI AND webhook ingress.
+      { "name": "INSPECTOR_PORT",   "value": "9090" }
     ],
     "mountPoints": [
       { "containerPath": "/etc/mcp-connector", "sourceVolume": "config" }
@@ -77,10 +81,13 @@ to find the row and bcrypt-compare the bearer.
 
 ## Inspector UI
 
-Keep `INSPECTOR_PORT=0` in production. To debug a single task:
-- Run a one-off task with `INSPECTOR_PORT=9090` and a public IP, or
-- Use ECS Exec to port-forward, or
-- Build a separate `inspector-only` task in a private subnet with a VPN.
+`INSPECTOR_PORT=9090` (the default) is the right value in production. The inspector binds to `127.0.0.1` only inside the container — nothing reaches it from the network — and the SDK ↔ connector IPC routes used by webhook-receiving MCPs depend on it. Don't disable it (`INSPECTOR_PORT=0`) unless you've confirmed no MCP in this deployment uses `createWebhookEndpoint`.
+
+To view the UI from outside the container:
+- Use ECS Exec to port-forward: `aws ecs execute-command … --command "node -e 'require(\"http\").createServer((req,res)=>require(\"http\").request({host:\"127.0.0.1\",port:9090,…}).pipe(res)).listen(8080)'"` — or simpler, run a one-off task from your bastion that proxies 8080→127.0.0.1:9090
+- Or build a separate `inspector-only` task in a private subnet with a VPN.
+
+**Do not** put the inspector port behind a public LB. The Webhooks panel exposes the bcrypt-protected webhook URL with a copy button — that URL *is* the secret.
 
 ## Logs
 

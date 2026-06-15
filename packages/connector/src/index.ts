@@ -14,6 +14,7 @@ import { spawnType1Children, shutdownChildren, type SpawnedChild } from "./spawn
 import { readState, writeState, clearRegistrationToken, defaultStatePath, type ConnectorState } from "./state.js";
 import { createLogger } from "./logger.js";
 import { OAuthClientCredentialsProvider } from "./auth/oauth-provider.js";
+import { WebhookRegistry } from "./tunnel/webhook-registry.js";
 
 const log = createLogger("connector");
 // Adapter for downstream callbacks that take `(msg: string) => void`.
@@ -154,17 +155,34 @@ async function main() {
   // appends the /mcp-tunnel path in tunnel/client.ts before dialling.
   const tunnelDialUrl = config.tunnel.controller_url;
 
-  // 3. Inspector first, so it survives tunnel cycles.
+  // Live mutable references — replaced on each reconnect.
+  let tunnel: TunnelClient | undefined;
+
+  // Webhook ingress (see .claude/plans/STATUS-CALLBACK-MCP.md). One registry
+  // for the whole connector lifetime — survives tunnel cycles. The send hook
+  // reaches into the live `tunnel` ref above (closed-over binding, not the
+  // initial undefined value); on reopen we call reallocateAll so SDK
+  // consumers don't have to re-subscribe across reconnects.
+  const webhooks = new WebhookRegistry({
+    sendFrame: (frame) => {
+      if (!tunnel || tunnel.state !== "open") return false;
+      tunnel.send(frame);
+      return true;
+    },
+  });
+
+  // 3. Inspector first, so it survives tunnel cycles. Holds a reference to
+  // the webhook registry so its loopback /internal/webhook/* routes can drive
+  // SDK ↔ connector IPC without opening a separate listener.
   const inspector = inspectorPort > 0
     ? new Inspector({
         controllerUrl: config.tunnel.controller_url,
         state: "connecting",
         manifest,
+        webhooks,
       })
     : undefined;
 
-  // Live mutable references — replaced on each reconnect.
-  let tunnel: TunnelClient | undefined;
   let heartbeatTimer: NodeJS.Timeout | undefined;
   let discoveryTimer: NodeJS.Timeout | undefined;
   let reconnecting = false;
@@ -224,6 +242,7 @@ async function main() {
     }
     t.onclose = () => {
       log.info(`tunnel closed`);
+      webhooks.onTunnelClose();
       stopTimers();
       // SIGTERM/SIGINT closes the tunnel intentionally — that path sets
       // shuttingDown so we bail. The manual /reconnect path also closes
@@ -280,6 +299,17 @@ async function main() {
     // ack racing back. The ontap subscription on the tunnel client also
     // surfaces this to the inspector — this listener only persists the token.
     t.onframe = (frame) => {
+      // Webhook frames go straight to the registry. Routed before register-ack
+      // so a re-allocate-ack racing with the next register-ack doesn't get
+      // misclassified.
+      if (frame.type === "webhook-allocate-ack") {
+        webhooks.onAllocateAck(frame);
+        return;
+      }
+      if (frame.type === "webhook") {
+        webhooks.dispatch(frame);
+        return;
+      }
       if (frame.type === "register-ack") {
         if (frame.error) {
           // unknown_registration_token: our persisted token no longer maps to
@@ -330,6 +360,11 @@ async function main() {
           reconnectAttempt = 0;
         }
         resetReconnectDelay();
+        // The tunnel is healthy enough to carry webhook traffic again. Mark
+        // the registry open and re-issue allocate frames for any MCP whose
+        // SDK consumer is still subscribed (eager re-allocate, see plan).
+        webhooks.setTunnelOpen(true);
+        webhooks.reallocateAll();
         if (frame.registrationToken && frame.registrationToken !== state.registrationToken) {
           state.registrationToken = frame.registrationToken;
           try {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { getTwilioClient } from "../../twilio-client.js";
+import { getDefaultStatusCallback } from "../../status-callback.js";
 
 type Channel = "sms" | "whatsapp" | "rcs";
 
@@ -35,10 +36,15 @@ export const messagesCreate: Tool = {
           mediaUrl: z.array(z.string()).optional().describe("Media URLs for MMS/WhatsApp media messages."),
           from: z.string().optional().describe("Override the env-configured sender. (Tool adds the channel prefix.)"),
           messagingServiceSid: z.string().optional().describe("Use a Messaging Service instead of an explicit from. Mutually exclusive with from."),
-          statusCallback: z.string().optional().describe("Webhook URL for delivery status updates (https://…)."),
+          statusCallback: z.string().optional().describe(
+            "Webhook URL for delivery status updates (https://…). Leave unset and pass receiveStatusCallbacks=true to use the connector-managed default URL.",
+          ),
+          receiveStatusCallbacks: z.boolean().optional().describe(
+            "When true and statusCallback is unset, route Twilio's delivery status updates back through the connector's webhook ingress (visible in the inspector and any onStatusCallback listener).",
+          ),
         },
       },
-      async ({ channel, to, body, contentSid, contentVariables, mediaUrl, from, messagingServiceSid, statusCallback }) => {
+      async ({ channel, to, body, contentSid, contentVariables, mediaUrl, from, messagingServiceSid, statusCallback, receiveStatusCallbacks }) => {
         if (!body && !contentSid) {
           throw new Error("Either body or contentSid must be provided");
         }
@@ -59,7 +65,8 @@ export const messagesCreate: Tool = {
         if (contentSid) opts.contentSid = contentSid;
         if (contentVariables) opts.contentVariables = JSON.stringify(contentVariables);
         if (mediaUrl) opts.mediaUrl = mediaUrl;
-        if (statusCallback) opts.statusCallback = statusCallback;
+        const resolvedCallback = statusCallback ?? (receiveStatusCallbacks ? await getDefaultStatusCallback() : undefined);
+        if (resolvedCallback) opts.statusCallback = resolvedCallback;
 
         const client = getTwilioClient();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
