@@ -202,7 +202,7 @@ async function main() {
   async function connectTunnel(reason: string): Promise<void> {
     inspector?.setState("connecting");
     log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
-    const t = new TunnelClient(tunnelDialUrl, authToken);
+    const t = new TunnelClient(tunnelDialUrl, authToken, config.tunnel.name);
     t.onerror = (e) => log.error({ err: e }, `tunnel error`);
     if (inspector) {
       t.onstate = (s) => inspector.setState(s);
