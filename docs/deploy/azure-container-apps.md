@@ -45,8 +45,10 @@ az containerapp create \
   --env-vars \
       TUNNEL_AUTH_TOKEN=secretref:tunnel-auth-token \
       CONNECTOR_NAME=prod-customer \
-      CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml \
-      INSPECTOR_PORT=0
+      CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
+      # INSPECTOR_PORT defaults to 9090 (binds 127.0.0.1 only). Required for
+      # any MCP using createWebhookEndpoint — disabling it (INSPECTOR_PORT=0)
+      # also disables webhook ingress.
 ```
 
 For an OAuth 2.0 row swap the secret + env block:
@@ -58,8 +60,8 @@ For an OAuth 2.0 row swap the secret + env block:
       OAUTH_CLIENT_SECRET=secretref:oauth-client-secret \
       OAUTH_TOKEN_URL=https://controller.example.com/oauth2/token \
       CONNECTOR_NAME=prod-customer \
-      CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml \
-      INSPECTOR_PORT=0
+      CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
+      # Same INSPECTOR_PORT note as above — leave on the default.
 ```
 
 Then mount the YAML via an Azure File share or build it into the image.
@@ -71,8 +73,11 @@ Tunnel Security row on the controller (the Name on that row must match
 
 ## Inspector UI
 
-Keep `INSPECTOR_PORT=0` in production. To debug, set `--ingress internal`
-and `INSPECTOR_PORT=9090`, then port-forward through `az containerapp exec`.
+`INSPECTOR_PORT=9090` (the default) is the right value in production. The inspector binds to `127.0.0.1` inside the container — `--ingress disabled` keeps it unreachable from outside — and the SDK ↔ connector IPC routes used by webhook-receiving MCPs depend on it. Don't set `INSPECTOR_PORT=0` unless no MCP uses `createWebhookEndpoint`.
+
+To view the UI: `az containerapp exec --name "$APP" --resource-group "$RG" --command "/bin/sh"`, then `curl http://127.0.0.1:9090/`. For a richer view, port-forward via Container Apps' debug-console endpoint, or build a separate VPN-only debug environment.
+
+**Do not** route public ingress to the inspector port. The Webhooks panel exposes the bcrypt-protected webhook URL with a copy button — that URL *is* the secret.
 
 ## Logs
 

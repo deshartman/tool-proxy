@@ -84,7 +84,11 @@ spec:
             # For an OAuth 2.0 row, also add:
             # - { name: OAUTH_TOKEN_URL, value: "https://controller.example.com/oauth2/token" }
             - { name: CONNECTOR_CONFIG, value: "/etc/mcp-connector/config.yaml" }
-            - { name: INSPECTOR_PORT,   value: "0" }
+            # INSPECTOR_PORT defaults to 9090 and binds 127.0.0.1 only. Keep it
+            # on — any MCP using createWebhookEndpoint depends on the inspector
+            # loopback for SDK ↔ connector IPC. Setting INSPECTOR_PORT=0
+            # disables both the operator UI AND webhook ingress.
+            - { name: INSPECTOR_PORT,   value: "9090" }
           # Mount a writable volume at /etc/mcp-connector for
           # .connector-state.json (registrationToken). Without it, every pod
           # restart re-mints — the controller's dup-name guard then 409s, so
@@ -101,12 +105,15 @@ driver](https://cloud.google.com/secret-manager/docs/secret-manager-managed-csi-
 
 ## Inspector UI
 
-`INSPECTOR_PORT=0` in prod. To debug:
+`INSPECTOR_PORT=9090` (the default) is the right value in production. The inspector binds `127.0.0.1` only inside the pod — no Service of any type exposes it — and webhook-receiving MCPs depend on it for SDK ↔ connector IPC. Don't disable it unless no MCP uses `createWebhookEndpoint`.
+
+To view the UI:
 ```bash
-kubectl set env deploy/mcp-connector INSPECTOR_PORT=9090
 kubectl port-forward deploy/mcp-connector 9090:9090
 # open http://localhost:9090/
 ```
+
+**Do not** create a Service of type `LoadBalancer` or `NodePort` targeting port 9090. The Webhooks panel exposes the bcrypt-protected webhook URL with a copy button — that URL *is* the secret. ClusterIP-only Services for in-cluster debugging are fine.
 
 ## Logs
 

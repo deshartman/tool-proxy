@@ -280,9 +280,15 @@ export function startInspector(port: number, inspector: Inspector): void {
   server.requestTimeout = 0;
   server.headersTimeout = 0;
   server.keepAliveTimeout = 0;
-  server.listen(port, () => {
+  // Bind 127.0.0.1 only. The inspector is the SDK ↔ connector IPC channel
+  // (/internal/webhook/*) AND the operator UI; both expose secrets — the
+  // bcrypt-protected webhook URL via the Webhooks panel, the frame log via
+  // /events. Reach it from outside the container via port-forward / exec,
+  // never via an LB. See CLAUDE.md "Inspector port is localhost-only and
+  // carries copy-able webhook URLs".
+  server.listen(port, "127.0.0.1", () => {
     const snap = inspector.snapshot();
     const controllerUrl = snap.kind === "snapshot" ? snap.controllerUrl : "?";
-    log.info({ port, url: `http://localhost:${port}/`, controllerUrl }, `listening`);
+    log.info({ port, url: `http://127.0.0.1:${port}/`, controllerUrl }, `listening`);
   });
 }

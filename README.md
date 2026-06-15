@@ -22,7 +22,10 @@ MCPs that need to receive inbound HTTPS POSTs (Twilio `statusCallback`, message-
 // inside any MCP's server.ts (Type 1 or Type 3 alike)
 import { createWebhookEndpoint } from "@mcp-shim/connector/sdk";
 
-const cb = await createWebhookEndpoint({ mcp: "apis" });   // matches the yaml entry's name
+// `mcp` must match this MCP's name in connector.yaml — i.e. the name the
+// connector announces in the manifest. For the bundled twilio MCP that's
+// "apis" (see mcp/bundled/twilio/server.ts).
+const cb = await createWebhookEndpoint({ mcp: "<your-mcp-name>" });
 cb.on("callback", ({ body, queryParameters, headers }) => {
   // body is already JSON-parsed by the controller — DO NOT call JSON.parse on it.
   // headers is allowlisted to X-Twilio-* + Content-Type.
@@ -145,11 +148,12 @@ Twilio-authored Node MCPs follow the Type 1 shape but live under `mcp/bundled/<n
 
 ## Inspector
 
-`http://localhost:9090/` shows:
+`http://localhost:9090/` (binds to 127.0.0.1 only — see **What's load-bearing** below) shows:
 
 - live WS state (connecting / open / closed)
 - the `ToolManifest` and an "Available Tools" list (all discovered tools are Ready)
-- every frame in/out
+- a **Webhooks** panel listing each MCP's allocated public URL with a copy button (only populated for MCPs that called `createWebhookEndpoint`)
+- every frame in/out (including the new `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke` frames)
 - a **Reconnect** button that re-reads the YAML and redials
 
 To pick up changes to `mcp_servers`, restart the script — those connections happen at boot. `policy` changes pick up via Reconnect.
@@ -171,8 +175,9 @@ See [docs/deploy/README.md](docs/deploy/README.md) and the per-cloud guides:
 
 ## What's load-bearing
 
-- **Outbound only.** The connector opens no inbound ports for the tunnel.
+- **Outbound only.** The connector opens no inbound public ports for the tunnel — and that includes webhook ingress (the public URL lives on the controller; see "Receiving webhooks" above).
 - **Trust boundary is per MCP server, not per tool.** Every tool a configured MCP server exposes is forwarded — pick which servers run carefully.
+- **Inspector binds to 127.0.0.1 only.** It carries the bcrypt-protected webhook URL with a copy button by design. Reach it via port-forward / exec, never via a public LB.
 - **No LLM, no agent loop, no document handling.** This is a tool dispatcher with policy.
 
 See [CLAUDE.md](CLAUDE.md) and [packages/connector/README.md](packages/connector/README.md) for details.
