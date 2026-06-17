@@ -35,6 +35,12 @@ __pycache__/
 **/sources.yaml
 !**/sources.yaml.example
 
+# Mock CRM seed data — operator-authored copy of data.ts.example with
+# real phone numbers in it for live demos. Gitignored to keep PII out of
+# the public repo; only the .example template ships.
+mock/customers/data.ts
+!mock/customers/data.ts.example
+
 # Per-bundle secrets directory. Holds service-account JSON keys, OAuth
 # token caches, etc. — anything credential-shaped that the bundle's
 # .env points at. Gitignored unconditionally; secrets never ship in

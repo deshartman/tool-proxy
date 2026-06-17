@@ -137,9 +137,109 @@ h2 {
   padding: 0.6rem 0.75rem;
   margin-bottom: 0.5rem;
 }
-.server-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
-.server-name { font-family: var(--mono); font-size: 0.95rem; color: var(--purple); margin-bottom: 2px; }
+.server-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.server-name { font-family: var(--mono); font-size: 0.95rem; color: var(--purple); }
 .server-meta { font-size: 0.75rem; color: var(--muted); }
+
+.server-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.server-header:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.server-header-text { display: flex; flex-direction: column; gap: 2px; }
+.server-toggle {
+  display: inline-block;
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-top: 2px;
+  transition: transform 0.12s ease;
+  user-select: none;
+}
+.server-card.collapsed .server-toggle { transform: rotate(-90deg); }
+.server-card.collapsed .tools-section { display: none; }
+
+.tool-runner {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+.tool-runner-head {
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.tool-runner-fields { display: flex; flex-direction: column; gap: 8px; }
+.tool-runner-fields .field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.8rem;
+}
+.tool-runner-fields .field-name {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+.tool-runner-fields .field-req { color: var(--err, #f06); margin-left: 2px; }
+.tool-runner-fields .field-desc { color: var(--muted); font-size: 0.72rem; }
+.tool-runner-fields input[type="text"],
+.tool-runner-fields input[type="number"],
+.tool-runner-fields textarea.run-json {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+.tool-runner-fields textarea.run-json {
+  width: 100%;
+  resize: vertical;
+}
+.tool-runner-actions {
+  margin-top: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.tool-runner-actions .run-btn {
+  background: var(--accent);
+  color: var(--bg);
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+.tool-runner-actions .run-btn:disabled { opacity: 0.5; cursor: progress; }
+.run-status { font-size: 0.78rem; color: var(--muted); }
+.run-status.pending { color: var(--accent); }
+.run-status.ok { color: var(--ok, #4ade80); }
+.run-status.err { color: var(--err, #f06); }
+.run-result {
+  margin-top: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  max-height: 24rem;
+}
 
 .tools-section {
   margin-top: 0.6rem;

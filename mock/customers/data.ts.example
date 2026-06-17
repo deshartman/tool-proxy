@@ -1,6 +1,12 @@
 // Seed data for the mock customer service. In-memory only — restarting the
 // service wipes any state (there is none today; all reads).
 //
+// THIS FILE IS THE COMMITTED TEMPLATE. The operator's working copy lives at
+// data.ts in this same folder, gitignored. Replace the Dana Demo entry with
+// a real number when you need live calls/SMS to dispatch through to a phone
+// you control during a demo. The .example file stays clean for the public
+// repo; data.ts is yours.
+//
 // Two cohorts live here:
 //
 //   1. The Refund Eligibility demo fixtures (+1415555010{1,2,3} and the
@@ -8,10 +14,11 @@
 //      orderId / age / status / amount so the procedure's three branches
 //      (eligible / >30d / not-delivered) still fire as before.
 //
-//   2. Des Hartman (+61401277115) — the calling-to-check-on-orders demo
+//   2. Dana Demo (+15551239999) — the calling-to-check-on-orders demo
 //      customer, with three interactions chosen to give the LLM something
 //      to talk about: one refund-eligible delivered order, one shipped,
-//      one pending.
+//      one pending. Number is in the 555 reserved range so it can never
+//      collide with a real subscriber anywhere.
 
 export interface Interaction {
   orderId: string;
@@ -37,12 +44,12 @@ const daysAgo = (n: number): string => new Date(Date.now() - n * DAY_MS).toISOSt
 
 const CUSTOMERS: Customer[] = [
   {
-    name: "Des",
-    surname: "Hartman",
-    phone: "+61401277115",
+    name: "Dana",
+    surname: "Demo",
+    phone: "+15551239999",
     interactions: [
       {
-        orderId: "ord_des_1",
+        orderId: "ord_dana_1",
         date: daysAgo(12),
         reason: "online purchase",
         resolution: "delivered to address",
@@ -52,7 +59,7 @@ const CUSTOMERS: Customer[] = [
         currency: "USD",
       },
       {
-        orderId: "ord_des_2",
+        orderId: "ord_dana_2",
         date: daysAgo(3),
         reason: "online purchase",
         resolution: "in transit",
@@ -62,7 +69,7 @@ const CUSTOMERS: Customer[] = [
         currency: "USD",
       },
       {
-        orderId: "ord_des_3",
+        orderId: "ord_dana_3",
         date: daysAgo(1),
         reason: "online purchase",
         resolution: "awaiting fulfillment",
@@ -155,6 +162,16 @@ export function lookupOrder(orderId: string): { customer: Customer; interaction:
     if (interaction) return { customer, interaction };
   }
   return undefined;
+}
+
+// The "focal" customer — first entry in CUSTOMERS — is the one calendar.ts
+// seeds an appointment against for the reschedule demo. Exporting via this
+// accessor (instead of hardcoding the phone in calendar.ts) means an
+// operator who edits the local data.ts to drop in a real phone number for
+// live calls also gets the calendar fixture wired to that same number, no
+// extra edit needed.
+export function focalCustomer(): Customer {
+  return CUSTOMERS[0];
 }
 
 export function mostRecent(customer: Customer): Interaction | undefined {
