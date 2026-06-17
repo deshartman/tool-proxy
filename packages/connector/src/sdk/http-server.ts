@@ -22,7 +22,7 @@ export interface McpHttpServerHandle {
 // Customer-authored Type 1 MCP servers call this from their `server.ts`.
 // Stateful StreamableHTTPServerTransport with randomUUID session IDs is the
 // only mode the SDK's HTTP transport supports for our use.
-export function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Promise<McpHttpServerHandle> {
+export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Promise<McpHttpServerHandle> {
   const requestedPort = opts.port ?? Number(process.env.PORT ?? 0);
 
   const transport = new StreamableHTTPServerTransport({
@@ -34,7 +34,9 @@ export function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Promise<M
   );
   for (const t of opts.tools) t.register(server);
 
-  return server.connect(transport).then(() => new Promise<McpHttpServerHandle>((resolveListen, rejectListen) => {
+  await server.connect(transport);
+
+  return new Promise<McpHttpServerHandle>((resolveListen, rejectListen) => {
     const http = createServer((req, res) => {
       if (req.url !== "/mcp") {
         res.statusCode = 404;
@@ -69,5 +71,5 @@ export function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Promise<M
         close: () => new Promise<void>((res) => http.close(() => res())),
       });
     });
-  }));
+  });
 }

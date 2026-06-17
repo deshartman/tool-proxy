@@ -43,29 +43,36 @@ let endpointPromise: Promise<WebhookEndpoint> | undefined;
 const listeners = new Set<(event: WebhookEvent) => void>();
 
 function getEndpoint(): Promise<WebhookEndpoint> {
-  if (!endpointPromise) {
-    endpointPromise = createWebhookEndpoint({ mcp: MCP_NAME }).then((endpoint) => {
-      // One subscription, fanned out to every onStatusCallback caller. Saves
-      // round-tripping every listener through a separate SSE stream.
-      endpoint.on("callback", (event: WebhookEvent) => {
-        for (const fn of listeners) {
-          try { fn(event); }
-          catch (e) { log.error({ err: e as Error }, "status-callback listener threw"); }
-        }
-      });
-      endpoint.on("url", (url: string) => log.info({ url }, "status-callback URL refreshed"));
-      endpoint.on("error", (err: Error) => log.error({ err }, "status-callback endpoint error"));
-      log.info({ url: endpoint.url }, "status-callback endpoint allocated");
-      return endpoint;
-    });
-    endpointPromise.catch((e: Error) => {
-      log.error({ err: e }, "status-callback allocation failed");
-      // Reset so the next caller gets a fresh attempt — useful when the
-      // connector boots later than the MCP for some reason.
-      endpointPromise = undefined;
-    });
-  }
+  if (endpointPromise !== undefined) return endpointPromise;
+  endpointPromise = allocate();
   return endpointPromise;
+}
+
+async function allocate(): Promise<WebhookEndpoint> {
+  try {
+    const endpoint = await createWebhookEndpoint({ mcp: MCP_NAME });
+    // One subscription, fanned out to every onStatusCallback caller. Saves
+    // round-tripping every listener through a separate SSE stream.
+    endpoint.on("callback", (event: WebhookEvent) => {
+      for (const fn of listeners) {
+        try { fn(event); }
+        catch (e) { log.error({ err: e as Error }, "status-callback listener threw"); }
+      }
+    });
+    endpoint.on("url", (url: string) => log.info({ url }, "status-callback URL refreshed"));
+    endpoint.on("error", (err: Error) => log.error({ err }, "status-callback endpoint error"));
+    log.info({ url: endpoint.url }, "status-callback endpoint allocated");
+    return endpoint;
+  } catch (e) {
+    log.error({ err: e as Error }, "status-callback allocation failed");
+    // Reset so the next caller gets a fresh attempt — useful when the
+    // connector boots later than the MCP for some reason. Crucially, the
+    // reset only fires when allocation itself failed: a downstream caller
+    // throwing after `await getEndpoint()` no longer wipes the cached
+    // endpoint, which the previous .then().catch() shape did.
+    endpointPromise = undefined;
+    throw e;
+  }
 }
 
 // Returns the public URL Twilio should POST to. Allocates lazily on the first

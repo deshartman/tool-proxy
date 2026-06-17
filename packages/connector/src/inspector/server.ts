@@ -324,18 +324,25 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
 
   const onEvent = (event: WebhookEvent) => send("webhook", event);
 
+  // Node's http callback can't itself be async (it has a sync return type).
+  // The IIFE keeps subscribe → send-url → onUrl-bind → snapshot in a flat
+  // sequence the linter and reader can both follow, instead of pyramiding
+  // through .then().catch() with mutating outer-scope state inside .then().
   let unsubscribeUrl: (() => void) | undefined;
   let unsubscribe: (() => void) | undefined;
 
-  reg.subscribe(mcp, onEvent).then((handle) => {
-    send("url", { url: handle.url });
-    unsubscribe = handle.unsubscribe;
-    unsubscribeUrl = handle.onUrl((url) => send("url", { url }));
-    inspector.publishWebhookSnapshot();
-  }).catch((e: Error) => {
-    send("error", { message: e.message });
-    try { res.end(); } catch { /* ignore */ }
-  });
+  void (async () => {
+    try {
+      const handle = await reg.subscribe(mcp, onEvent);
+      send("url", { url: handle.url });
+      unsubscribe = handle.unsubscribe;
+      unsubscribeUrl = handle.onUrl((url) => send("url", { url }));
+      inspector.publishWebhookSnapshot();
+    } catch (e) {
+      send("error", { message: (e as Error).message });
+      try { res.end(); } catch { /* ignore */ }
+    }
+  })();
 
   const cleanup = () => {
     unsubscribeUrl?.();
