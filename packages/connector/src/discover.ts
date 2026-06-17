@@ -32,18 +32,18 @@ tools/list, and prints the discovered tools per server.`);
     let conn;
     try {
       conn = await connectServer(spec);
-    } catch (e) {
-      console.error(`  connect failed: ${(e as Error).message}`);
+    } catch (error) {
+      console.error(`  connect failed: ${(error as Error).message}`);
       continue;
     }
     try {
       const tools = await conn.listTools();
-      for (const t of tools) {
-        process.stdout.write(`  - ${t.name}: ${t.description}\n`);
+      for (const tool of tools) {
+        process.stdout.write(`  - ${tool.name}: ${tool.description}\n`);
       }
       total += tools.length;
-    } catch (e) {
-      console.error(`  tools/list failed: ${(e as Error).message}`);
+    } catch (error) {
+      console.error(`  tools/list failed: ${(error as Error).message}`);
     } finally {
       await conn.close().catch(() => undefined);
     }

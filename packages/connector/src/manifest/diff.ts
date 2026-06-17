@@ -11,18 +11,18 @@ export function diffManifest(prev: ToolManifest, next: ToolManifest): ManifestDe
   const removed: ManifestDelta["removed"] = [];
   const changed: ManifestDelta["changed"] = [];
 
-  for (const [key, t] of nextTools) {
+  for (const [key, entry] of nextTools) {
     const before = prevTools.get(key);
     if (!before) {
-      added.push({ server: t.server, tool: t.tool });
-    } else if (isStructurallyDifferent(before.tool, t.tool)) {
-      changed.push({ server: t.server, tool: t.tool });
+      added.push({ server: entry.server, tool: entry.tool });
+    } else if (isStructurallyDifferent(before.tool, entry.tool)) {
+      changed.push({ server: entry.server, tool: entry.tool });
     }
   }
 
-  for (const [key, t] of prevTools) {
+  for (const [key, entry] of prevTools) {
     if (!nextTools.has(key)) {
-      removed.push({ server: t.server, tool: t.tool.name });
+      removed.push({ server: entry.server, tool: entry.tool.name });
     }
   }
 
@@ -35,9 +35,9 @@ export function isEmptyDelta(d: ManifestDelta): boolean {
 
 function flatten(m: ToolManifest): Map<string, { server: string; tool: ToolDescriptor }> {
   const out = new Map<string, { server: string; tool: ToolDescriptor }>();
-  for (const s of m.servers) {
-    for (const t of s.tools) {
-      out.set(`${s.name}.${t.name}`, { server: s.name, tool: t });
+  for (const server of m.servers) {
+    for (const tool of server.tools) {
+      out.set(`${server.name}.${tool.name}`, { server: server.name, tool });
     }
   }
   return out;

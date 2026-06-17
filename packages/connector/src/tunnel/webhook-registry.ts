@@ -80,10 +80,10 @@ export class WebhookRegistry {
   // Snapshot for the inspector UI. Returns one entry per allocated MCP with
   // its current URL (if minted) and listener counts.
   snapshot(): Array<{ mcp: string; url?: string; listeners: number }> {
-    return [...this.subs.values()].map((s) => ({
-      mcp: s.mcp,
-      url: s.url,
-      listeners: s.webhookListeners.size,
+    return [...this.subs.values()].map((sub) => ({
+      mcp: sub.mcp,
+      url: sub.url,
+      listeners: sub.webhookListeners.size,
     }));
   }
 
@@ -123,8 +123,8 @@ export class WebhookRegistry {
         this.refirePending(sub.mcp);
         pendingMcps.delete(sub.mcp);
       } else {
-        this.beginAllocate(sub.mcp).catch((e) => {
-          this.log.error({ err: e as Error, mcp: sub.mcp }, `re-allocate failed on tunnel reopen`);
+        this.beginAllocate(sub.mcp).catch((error) => {
+          this.log.error({ err: error as Error, mcp: sub.mcp }, `re-allocate failed on tunnel reopen`);
         });
       }
     }
@@ -254,7 +254,7 @@ export class WebhookRegistry {
     };
     for (const fn of sub.webhookListeners) {
       try { fn(event); }
-      catch (e) { this.log.error({ err: e as Error, mcp: frame.mcp }, `webhook listener threw`); }
+      catch (error) { this.log.error({ err: error as Error, mcp: frame.mcp }, `webhook listener threw`); }
     }
   }
 
@@ -275,8 +275,8 @@ export class WebhookRegistry {
   // it). Preserving the pending lets recovery be transparent.
   onTunnelClose(): void {
     this.tunnelOpen = false;
-    for (const p of this.pending.values()) {
-      clearTimeout(p.timer);
+    for (const pendingAlloc of this.pending.values()) {
+      clearTimeout(pendingAlloc.timer);
     }
     // Pending entries stay; reallocateAll re-arms them. Mark all known
     // URLs as stale.

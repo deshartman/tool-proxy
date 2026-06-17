@@ -82,9 +82,9 @@ export class TunnelClient {
       ws.once("unexpected-response", (_req, res) => {
         reject(new Error(`Tunnel rejected with status ${res.statusCode}`));
       });
-      ws.on("error", (e) => {
-        if (ws.readyState === WebSocket.CONNECTING) reject(e);
-        else this.onerror?.(e);
+      ws.on("error", (error) => {
+        if (ws.readyState === WebSocket.CONNECTING) reject(error);
+        else this.onerror?.(error);
       });
       ws.on("close", () => this.handleClose());
       ws.on("message", (data, isBinary) => {
@@ -114,8 +114,8 @@ export class TunnelClient {
     let frame: InboundTunnelFrame;
     try {
       frame = JSON.parse(line) as InboundTunnelFrame;
-    } catch (e) {
-      this.onerror?.(new Error(`malformed frame: ${(e as Error).message}`));
+    } catch (error) {
+      this.onerror?.(new Error(`malformed frame: ${(error as Error).message}`));
       return;
     }
     this.ontap?.({ ts: Date.now(), direction: "in", frame });

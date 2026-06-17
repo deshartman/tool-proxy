@@ -15,7 +15,7 @@ export async function connectServer(spec: McpServerSpec): Promise<McpServerConne
 
 export async function connectAll(specs: McpServerSpec[]): Promise<Map<string, McpServerConnection>> {
   const entries = await Promise.all(
-    specs.map(async (s) => [s.name, await connectServer(s)] as const),
+    specs.map(async (spec) => [spec.name, await connectServer(spec)] as const),
   );
   return new Map(entries);
 }

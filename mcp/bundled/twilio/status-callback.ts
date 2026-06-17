@@ -56,22 +56,22 @@ async function allocate(): Promise<WebhookEndpoint> {
     endpoint.on("callback", (event: WebhookEvent) => {
       for (const fn of listeners) {
         try { fn(event); }
-        catch (e) { log.error({ err: e as Error }, "status-callback listener threw"); }
+        catch (error) { log.error({ err: error as Error }, "status-callback listener threw"); }
       }
     });
     endpoint.on("url", (url: string) => log.info({ url }, "status-callback URL refreshed"));
     endpoint.on("error", (err: Error) => log.error({ err }, "status-callback endpoint error"));
     log.info({ url: endpoint.url }, "status-callback endpoint allocated");
     return endpoint;
-  } catch (e) {
-    log.error({ err: e as Error }, "status-callback allocation failed");
+  } catch (error) {
+    log.error({ err: error as Error }, "status-callback allocation failed");
     // Reset so the next caller gets a fresh attempt — useful when the
     // connector boots later than the MCP for some reason. Crucially, the
     // reset only fires when allocation itself failed: a downstream caller
     // throwing after `await getEndpoint()` no longer wipes the cached
     // endpoint, which the previous .then().catch() shape did.
     endpointPromise = undefined;
-    throw e;
+    throw error;
   }
 }
 
@@ -127,11 +127,11 @@ const STATUS_KEYS = ["MessageStatus", "CallStatus", "RecordingStatus", "Conferen
 
 function readField(payload: unknown, keys: readonly string[]): string | undefined {
   if (!payload || typeof payload !== "object") return undefined;
-  const o = payload as Record<string, unknown>;
-  for (const k of keys) {
-    const v = o[k];
-    if (typeof v === "string") return v;
-    if (Array.isArray(v) && typeof v[0] === "string") return v[0];
+  const obj = payload as Record<string, unknown>;
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string") return value;
+    if (Array.isArray(value) && typeof value[0] === "string") return value[0];
   }
   return undefined;
 }

@@ -19,27 +19,27 @@ export async function buildManifest(
   configPath: string,
 ): Promise<ToolManifest> {
   const yamlDir = dirname(resolve(configPath));
-  const specByName = new Map(config.mcp_servers.map((s) => [s.name, s]));
+  const specByName = new Map(config.mcp_servers.map((server) => [server.name, server]));
 
   const serverEntries: ServerDescriptor[] = await Promise.all(
-    [...servers.values()].map(async (s) => {
-      const tools = await s.listTools();
-      const spec = specByName.get(s.name);
+    [...servers.values()].map(async (server) => {
+      const tools = await server.listTools();
+      const spec = specByName.get(server.name);
       // spec should always exist — servers come from the same config — but
       // default to "customer" if the lookup misses rather than erroring;
       // this is a tagging concern, not load-bearing for dispatch.
       const author = spec ? authorOf(spec, yamlDir) : "customer";
       return {
-        name: s.name,
-        transport: s.transport,
+        name: server.name,
+        transport: server.transport,
         author,
-        tools: tools.map((t) => toDescriptor(t, true)),
+        tools: tools.map((tool) => toDescriptor(tool, true)),
       };
     })
   );
 
   // Stable ordering: keep server order from YAML so diffs are deterministic.
-  const orderByName = new Map(config.mcp_servers.map((s, i) => [s.name, i]));
+  const orderByName = new Map(config.mcp_servers.map((server, index) => [server.name, index]));
   serverEntries.sort((a, b) => (orderByName.get(a.name) ?? 0) - (orderByName.get(b.name) ?? 0));
 
   return {

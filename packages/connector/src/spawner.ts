@@ -62,16 +62,16 @@ export async function spawnType1Children(
       stdio: ["ignore", "inherit", "inherit"],
     });
 
-    proc.on("error", (e) => log(`child "${spec.name}" spawn error: ${e.message}`));
+    proc.on("error", (error) => log(`child "${spec.name}" spawn error: ${error.message}`));
     proc.on("exit", (code, signal) => {
       log(`child "${spec.name}" exited (code=${code}, signal=${signal})`);
     });
 
     try {
       await waitForPort(port, readyTimeoutMs);
-    } catch (e) {
+    } catch (error) {
       proc.kill("SIGTERM");
-      throw new Error(`Type 1 child "${spec.name}" did not become ready on port ${port} within ${readyTimeoutMs}ms: ${(e as Error).message}`);
+      throw new Error(`Type 1 child "${spec.name}" did not become ready on port ${port} within ${readyTimeoutMs}ms: ${(error as Error).message}`);
     }
 
     spec.endpoint = `http://127.0.0.1:${port}/mcp`;
@@ -82,10 +82,10 @@ export async function spawnType1Children(
 }
 
 export async function shutdownChildren(children: SpawnedChild[], log: (msg: string) => void = () => {}): Promise<void> {
-  for (const c of children) {
-    if (c.proc.exitCode == null && c.proc.signalCode == null) {
-      log(`SIGTERM child "${c.name}" (pid=${c.pid})`);
-      c.proc.kill("SIGTERM");
+  for (const child of children) {
+    if (child.proc.exitCode == null && child.proc.signalCode == null) {
+      log(`SIGTERM child "${child.name}" (pid=${child.pid})`);
+      child.proc.kill("SIGTERM");
     }
   }
 }

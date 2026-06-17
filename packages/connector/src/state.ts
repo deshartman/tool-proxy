@@ -30,10 +30,10 @@ export function readState(path: string = defaultStatePath()): ConnectorState {
     return {
       registrationToken: typeof parsed.registrationToken === "string" ? parsed.registrationToken : undefined,
     };
-  } catch (e) {
+  } catch (error) {
     // A corrupt state file is recoverable — treat as missing and let the
     // first-connect path mint a fresh token. Logging is the caller's job.
-    throw new Error(`failed to read connector state at ${path}: ${(e as Error).message}`);
+    throw new Error(`failed to read connector state at ${path}: ${(error as Error).message}`);
   }
 }
 

@@ -25,10 +25,10 @@ export function verifySend(client: TwilioClient): Tool {
           if (locale) opts.locale = locale;
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const v = await client.verify.v2.services(targetSid).verifications.create(opts as any);
+          const verification = await client.verify.v2.services(targetSid).verifications.create(opts as any);
           return {
             content: [
-              { type: "text", text: `sent sid=${v.sid} status=${v.status} channel=${v.channel}` },
+              { type: "text", text: `sent sid=${verification.sid} status=${verification.status} channel=${verification.channel}` },
             ],
           };
         },

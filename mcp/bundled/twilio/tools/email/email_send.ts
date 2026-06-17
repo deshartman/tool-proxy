@@ -88,11 +88,11 @@ export function emailSend(getClient: SendGridClientProvider): Tool {
           if (content.length) body.content = content;
 
           if (attachments?.length) {
-            body.attachments = attachments.map((a) => ({
-              filename: a.filename,
-              content: a.content,
-              type: a.type ?? "application/octet-stream",
-              disposition: a.disposition ?? "attachment",
+            body.attachments = attachments.map((attachment) => ({
+              filename: attachment.filename,
+              content: attachment.content,
+              type: attachment.type ?? "application/octet-stream",
+              disposition: attachment.disposition ?? "attachment",
             }));
           }
 

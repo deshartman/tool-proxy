@@ -41,16 +41,16 @@ export function voiceTranscriptionStart(): Tool {
           },
         },
         async ({ name, languageCode, statusCallbackUrl, partialResults, intelligenceService }) => {
-          const r = new VoiceResponse();
+          const response = new VoiceResponse();
           const attrs: Record<string, unknown> = {};
           if (name) attrs.name = name;
           if (languageCode) attrs.languageCode = languageCode;
           if (statusCallbackUrl) attrs.statusCallbackUrl = statusCallbackUrl;
           if (partialResults !== undefined) attrs.partialResults = partialResults;
           if (intelligenceService) attrs.intelligenceService = intelligenceService;
-          r.start().transcription(attrs);
+          response.start().transcription(attrs);
           return {
-            content: [{ type: "text", text: r.toString() }],
+            content: [{ type: "text", text: response.toString() }],
           };
         },
       );

@@ -34,14 +34,14 @@ export function voiceSay(): Tool {
           },
         },
         async ({ text, voice, language, loop }) => {
-          const r = new VoiceResponse();
+          const response = new VoiceResponse();
           const attrs: Record<string, unknown> = {};
           if (voice) attrs.voice = voice;
           if (language) attrs.language = language;
           if (loop !== undefined) attrs.loop = loop;
-          r.say(attrs, text);
+          response.say(attrs, text);
           return {
-            content: [{ type: "text", text: r.toString() }],
+            content: [{ type: "text", text: response.toString() }],
           };
         },
       );

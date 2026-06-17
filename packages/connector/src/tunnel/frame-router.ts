@@ -70,8 +70,8 @@ function handleRegisterAck(frame: RegisterAckFrame, opts: FrameRouterOpts): void
     try {
       writeState(opts.state, opts.statePath);
       opts.log.info({ statePath: opts.statePath }, `register-ack ok — persisted registrationToken`);
-    } catch (e) {
-      opts.log.error({ err: e as Error }, `register-ack: failed to persist token`);
+    } catch (error) {
+      opts.log.error({ err: error as Error }, `register-ack: failed to persist token`);
     }
   } else if (frame.accepted) {
     opts.log.info({ connectorId: frame.connectorId ?? "?" }, `register-ack ok — bound to existing record`);
@@ -108,9 +108,9 @@ function handleRegisterAckError(frame: RegisterAckFrame, opts: FrameRouterOpts):
       opts.state.registrationToken = undefined;
       try {
         clearRegistrationToken(opts.statePath);
-      } catch (e) {
+      } catch (clearError) {
         opts.log.error(
-          { err: e as Error },
+          { err: clearError as Error },
           `failed to clear connector-state.json — next attempt may still present a stale token`,
         );
       }

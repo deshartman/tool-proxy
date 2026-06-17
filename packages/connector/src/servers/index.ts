@@ -43,11 +43,11 @@ export function makeConnection(
     transport,
     async listTools(): Promise<DiscoveredTool[]> {
       const result = await client.listTools();
-      return result.tools.map((t) => ({
-        name: t.name,
-        description: t.description ?? "",
-        inputSchema: t.inputSchema,
-        outputSchema: t.outputSchema,
+      return result.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description ?? "",
+        inputSchema: tool.inputSchema,
+        outputSchema: tool.outputSchema,
       }));
     },
     async callTool(toolName, args, opts) {

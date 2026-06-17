@@ -65,7 +65,7 @@ export function voicePay(): Tool {
           },
         },
         async ({ chargeAmount, currency, paymentConnector, paymentMethod, description, action, maxAttempts, prompts, parameters }) => {
-          const r = new VoiceResponse();
+          const response = new VoiceResponse();
           const attrs: Record<string, unknown> = {};
           if (chargeAmount !== undefined) attrs.chargeAmount = chargeAmount;
           if (currency) attrs.currency = currency;
@@ -74,18 +74,18 @@ export function voicePay(): Tool {
           if (description) attrs.description = description;
           if (action) attrs.action = action;
           if (maxAttempts !== undefined) attrs.maxAttempts = maxAttempts;
-          const pay = r.pay(attrs);
+          const pay = response.pay(attrs);
 
-          for (const p of prompts ?? []) {
-            const prompt = pay.prompt({ for: p.for });
-            if (p.text) prompt.say(p.text);
+          for (const promptSpec of prompts ?? []) {
+            const prompt = pay.prompt({ for: promptSpec.for });
+            if (promptSpec.text) prompt.say(promptSpec.text);
           }
           for (const param of parameters ?? []) {
             pay.parameter({ name: param.name, value: param.value });
           }
 
           return {
-            content: [{ type: "text", text: r.toString() }],
+            content: [{ type: "text", text: response.toString() }],
           };
         },
       );

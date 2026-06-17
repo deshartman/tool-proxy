@@ -23,12 +23,12 @@ export function voiceTranscriptionStop(): Tool {
           },
         },
         async ({ name }) => {
-          const r = new VoiceResponse();
+          const response = new VoiceResponse();
           const attrs: Record<string, unknown> = {};
           if (name) attrs.name = name;
-          r.stop().transcription(attrs);
+          response.stop().transcription(attrs);
           return {
-            content: [{ type: "text", text: r.toString() }],
+            content: [{ type: "text", text: response.toString() }],
           };
         },
       );

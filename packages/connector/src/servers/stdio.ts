@@ -11,8 +11,8 @@ export async function connectStdio(
   // process.env so each stdio child only sees its own creds + the shared
   // tunnel env. StdioClientTransport requires `env` values be strings.
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === "string") env[k] = v;
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === "string") env[key] = value;
   }
   if (spec.env) Object.assign(env, spec.env);
   const transport = new StdioClientTransport({ command, args, env });

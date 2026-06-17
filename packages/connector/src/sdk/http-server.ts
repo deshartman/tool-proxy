@@ -32,7 +32,7 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
     { name: opts.name, version: opts.version ?? "0.1.0" },
     { capabilities: { tools: {} } }
   );
-  for (const t of opts.tools) t.register(server);
+  for (const tool of opts.tools) tool.register(server);
 
   await server.connect(transport);
 
@@ -65,7 +65,7 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
       const addr = http.address();
       const port = typeof addr === "object" && addr ? addr.port : requestedPort;
       const log = createLogger(opts.name);
-      log.info({ port, url: `http://localhost:${port}/mcp`, tools: opts.tools.map((t) => t.name) }, `listening`);
+      log.info({ port, url: `http://localhost:${port}/mcp`, tools: opts.tools.map((tool) => tool.name) }, `listening`);
       resolveListen({
         port,
         close: () => new Promise<void>((res) => http.close(() => res())),

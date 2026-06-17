@@ -68,7 +68,7 @@ function applyStartFlags(args: string[]): void {
   if (values["inspector-port"]) process.env.INSPECTOR_PORT = values["inspector-port"];
 }
 
-dispatch().catch((e) => {
-  log.fatal({ err: e as Error }, `connector startup failed`);
+dispatch().catch((error) => {
+  log.fatal({ err: error as Error }, `connector startup failed`);
   process.exit(1);
 });

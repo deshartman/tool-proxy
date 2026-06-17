@@ -174,7 +174,7 @@ function resolveBundledEntry(raw: unknown, source: string): unknown {
   const parsed = BundledServer.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues
-      .map((i) => `  ${i.path.join(".") || "<root>"}: ${i.message}`)
+      .map((issue) => `  ${issue.path.join(".") || "<root>"}: ${issue.message}`)
       .join("\n");
     throw new Error(`Invalid bundled entry in ${source}:\n${issues}`);
   }
@@ -234,12 +234,12 @@ export function loadConfig(configPath: string): ConnectorConfig {
   // registry (populated by the image build) supplies the launch command.
   if (parsed && typeof parsed === "object" && Array.isArray((parsed as { mcp_servers?: unknown }).mcp_servers)) {
     const servers = (parsed as { mcp_servers: unknown[] }).mcp_servers;
-    (parsed as { mcp_servers: unknown[] }).mcp_servers = servers.map((s) => resolveBundledEntry(s, absolute));
+    (parsed as { mcp_servers: unknown[] }).mcp_servers = servers.map((server) => resolveBundledEntry(server, absolute));
   }
   const result = ConfigSchema.safeParse(parsed);
   if (!result.success) {
     const issues = result.error.issues
-      .map((i) => `  ${i.path.join(".") || "<root>"}: ${i.message}`)
+      .map((issue) => `  ${issue.path.join(".") || "<root>"}: ${issue.message}`)
       .join("\n");
     throw new Error(`Invalid connector config at ${absolute}:\n${issues}`);
   }

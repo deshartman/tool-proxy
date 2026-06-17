@@ -38,13 +38,13 @@ export function voicePlay(): Tool {
           if (!url && !digits) {
             throw new Error("Provide either url or digits");
           }
-          const r = new VoiceResponse();
+          const response = new VoiceResponse();
           const attrs: Record<string, unknown> = {};
           if (digits) attrs.digits = digits;
           if (loop !== undefined) attrs.loop = loop;
-          r.play(attrs, url);
+          response.play(attrs, url);
           return {
-            content: [{ type: "text", text: r.toString() }],
+            content: [{ type: "text", text: response.toString() }],
           };
         },
       );

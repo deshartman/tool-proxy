@@ -59,33 +59,33 @@ export function voiceDial(): Tool {
           if (!numbers?.length && !sips?.length && !clients?.length) {
             throw new Error("Provide at least one of numbers, sips, or clients");
           }
-          const r = new VoiceResponse();
+          const response = new VoiceResponse();
           const dialAttrs: Record<string, unknown> = {};
           if (callerId) dialAttrs.callerId = callerId;
           if (timeout !== undefined) dialAttrs.timeout = timeout;
           if (record) dialAttrs.record = record;
           if (answerOnBridge !== undefined) dialAttrs.answerOnBridge = answerOnBridge;
           if (action) dialAttrs.action = action;
-          const dial = r.dial(dialAttrs);
+          const dial = response.dial(dialAttrs);
 
-          for (const n of numbers ?? []) {
+          for (const number of numbers ?? []) {
             const attrs: Record<string, unknown> = {};
-            if (n.sendDigits) attrs.sendDigits = n.sendDigits;
-            if (n.statusCallback) attrs.statusCallback = n.statusCallback;
-            dial.number(attrs, n.number);
+            if (number.sendDigits) attrs.sendDigits = number.sendDigits;
+            if (number.statusCallback) attrs.statusCallback = number.statusCallback;
+            dial.number(attrs, number.number);
           }
-          for (const s of sips ?? []) {
+          for (const sip of sips ?? []) {
             const attrs: Record<string, unknown> = {};
-            if (s.username) attrs.username = s.username;
-            if (s.password) attrs.password = s.password;
-            dial.sip(attrs, s.uri);
+            if (sip.username) attrs.username = sip.username;
+            if (sip.password) attrs.password = sip.password;
+            dial.sip(attrs, sip.uri);
           }
-          for (const c of clients ?? []) {
-            dial.client(c.identity);
+          for (const client of clients ?? []) {
+            dial.client(client.identity);
           }
 
           return {
-            content: [{ type: "text", text: r.toString() }],
+            content: [{ type: "text", text: response.toString() }],
           };
         },
       );

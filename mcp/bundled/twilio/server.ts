@@ -37,14 +37,14 @@ onStatusCallback((event) => {
 
 function pickFirst(payload: unknown, keys: string[]): string | undefined {
   if (!payload || typeof payload !== "object") return undefined;
-  const o = payload as Record<string, unknown>;
-  for (const k of keys) {
-    if (typeof o[k] === "string") return o[k] as string;
+  const obj = payload as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof obj[key] === "string") return obj[key] as string;
   }
   return undefined;
 }
-const pickSid    = (p: unknown) => pickFirst(p, ["MessageSid", "CallSid"]);
-const pickStatus = (p: unknown) => pickFirst(p, ["MessageStatus", "CallStatus"]);
+const pickSid    = (payload: unknown) => pickFirst(payload, ["MessageSid", "CallSid"]);
+const pickStatus = (payload: unknown) => pickFirst(payload, ["MessageStatus", "CallStatus"]);
 
 // Build clients at boot. Twilio is eager-validated (every voice/messaging/
 // verify/lookups tool needs it; failing fast surfaces missing creds before

@@ -17,8 +17,8 @@ function redact(args: unknown): string {
   if (args == null) return "<no args>";
   if (typeof args !== "object") return "<redacted>";
   const out: Record<string, string> = {};
-  for (const k of Object.keys(args as Record<string, unknown>)) {
-    out[k] = "<redacted>";
+  for (const key of Object.keys(args as Record<string, unknown>)) {
+    out[key] = "<redacted>";
   }
   return safeStringify(out);
 }

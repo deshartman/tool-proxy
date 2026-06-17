@@ -151,7 +151,7 @@ export function createWebhookEndpoint(opts: WebhookEndpointOptions): Promise<Web
       if (dataLines.length === 0) return;
       let payload: unknown;
       try { payload = JSON.parse(dataLines.join("\n")); }
-      catch (e) { fail(new Error(`malformed SSE data: ${(e as Error).message}`)); return; }
+      catch (error) { fail(new Error(`malformed SSE data: ${(error as Error).message}`)); return; }
 
       if (event === "url") {
         const url = (payload as { url?: string }).url;

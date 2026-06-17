@@ -135,7 +135,7 @@ export async function boot(): Promise<void> {
   // succeed because the inspector is already listening above.
   const spawned: SpawnedChild[] = await spawnType1Children(config.mcp_servers, { log: logLine });
   if (spawned.length > 0) {
-    const summary = spawned.map((c) => c.name + "=" + c.port).join(", ");
+    const summary = spawned.map((child) => child.name + "=" + child.port).join(", ");
     log.info({ count: spawned.length, children: summary }, `spawned Type 1 children`);
   }
 
@@ -186,13 +186,13 @@ export async function boot(): Promise<void> {
   async function connectTunnel(reason: string): Promise<void> {
     inspector?.setState("connecting");
     log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
-    const t = new TunnelClient(tunnelDialUrl, auth.authToken, config.tunnel.name, auth.authProvider);
-    t.onerror = (e) => log.error({ err: e }, `tunnel error`);
+    const pendingTunnel = new TunnelClient(tunnelDialUrl, auth.authToken, config.tunnel.name, auth.authProvider);
+    pendingTunnel.onerror = (error) => log.error({ err: error }, `tunnel error`);
     if (inspector) {
-      t.onstate = (s) => inspector.setState(s);
-      t.ontap = (tap) => inspector.recordTap(tap);
+      pendingTunnel.onstate = (tunnelState) => inspector.setState(tunnelState);
+      pendingTunnel.ontap = (tap) => inspector.recordTap(tap);
     }
-    t.onclose = () => {
+    pendingTunnel.onclose = () => {
       log.info(`tunnel closed`);
       webhooks.onTunnelClose();
       stopTimers();
@@ -217,9 +217,9 @@ export async function boot(): Promise<void> {
     };
 
     try {
-      await t.connect();
-    } catch (e) {
-      log.error({ err: e as Error }, `tunnel connect failed`);
+      await pendingTunnel.connect();
+    } catch (error) {
+      log.error({ err: error as Error }, `tunnel connect failed`);
       inspector?.setState("closed");
       // A handshake failure (e.g. WS 502 because the controller is briefly
       // unreachable, or ngrok cycling) is the same recoverable state as a
@@ -241,11 +241,11 @@ export async function boot(): Promise<void> {
       return;
     }
 
-    tunnel = t;
+    tunnel = pendingTunnel;
     log.info({ url: tunnelDialUrl }, `tunnel connected`);
     inspector?.setHeader({ tunnelOpenSinceAt: new Date().toISOString() });
 
-    t.onframe = createFrameRouter({
+    pendingTunnel.onframe = createFrameRouter({
       webhooks,
       state,
       statePath,
@@ -255,7 +255,7 @@ export async function boot(): Promise<void> {
       connectorName: config.tunnel.name,
     });
 
-    t.send({
+    pendingTunnel.send({
       type: "register",
       manifest,
       name: config.tunnel.name,
@@ -271,7 +271,7 @@ export async function boot(): Promise<void> {
       config,
       servers,
       getManifest: () => manifest,
-      tunnel: t,
+      tunnel: pendingTunnel,
       log: dispatcherLog.info.bind(dispatcherLog),
     }).attach();
 
@@ -301,15 +301,15 @@ export async function boot(): Promise<void> {
       // changes still require a full process restart (the connections to
       // local MCP servers were established at boot).
       try {
-        const next = loadConfig(configPath);
-        if (sameMcpServers(config.mcp_servers, next.mcp_servers)) {
-          Object.assign(config, { policy: next.policy });
+        const nextConfig = loadConfig(configPath);
+        if (sameMcpServers(config.mcp_servers, nextConfig.mcp_servers)) {
+          Object.assign(config, { policy: nextConfig.policy });
           log.info(`reconnect: YAML reloaded`);
         } else {
           log.warn(`reconnect: mcp_servers list changed in YAML — restart required to pick that up; using prior list`);
         }
-      } catch (e) {
-        log.warn({ err: e as Error }, `reconnect: YAML reload failed — using last-known config`);
+      } catch (error) {
+        log.warn({ err: error as Error }, `reconnect: YAML reload failed — using last-known config`);
       }
 
       // Rebuild manifest against the (possibly updated) config. Updates
@@ -340,10 +340,10 @@ export async function boot(): Promise<void> {
 
   async function refreshManifestAndPushDelta(): Promise<void> {
     try {
-      const next = await buildManifest(config, servers, version, configPath);
-      const delta = diffManifest(manifest, next);
-      manifest = next;
-      inspector?.setManifest(next);
+      const nextManifest = await buildManifest(config, servers, version, configPath);
+      const delta = diffManifest(manifest, nextManifest);
+      manifest = nextManifest;
+      inspector?.setManifest(nextManifest);
       if (!isEmptyDelta(delta)) {
         tunnel?.send({ type: "manifest-delta", delta });
         log.info(
@@ -351,80 +351,80 @@ export async function boot(): Promise<void> {
           `pushed manifest-delta`,
         );
       }
-    } catch (e) {
-      log.error({ err: e as Error }, `discovery refresh failed`);
+    } catch (error) {
+      log.error({ err: error as Error }, `discovery refresh failed`);
     }
   }
 
   async function onSighup(): Promise<void> {
     try {
-      const next = loadConfig(configPath);
-      if (!sameMcpServers(config.mcp_servers, next.mcp_servers)) {
+      const nextConfig = loadConfig(configPath);
+      if (!sameMcpServers(config.mcp_servers, nextConfig.mcp_servers)) {
         log.warn(`SIGHUP: mcp_servers list changed — restart required for live reconnect; ignoring this reload`);
         return;
       }
-      Object.assign(config, { policy: next.policy });
+      Object.assign(config, { policy: nextConfig.policy });
       log.info(`SIGHUP: config reloaded`);
       await refreshManifestAndPushDelta();
-    } catch (e) {
-      log.error({ err: e as Error }, `SIGHUP reload failed`);
+    } catch (error) {
+      log.error({ err: error as Error }, `SIGHUP reload failed`);
     }
   }
 }
 
-function countTools(m: ToolManifest): number {
-  return m.servers.reduce((n, s) => n + s.tools.length, 0);
+function countTools(manifest: ToolManifest): number {
+  return manifest.servers.reduce((sum, server) => sum + server.tools.length, 0);
 }
 
-function sameMcpServers(a: McpServerSpec[], b: McpServerSpec[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((s, i) => sameSpec(s, b[i]));
+function sameMcpServers(live: McpServerSpec[], fresh: McpServerSpec[]): boolean {
+  if (live.length !== fresh.length) return false;
+  return live.every((spec, index) => sameSpec(spec, fresh[index]));
 }
 
 // Compare every field that affects how we'd spawn or connect to the entry.
 // The reconnect path uses this to decide whether YAML changes are safe to
 // apply live; anything beyond `policy` requires a process restart.
-function sameSpec(s: McpServerSpec, t: McpServerSpec): boolean {
-  if (s.name !== t.name || s.transport !== t.transport) return false;
-  if (s.transport === "http" && t.transport === "http" && !sameHttpEndpoint(s, t)) return false;
-  if (s.transport === "stdio" && t.transport === "stdio" && !sameStdioInvocation(s, t)) return false;
-  if (s.dir !== t.dir) return false;
-  return sameStringMap(s.env, t.env);
+function sameSpec(live: McpServerSpec, fresh: McpServerSpec): boolean {
+  if (live.name !== fresh.name || live.transport !== fresh.transport) return false;
+  if (live.transport === "http" && fresh.transport === "http" && !sameHttpEndpoint(live, fresh)) return false;
+  if (live.transport === "stdio" && fresh.transport === "stdio" && !sameStdioInvocation(live, fresh)) return false;
+  if (live.dir !== fresh.dir) return false;
+  return sameStringMap(live.env, fresh.env);
 }
 
 function sameHttpEndpoint(
-  s: Extract<McpServerSpec, { transport: "http" }>,
-  t: Extract<McpServerSpec, { transport: "http" }>,
+  live: Extract<McpServerSpec, { transport: "http" }>,
+  fresh: Extract<McpServerSpec, { transport: "http" }>,
 ): boolean {
   // Skip endpoint comparison for Type 1 entries (yaml has `dir` and no
   // endpoint; the spawner mutates `endpoint` in at boot to point at the
-  // child's auto-assigned localhost port). The freshly-loaded `t` has no
-  // endpoint, the live `s` has http://127.0.0.1:71xx/mcp — comparing them
+  // child's auto-assigned localhost port). The freshly-loaded spec has no
+  // endpoint, the live spec has http://127.0.0.1:71xx/mcp — comparing them
   // produces a false-positive "yaml changed" warning on every reconnect.
-  const isType1 = !!t.dir && !t.endpoint;
-  return isType1 || s.endpoint === t.endpoint;
+  const isType1 = !!fresh.dir && !fresh.endpoint;
+  return isType1 || live.endpoint === fresh.endpoint;
 }
 
 function sameStdioInvocation(
-  s: Extract<McpServerSpec, { transport: "stdio" }>,
-  t: Extract<McpServerSpec, { transport: "stdio" }>,
+  live: Extract<McpServerSpec, { transport: "stdio" }>,
+  fresh: Extract<McpServerSpec, { transport: "stdio" }>,
 ): boolean {
-  if (s.command.length !== t.command.length) return false;
-  if (s.command.some((c, j) => c !== t.command[j])) return false;
+  if (live.command.length !== fresh.command.length) return false;
+  if (live.command.some((arg, index) => arg !== fresh.command[index])) return false;
   // `bundled` carries the user-facing Type 3 identifier even after we've
   // resolved it to a synthetic stdio spec. Compared so an edit from
   // `bundled: a` to `bundled: b` is detected even if both happen to
   // resolve to identical commands (or both resolve via dev override).
-  return s.bundled === t.bundled;
+  return live.bundled === fresh.bundled;
 }
 
-function sameStringMap(a?: Record<string, string>, b?: Record<string, string>): boolean {
-  const ka = a ? Object.keys(a) : [];
-  const kb = b ? Object.keys(b) : [];
-  if (ka.length !== kb.length) return false;
-  return ka.every((k) => a?.[k] === b?.[k]);
+function sameStringMap(live?: Record<string, string>, fresh?: Record<string, string>): boolean {
+  const liveKeys = live ? Object.keys(live) : [];
+  const freshKeys = fresh ? Object.keys(fresh) : [];
+  if (liveKeys.length !== freshKeys.length) return false;
+  return liveKeys.every((key) => live?.[key] === fresh?.[key]);
 }
 
 async function closeServers(servers: Map<string, McpServerConnection>): Promise<void> {
-  await Promise.all([...servers.values()].map((s) => s.close().catch(() => undefined)));
+  await Promise.all([...servers.values()].map((server) => server.close().catch(() => undefined)));
 }

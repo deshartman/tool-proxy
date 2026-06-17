@@ -338,8 +338,8 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
       unsubscribe = handle.unsubscribe;
       unsubscribeUrl = handle.onUrl((url) => send("url", { url }));
       inspector.publishWebhookSnapshot();
-    } catch (e) {
-      send("error", { message: (e as Error).message });
+    } catch (error) {
+      send("error", { message: (error as Error).message });
       try { res.end(); } catch { /* ignore */ }
     }
   })();

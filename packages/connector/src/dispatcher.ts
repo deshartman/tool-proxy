@@ -68,13 +68,13 @@ export class Dispatcher {
   private listAllowedTools(): { tools: Array<{ name: string; description: string; inputSchema: unknown; outputSchema?: unknown }> } {
     const manifest = this.deps.getManifest();
     const tools: Array<{ name: string; description: string; inputSchema: unknown; outputSchema?: unknown }> = [];
-    for (const s of manifest.servers) {
-      for (const t of s.tools) {
+    for (const server of manifest.servers) {
+      for (const tool of server.tools) {
         tools.push({
-          name: `${s.name}.${t.name}`,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          outputSchema: t.outputSchema,
+          name: `${server.name}.${tool.name}`,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          outputSchema: tool.outputSchema,
         });
       }
     }

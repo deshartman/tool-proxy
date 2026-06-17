@@ -175,23 +175,23 @@ function renderYaml(
     "",
     "mcp_servers:"
   );
-  for (const s of servers) {
-    lines.push(`  - name: ${quoteIfNeeded(s.name)}`);
-    if (s.kind === "type1") {
+  for (const server of servers) {
+    lines.push(`  - name: ${quoteIfNeeded(server.name)}`);
+    if (server.kind === "type1") {
       lines.push(
         `    transport: http`,
-        `    dir: ${quoteIfNeeded(toRelative(s.dir!, yamlDir))}`
+        `    dir: ${quoteIfNeeded(toRelative(server.dir!, yamlDir))}`
       );
-    } else if (s.kind === "type2-http") {
+    } else if (server.kind === "type2-http") {
       lines.push(
         `    transport: http`,
-        `    endpoint: ${quoteIfNeeded(s.endpoint!)}`
+        `    endpoint: ${quoteIfNeeded(server.endpoint!)}`
       );
-      if (s.dir) lines.push(`    dir: ${quoteIfNeeded(toRelative(s.dir, yamlDir))}`);
+      if (server.dir) lines.push(`    dir: ${quoteIfNeeded(toRelative(server.dir, yamlDir))}`);
     } else {
       lines.push(`    transport: stdio`, `    command:`);
-      for (const part of s.command!) lines.push(`      - ${quoteIfNeeded(part)}`);
-      if (s.dir) lines.push(`    dir: ${quoteIfNeeded(toRelative(s.dir, yamlDir))}`);
+      for (const part of server.command!) lines.push(`      - ${quoteIfNeeded(part)}`);
+      if (server.dir) lines.push(`    dir: ${quoteIfNeeded(toRelative(server.dir, yamlDir))}`);
     }
   }
   lines.push(
