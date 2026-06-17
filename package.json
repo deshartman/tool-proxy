@@ -9,8 +9,9 @@
     "build": "tsc -b packages/connector && node packages/connector/scripts/postbuild.mjs",
     "connector": "node packages/connector/dist/index.js"
   },
+  "//": "@types/node deliberately held at ^22 to match the node:22-alpine runtime image. Bumping ahead types against APIs not present at runtime.",
   "devDependencies": {
-    "typescript": "^5.6.3",
+    "typescript": "^6.0.3",
     "@types/node": "^22.7.5"
   }
 }
