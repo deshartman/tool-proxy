@@ -93,7 +93,10 @@ export class WebhookRegistry {
 
   // Called by the connector right after register-ack succeeds (or any time
   // the WS comes back to a healthy state). Re-issues webhook-allocate for
-  // every MCP that still has a live SDK listener.
+  // every MCP that still has a live SDK listener — and re-fires any
+  // allocate that was pending across the tunnel close (e.g. the SDK called
+  // allocate before the tunnel ever opened, or while the controller was
+  // mid-restart).
   //
   // The controller mints a fresh random tail on every webhook-allocate (rowId
   // is stable). When the new ack lands, onAllocateAck fans the new URL out to
@@ -105,16 +108,47 @@ export class WebhookRegistry {
   // handing out the stale tail to Twilio configs.
   reallocateAll(): void {
     if (!this.tunnelOpen) return;
+    // Re-fire every pending allocate (their timers were cleared by
+    // onTunnelClose; the SDK promises are still alive). Subscriptions
+    // without a pending entry get a fresh allocate via beginAllocate,
+    // which adds a new pending entry of its own.
+    const pendingMcps = new Set(this.pending.keys());
     for (const sub of this.subs.values()) {
       // Drop the prior URL — it's no longer authoritative until the controller
       // re-confirms. The SDK side may still cache it during the reopen window
       // (Twilio configs rarely change in seconds), but the registry shouldn't
       // claim it's live.
       sub.url = undefined;
-      this.beginAllocate(sub.mcp).catch((e) => {
-        this.log.error({ err: e as Error, mcp: sub.mcp }, `re-allocate failed on tunnel reopen`);
-      });
+      if (pendingMcps.has(sub.mcp)) {
+        this.refirePending(sub.mcp);
+        pendingMcps.delete(sub.mcp);
+      } else {
+        this.beginAllocate(sub.mcp).catch((e) => {
+          this.log.error({ err: e as Error, mcp: sub.mcp }, `re-allocate failed on tunnel reopen`);
+        });
+      }
     }
+    // Defensive: any orphaned pending (no matching sub) shouldn't exist
+    // because subscribe() always creates a sub before begin, but if it
+    // does, refire so we don't leave it hanging.
+    for (const mcp of pendingMcps) {
+      this.refirePending(mcp);
+    }
+  }
+
+  // Re-arm the timer and re-send the wire frame for an allocate that was
+  // already in `pending` when the tunnel closed. The Promise's resolve/reject
+  // handles stay attached to the entry, so the same promise the SDK is
+  // awaiting will fire when the new ack lands.
+  private refirePending(mcp: string): void {
+    const p = this.pending.get(mcp);
+    if (!p) return;
+    const timeoutMs = this.opts.allocateTimeoutMs ?? 10_000;
+    p.timer = setTimeout(() => {
+      this.pending.delete(mcp);
+      p.reject(new Error(`webhook-allocate for "${mcp}" timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    this.opts.sendFrame({ type: "webhook-allocate", mcp });
   }
 
   // SDK side. Idempotent per `mcp`: a second call for the same MCP attaches
@@ -224,17 +258,28 @@ export class WebhookRegistry {
     }
   }
 
-  // Tear down all in-flight allocates. Called when the WS closes — the
-  // Subscriptions stay so we can re-issue on reopen, but pending promises
-  // can't survive a WS bounce.
+  // Pause in-flight allocates across a WS bounce. Called when the WS closes.
+  // The Subscriptions stay so we can re-issue on reopen, AND so do the
+  // pending promise handles — clearing only the timers. reallocateAll() on
+  // reopen re-arms a fresh timer and re-sends the wire frame, so the same
+  // SDK promise the caller is awaiting resolves once the new ack lands.
+  //
+  // Why not just reject? An operator-driven re-mint of the controller row
+  // (or a transient ngrok bounce) closes the tunnel mid-allocate. Today's
+  // boot order means the apis bundle's createWebhookEndpoint races with
+  // the very first tunnel handshake — and in the
+  // unknown_registration_token recovery path the connector closes the
+  // tunnel deliberately so it can re-mint. Rejecting in that window would
+  // be a permanent failure for the SDK consumer (its endpointPromise
+  // resets to undefined and never re-allocates until a tool call triggers
+  // it). Preserving the pending lets recovery be transparent.
   onTunnelClose(): void {
     this.tunnelOpen = false;
-    for (const [mcp, p] of this.pending) {
+    for (const p of this.pending.values()) {
       clearTimeout(p.timer);
-      p.reject(new Error(`tunnel closed before webhook-allocate ack for "${mcp}"`));
     }
-    this.pending.clear();
-    // Mark all known URLs as stale.
+    // Pending entries stay; reallocateAll re-arms them. Mark all known
+    // URLs as stale.
     for (const sub of this.subs.values()) sub.url = undefined;
   }
 
