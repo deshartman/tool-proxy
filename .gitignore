@@ -29,6 +29,12 @@ __pycache__/
 **/connector.yaml
 !**/connector.yaml.example
 
+# EK bundle's declarative source list — customer-authored copy of
+# sources.yaml.example. Lives at mcp/bundled/enterprise-knowledge/sources.yaml.
+# Gitignored; only the *.example template ships.
+**/sources.yaml
+!**/sources.yaml.example
+
 # Connector state file — written by the connector on first register (holds
 # the registrationToken handed back by the controller). Customer never edits
 # directly; clearing it forces a fresh mint on next start.

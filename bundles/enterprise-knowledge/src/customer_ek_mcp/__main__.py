@@ -1,17 +1,24 @@
-"""Entrypoint — exposes the four EK tools over MCP stdio.
+"""Entrypoint — exposes EK tools over MCP stdio.
 
-Step 2 wires tools directly through the `mcp` Python SDK so the bundle is
-runnable without LlamaIndex. Step 4 will replace each tool body with a
-LlamaIndex Workflow wrapped via
-`llama_index.tools.mcp.utils.workflow_as_mcp`; the wire shape (tool names,
-input schemas, return values) is identical so the controller-side contract
-doesn't move.
+Tool surface (registry-driven):
+  - <id>_register   per product in `products.PRODUCTS`. Today: local_register.
+                    Adds gdrive_register in Phase 4b, and so on.
+  - knowledge_query, sources_refresh, sources_fetch — generic, source-id
+                    keyed. Source-id is opaque; the procedure asking for
+                    chunks doesn't need to know which product produced them.
+
+Boot-time auto-register: just before `stdio_server()` opens, we run
+`source_loader.bootstrap_sources()` which reads sources.yaml (if
+EK_SOURCES_YAML is set) and calls `storage.register_source` for each
+entry. Per-source failures are persisted to ek_sources with
+status='failed' and surface to the Controller via sources_fetch.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from typing import Any
 
@@ -19,44 +26,35 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from . import __version__, storage
+from . import __version__, products, source_loader, storage
+
+logger = logging.getLogger(__name__)
+
+
+REGISTER_SUFFIX = "_register"
 
 
 server: Server = Server(name="enterprise-knowledge", version=__version__)
 
 
-@server.list_tools()
-async def _list_tools() -> list[Tool]:
+def _register_tool_for(product: "products.Product") -> Tool:
+    return Tool(
+        name=f"{product.id}{REGISTER_SUFFIX}",
+        description=product.register_tool_description,
+        inputSchema=product.register_input_schema,
+    )
+
+
+def _generic_tools() -> list[Tool]:
     return [
-        Tool(
-            name="sources_register",
-            description=(
-                "Synchronously fetch, parse, chunk, embed, and index a "
-                "document URL. Returns a stable source_id. Idempotent on URL."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "Source URL to ingest"},
-                    "kind": {
-                        "type": "string",
-                        "description": "Source kind (auto-detected from URL if absent)",
-                    },
-                    "refresh_hint": {
-                        "type": "string",
-                        "description": "Suggested refresh cadence (e.g. 'daily'); metadata only",
-                    },
-                },
-                "required": ["url"],
-                "additionalProperties": False,
-            },
-        ),
         Tool(
             name="knowledge_query",
             description=(
-                "Vector lookup against an indexed source. Returns top-K chunks "
-                "with citations. Pure retrieval — no fetching or embedding "
-                "happens at query time except for the query string itself."
+                "Vector lookup against an indexed source. Returns top-K "
+                "chunks with citations. Pure retrieval — no fetching or "
+                "embedding happens at query time except for the query "
+                "string itself. source_id is opaque; you don't need to "
+                "know which product produced it."
             ),
             inputSchema={
                 "type": "object",
@@ -73,8 +71,9 @@ async def _list_tools() -> list[Tool]:
             name="sources_refresh",
             description=(
                 "Re-fetch a source, diff against the existing index, and "
-                "re-embed only changed chunks. Background-safe; runs from the "
-                "controller's refresh scheduler."
+                "re-embed only changed chunks. Reader is selected from "
+                "the source's stored kind, so this works across all "
+                "products. Set force=true to re-embed every chunk."
             ),
             inputSchema={
                 "type": "object",
@@ -83,7 +82,7 @@ async def _list_tools() -> list[Tool]:
                     "force": {
                         "type": "boolean",
                         "default": False,
-                        "description": "Re-embed every chunk regardless of diff",
+                        "description": "Re-embed every chunk regardless of diff.",
                     },
                 },
                 "required": ["source_id"],
@@ -92,7 +91,12 @@ async def _list_tools() -> list[Tool]:
         ),
         Tool(
             name="sources_fetch",
-            description="List every indexed source with its metadata.",
+            description=(
+                "List every registered source with its kind, status, and "
+                "last error if any. Failed sources (boot-time auto-register "
+                "errors, refresh errors) are returned alongside successful "
+                "ones — filter by `status` or `kind` on the controller side."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -102,11 +106,27 @@ async def _list_tools() -> list[Tool]:
     ]
 
 
+@server.list_tools()
+async def _list_tools() -> list[Tool]:
+    return [
+        _register_tool_for(p) for p in products.PRODUCTS
+    ] + _generic_tools()
+
+
 @server.call_tool()
 async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     result: Any
-    if name == "sources_register":
-        result = storage.register_source(url=arguments["url"])
+    if name.endswith(REGISTER_SUFFIX):
+        product_id = name[: -len(REGISTER_SUFFIX)]
+        product = products.get_product(product_id)
+        url = arguments["url"]
+        if not product.url_match(url):
+            raise ValueError(
+                f"{name} cannot handle url={url!r}. The URL doesn't match "
+                f"this product's expected shape — did you mean a different "
+                f"<id>_register tool?"
+            )
+        result = storage.register_source(url=url)
     elif name == "knowledge_query":
         result = storage.query(
             source_id=arguments["source_id"],
@@ -126,6 +146,12 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
 
 async def _run() -> None:
+    # Boot-time auto-register. Per-source failures are persisted; whole-file
+    # errors (malformed YAML, EK_SOURCES_YAML pointing nowhere) raise here
+    # and the bundle fails boot — the spawner readiness probe trips and
+    # the customer sees the error in connector logs.
+    source_loader.bootstrap_sources()
+
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
