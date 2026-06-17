@@ -31,6 +31,15 @@ local = [
   "llama-index-embeddings-huggingface>=0.3",
 ]
 
+# Google Drive reader. Install with `uv pip install -e .[gdrive]` when
+# any sources.yaml entry points at a Drive folder. Same lockdown
+# discipline as [local]: deployments that don't use Drive must NOT
+# install this — keeps googleapis.com out of the bundle's reachable
+# surface.
+gdrive = [
+  "llama-index-readers-google>=0.4",
+]
+
 [project.scripts]
 customer-ek-mcp = "customer_ek_mcp.__main__:main"
 

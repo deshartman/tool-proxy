@@ -110,13 +110,37 @@ def _build_local_product() -> Product:
     )
 
 
+def _build_gdrive_product() -> Product:
+    """Construct the Google Drive Product entry.
+
+    Same lazy-import shape as local. The reader module imports the
+    gdrive SDK only inside its `load()` body, so this construction is
+    safe even when the [gdrive] extra is uninstalled — the ImportError
+    only fires if a Drive URL is actually registered.
+    """
+    from .readers import gdrive as gdrive_reader
+
+    return Product(
+        id="gdrive",
+        register_tool_description=(
+            "Index a Google Drive folder. URL is the full "
+            "https://drive.google.com/drive/folders/<id> form copied "
+            "from a browser tab. Requires the [gdrive] install extra and "
+            "EK_GDRIVE_AUTH + provider env vars (see .env.example)."
+        ),
+        register_input_schema=_common_register_input_schema(),
+        url_match=gdrive_reader.url_match,
+        load=gdrive_reader.load,
+    )
+
+
 def _build_products() -> list[Product]:
     """Assemble the registry. New products append here.
 
     Order matters only for `pick_product()` tie-breaking; in practice the
     url_match predicates are disjoint.
     """
-    return [_build_local_product()]
+    return [_build_local_product(), _build_gdrive_product()]
 
 
 PRODUCTS: list[Product] = _build_products()
@@ -136,8 +160,8 @@ def pick_product(url: str) -> Product:
     available = ", ".join(p.id for p in PRODUCTS)
     raise ValueError(
         f"no product matches url={url!r}. Wired products: {available}. "
-        f"Other source kinds (gdrive, confluence, web, sharepoint) are "
-        f"parked behind install extras and not yet shipped."
+        f"Other source kinds (confluence, web, sharepoint, notion) are "
+        f"parked and not yet shipped."
     )
 
 
