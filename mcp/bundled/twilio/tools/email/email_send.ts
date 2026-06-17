@@ -35,7 +35,7 @@ export const emailSend: Tool = {
             .optional()
             .describe("Dynamic template ID, e.g. d-xxxxxxxx. Mutually exclusive with subject/text/html."),
           dynamicTemplateData: z
-            .record(z.unknown())
+            .record(z.string(), z.unknown())
             .optional()
             .describe("Placeholder data for the dynamic template (used with templateId)."),
           cc: z.array(z.string()).optional().describe("CC recipients."),

@@ -12,7 +12,7 @@ const HttpServer = z.object({
   // localhost port.
   endpoint: z.string().url().optional(),
   dir: z.string().optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   timeout_ms: z.number().int().positive().default(5000),
 });
 
@@ -21,7 +21,7 @@ const StdioServer = z.object({
   transport: z.literal("stdio"),
   command: z.array(z.string().min(1)).min(1),
   dir: z.string().optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   timeout_ms: z.number().int().positive().default(5000),
   // Set when this entry was resolved from a `bundled:` yaml form. The
   // command above is the bundle's installed entrypoint; this field carries
@@ -39,7 +39,7 @@ const BundledServer = z.object({
   name: z.string().min(1),
   bundled: z.string().min(1),
   dir: z.string().optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   timeout_ms: z.number().int().positive().default(30_000),
 });
 
@@ -63,7 +63,7 @@ const Policy = z.object({
   discovery_interval_ms: z.number().int().positive().default(30_000),
   heartbeat_interval_ms: z.number().int().positive().default(1_500),
   tool_timeout_ms: z.number().int().positive().default(5_000),
-  reconnect: ReconnectPolicy.default({}),
+  reconnect: ReconnectPolicy.default(() => ReconnectPolicy.parse({})),
 });
 
 export type ReconnectPolicyConfig = z.infer<typeof ReconnectPolicy>;
@@ -91,7 +91,7 @@ const ConfigSchema = z.object({
     credentials_file: z.string().optional(),
   }),
   mcp_servers: z.array(z.discriminatedUnion("transport", [HttpServer, StdioServer])).min(1),
-  policy: Policy.default({}),
+  policy: Policy.default(() => Policy.parse({})),
 });
 
 export type ConnectorConfig = z.infer<typeof ConfigSchema>;

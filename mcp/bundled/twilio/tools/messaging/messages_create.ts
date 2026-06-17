@@ -32,7 +32,7 @@ export const messagesCreate: Tool = {
           to: z.string().describe("E.164 destination number, e.g. +15551234567 (no channel prefix — tool prepends it)"),
           body: z.string().min(1).max(1600).optional().describe("Message body. Optional when contentSid is set."),
           contentSid: z.string().optional().describe("Content template SID (HXxxxx). Required for WhatsApp/RCS templated sends outside the 24h session window."),
-          contentVariables: z.record(z.string()).optional().describe("Placeholder values for the content template (string keys)."),
+          contentVariables: z.record(z.string(), z.string()).optional().describe("Placeholder values for the content template (string keys)."),
           mediaUrl: z.array(z.string()).optional().describe("Media URLs for MMS/WhatsApp media messages."),
           from: z.string().optional().describe("Override the env-configured sender. (Tool adds the channel prefix.)"),
           messagingServiceSid: z.string().optional().describe("Use a Messaging Service instead of an explicit from. Mutually exclusive with from."),
