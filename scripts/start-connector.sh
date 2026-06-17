@@ -34,6 +34,7 @@ CONNECTOR_DIR="$ROOT/packages/connector"
 CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
 ENV_FILE="$CONNECTOR_DIR/.env"
 YAML_FILE="$CONNECTOR_DIR/connector.yaml"
+MOCK_DATA_FILE="$ROOT/mock/customers/data.ts"
 
 if [ ! -f "$CONNECTOR_BIN" ]; then
   echo "[start-connector] connector not built — run: npm run build" >&2
@@ -45,6 +46,10 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 if [ ! -f "$YAML_FILE" ]; then
   echo "[start-connector] no $YAML_FILE — copy $YAML_FILE.example and edit" >&2
+  exit 1
+fi
+if [ ! -f "$MOCK_DATA_FILE" ]; then
+  echo "[start-connector] no $MOCK_DATA_FILE — copy $MOCK_DATA_FILE.example and edit (it's gitignored; replace Dana Demo with your real number for live calls)" >&2
   exit 1
 fi
 

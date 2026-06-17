@@ -11,6 +11,7 @@
 // no TZ ambiguity in the appointmentId/start/end fields the procedure quotes.
 
 import { randomBytes } from "node:crypto";
+import { focalCustomer } from "./data.js";
 
 export interface Appointment {
   appointmentId: string;
@@ -85,11 +86,15 @@ function makeAppointment(
   };
 }
 
-// Seed: Dana is the focal customer (their appointment is about to be
-// rescheduled). Alice and Bob also have upcoming bookings so the calendar
-// has realistic congestion.
+// Seed: the focal customer (CUSTOMERS[0] in data.ts) is the one whose
+// appointment is about to be rescheduled. Reading the phone via
+// focalCustomer() instead of a literal lets an operator override data.ts
+// (gitignored, see data.ts.example) with a real number for live calls
+// without re-editing this file. Alice and Bob hold the other seeded
+// slots so the calendar has realistic congestion.
+const focal = focalCustomer();
 APPOINTMENTS.push(
-  makeAppointment("+15551239999", "Dana Demo",       workingDayAtUTC(14, 10)),
+  makeAppointment(focal.phone ?? "+15551239999", `${focal.name} ${focal.surname}`, workingDayAtUTC(14, 10)),
   makeAppointment("+14155550101", "Alice Anderson",  workingDayAtUTC(2, 14)),
   makeAppointment("+14155550102", "Bob Brown",       workingDayAtUTC(7, 11)),
 );

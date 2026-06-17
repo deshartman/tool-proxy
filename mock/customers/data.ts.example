@@ -1,6 +1,12 @@
 // Seed data for the mock customer service. In-memory only — restarting the
 // service wipes any state (there is none today; all reads).
 //
+// THIS FILE IS THE COMMITTED TEMPLATE. The operator's working copy lives at
+// data.ts in this same folder, gitignored. Replace the Dana Demo entry with
+// a real number when you need live calls/SMS to dispatch through to a phone
+// you control during a demo. The .example file stays clean for the public
+// repo; data.ts is yours.
+//
 // Two cohorts live here:
 //
 //   1. The Refund Eligibility demo fixtures (+1415555010{1,2,3} and the
@@ -156,6 +162,16 @@ export function lookupOrder(orderId: string): { customer: Customer; interaction:
     if (interaction) return { customer, interaction };
   }
   return undefined;
+}
+
+// The "focal" customer — first entry in CUSTOMERS — is the one calendar.ts
+// seeds an appointment against for the reschedule demo. Exporting via this
+// accessor (instead of hardcoding the phone in calendar.ts) means an
+// operator who edits the local data.ts to drop in a real phone number for
+// live calls also gets the calendar fixture wired to that same number, no
+// extra edit needed.
+export function focalCustomer(): Customer {
+  return CUSTOMERS[0];
 }
 
 export function mostRecent(customer: Customer): Interaction | undefined {
