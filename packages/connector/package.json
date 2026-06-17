@@ -17,7 +17,7 @@
     "build": "tsc -b && node scripts/postbuild.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "yaml": "^2.6.0",
     "dotenv": "^16.4.5",
     "pino": "^9.5.0",
