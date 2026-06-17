@@ -13,18 +13,31 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; }
-body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 14px; background: var(--bg); color: var(--text); }
+html, body { height: 100%; }
+body {
+  /* Flex column so <main> gets exactly the leftover height after <header>,
+     no matter how tall the header grows. Avoids hardcoded calc(100vh - N). */
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+}
 header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 0.75rem 1.25rem;
+  padding: 0.9rem 1.25rem;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
-header h1 { font-size: 1rem; margin: 0 0 2px; font-weight: 600; }
+header h1 { font-size: 1rem; margin: 0 0 0.5rem; font-weight: 600; }
+.header-meta { display: flex; flex-direction: column; gap: 4px; }
 header .meta { font-size: 0.75rem; }
 header .meta code { font-family: var(--mono); color: var(--accent); }
+header .meta .muted + code { margin-right: 0.5rem; }
 .muted { color: var(--muted); }
 .status { font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; font-family: var(--mono); }
 .status-open         { background: rgba(63, 185, 80, 0.15); color: var(--green); }
@@ -41,10 +54,13 @@ header .meta code { font-family: var(--mono); color: var(--accent); }
 
 main {
   /* Left column width is set by JS on #main as --left-col (defaults below).
-     The resizer is a thin draggable strip between the two panes. */
+     The resizer is a thin draggable strip between the two panes. Height
+     comes from the parent flex column (body) so header changes don't need
+     a magic-number subtraction here. */
   display: grid;
   grid-template-columns: var(--left-col, 460px) 6px 1fr;
-  height: calc(100vh - 65px);
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 

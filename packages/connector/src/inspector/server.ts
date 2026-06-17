@@ -29,11 +29,37 @@ export type Identity =
   | { kind: "cleared" }                                                    // controller returned unknown_registration_token; we cleared the token and will re-mint
   | { kind: "rejected"; reason: string; message?: string };                // controller rejected with a sticky error (e.g. name_taken) — operator action required
 
+// Operator-facing header info. Distinct from `Identity` (which is
+// connector↔controller binding state) — these fields are static or
+// time-anchored facts an operator wants visible in the inspector header
+// without having to grep frame logs.
+//
+//   connectorName       From yaml `tunnel.name`. Set once at boot.
+//   connectorId         Minted by the controller; arrives on register-ack.
+//   environment         From yaml `tunnel.environment` (e.g. "dev", "prod").
+//                       Set once at boot.
+//   version             From CONNECTOR_VERSION env var (or "dev" if unset).
+//                       Set once at boot.
+//   lastRegisterAckAt   ISO timestamp of the last successful register-ack.
+//                       Proves the binding is fresh, not stale.
+//   tunnelOpenSinceAt   ISO timestamp of the last tunnel open. Resets on
+//                       every reconnect; surfaces uptime since the last
+//                       successful connect (not since process boot).
+export interface HeaderInfo {
+  connectorName?: string;
+  connectorId?: string;
+  environment?: string;
+  version?: string;
+  lastRegisterAckAt?: string;
+  tunnelOpenSinceAt?: string;
+}
+
 // SSE event shape (mirrored as JSON.stringify(payload)).
 export type InspectorEvent =
-  | { kind: "snapshot"; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; identity?: Identity; manifest?: ToolManifest; frames: FrameTap[]; webhooks?: WebhookSummary[] }
+  | { kind: "snapshot"; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; identity?: Identity; header?: HeaderInfo; manifest?: ToolManifest; frames: FrameTap[]; webhooks?: WebhookSummary[] }
   | { kind: "state"; state: DisplayState; reconnect?: ReconnectInfo }
   | { kind: "identity"; identity: Identity }
+  | { kind: "header"; header: HeaderInfo }
   | { kind: "frame"; tap: FrameTap }
   | { kind: "manifest"; manifest: ToolManifest }
   | { kind: "webhooks"; webhooks: WebhookSummary[] };
@@ -49,6 +75,7 @@ export interface InspectorState {
   state: DisplayState;
   reconnect?: ReconnectInfo;
   identity?: Identity;
+  header?: HeaderInfo;
   manifest?: ToolManifest;
   webhooks?: WebhookRegistry;
 }
@@ -118,6 +145,17 @@ export class Inspector {
     this.broadcast({ kind: "identity", identity });
   }
 
+  // Patch one or more header fields. Caller passes only the fields that
+  // changed; existing values are preserved. Triggers a `header` broadcast
+  // so the UI can update without a full snapshot.
+  setHeader(patch: HeaderInfo): void {
+    const merged: HeaderInfo = this.current.header
+      ? { ...this.current.header, ...patch }
+      : { ...patch };
+    this.current.header = merged;
+    this.broadcast({ kind: "header", header: merged });
+  }
+
   recordTap(tap: FrameTap): void {
     this.frames.push(tap);
     if (this.frames.length > RING_SIZE) {
@@ -133,6 +171,7 @@ export class Inspector {
       state: this.current.state,
       reconnect: this.current.reconnect,
       identity: this.current.identity,
+      header: this.current.header,
       manifest: this.current.manifest,
       frames: [...this.frames],
       webhooks: this.current.webhooks?.snapshot(),

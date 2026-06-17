@@ -8,11 +8,14 @@
 const elStatus = document.getElementById('status');
 const elController = document.getElementById('controller-url');
 const elIdentity = document.getElementById('identity');
+const elHdrName = document.getElementById('hdr-name');
+const elHdrId = document.getElementById('hdr-id');
+const elHdrEnv = document.getElementById('hdr-env');
+const elHdrVer = document.getElementById('hdr-ver');
+const elHdrAckAt = document.getElementById('hdr-ack-at');
+const elHdrOpenSince = document.getElementById('hdr-open-since');
 const elManifestEmpty = document.getElementById('manifest-empty');
 const elManifest = document.getElementById('manifest');
-const elMConnector = document.getElementById('m-connector');
-const elMEnv = document.getElementById('m-env');
-const elMVer = document.getElementById('m-ver');
 const elMServers = document.getElementById('m-servers');
 const elFrames = document.getElementById('frames');
 const elShowHb = document.getElementById('show-heartbeats');
@@ -215,9 +218,8 @@ function renderManifest(m) {
   }
   elManifest.hidden = false;
   elManifestEmpty.hidden = true;
-  elMConnector.textContent = m.connectorId;
-  elMEnv.textContent = m.environment;
-  elMVer.textContent = m.version;
+  // connectorId / environment / version moved to the page header (HeaderInfo).
+  // The manifest block is now purely about servers + their tools.
 
   elMServers.replaceChildren();
   for (const s of m.servers) {
@@ -647,10 +649,33 @@ function appendFrame(tap) {
   while (elFrames.children.length > 500) elFrames.lastChild?.remove();
 }
 
+// Operator-facing header info (connector name+id, last register-ack,
+// tunnel-open-since). Optional fields render as em-dash when absent so the
+// layout doesn't shift between unbound and bound states. Timestamps come
+// in as ISO strings; we prettify locally — keep millisecond resolution
+// off for readability.
+function setHeader(h) {
+  if (!h) return;
+  if (h.connectorName !== undefined) elHdrName.textContent = h.connectorName || '—';
+  if (h.connectorId !== undefined) elHdrId.textContent = h.connectorId || '—';
+  if (h.environment !== undefined) elHdrEnv.textContent = h.environment || '—';
+  if (h.version !== undefined) elHdrVer.textContent = h.version || '—';
+  if (h.lastRegisterAckAt !== undefined) elHdrAckAt.textContent = fmtIso(h.lastRegisterAckAt);
+  if (h.tunnelOpenSinceAt !== undefined) elHdrOpenSince.textContent = fmtIso(h.tunnelOpenSinceAt);
+}
+
+function fmtIso(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, 'Z');
+}
+
 function applySnapshot(s) {
   elController.textContent = s.controllerUrl;
   setStatus(s.state, s.reconnect);
   setIdentity(s.identity);
+  setHeader(s.header);
   renderManifest(s.manifest);
   renderWebhooks(s.webhooks);
   elFrames.replaceChildren();
@@ -713,6 +738,7 @@ function connectSse() {
       case 'snapshot': applySnapshot(ev); break;
       case 'state':    setStatus(ev.state, ev.reconnect); break;
       case 'identity': setIdentity(ev.identity); break;
+      case 'header':   setHeader(ev.header); break;
       case 'manifest': renderManifest(ev.manifest); break;
       case 'frame':    appendFrame(ev.tap); break;
       case 'webhooks': renderWebhooks(ev.webhooks); break;

@@ -192,6 +192,14 @@ async function main() {
         ? { kind: "bound", tokenLen: state.registrationToken.length }
         : { kind: "first-connect" }
     );
+    // Boot-time facts: yaml-driven name + environment, plus the connector
+    // build version. Never change during process lifetime. ID + timestamps
+    // stamp later (register-ack, tunnel-open).
+    inspector.setHeader({
+      connectorName: config.tunnel.name,
+      environment: config.tunnel.environment,
+      version,
+    });
     startInspector(inspectorPort, inspector);
   }
 
@@ -311,6 +319,7 @@ async function main() {
 
     tunnel = t;
     log.info({ url: tunnelDialUrl }, `tunnel connected`);
+    inspector?.setHeader({ tunnelOpenSinceAt: new Date().toISOString() });
 
     // Listen for register-ack to capture a freshly-minted registrationToken
     // on first connect. Mounted before sending register so we don't miss the
@@ -395,6 +404,13 @@ async function main() {
           log.info({ connectorId: frame.connectorId ?? "?" }, `register-ack ok — bound to existing record`);
         }
         inspector?.setIdentity({ kind: "bound", tokenLen: state.registrationToken?.length ?? 0 });
+        // Stamp the operator-facing header. connectorId only changes on a
+        // re-mint (rare); lastRegisterAckAt updates every successful ack so
+        // an operator can see "this binding was confirmed N seconds ago".
+        inspector?.setHeader({
+          ...(frame.connectorId ? { connectorId: frame.connectorId } : {}),
+          lastRegisterAckAt: new Date().toISOString(),
+        });
       }
     };
 
