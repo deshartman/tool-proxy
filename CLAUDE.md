@@ -140,12 +140,24 @@ Inspector UI: <http://localhost:9090/>. There's only one inspector per connector
 
 A Type 1 entry whose child crashes on boot (e.g. an MCP that requires API creds and gets empty values) fails-fast at the spawner readiness probe — by design. The fix is to either provide the creds in the entry's `dir/.env`, or comment the entry out of `connector.yaml`.
 
-There are **no tests**. Verification is interactive via the inspector UI:
+Primary verification is **interactive via the inspector UI**:
 - "MCP Server" panel shows the local MCP servers and their tools.
 - "Available Tools" panel lists each discovered tool with a "Ready" verdict.
 - "Webhooks" panel lists each MCP's allocated public URL with a copy button (only populated for MCPs that called `createWebhookEndpoint`).
 - "Frames" panel shows live WS state + every frame in/out (filterable; heartbeats hidden by default). Includes the four webhook frame types — `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`.
 - "Reconnect" button **re-reads the YAML** (`policy` changes), then redials. To pick up changes to `mcp_servers`, restart the script — those connections happen at boot.
+
+There is also a **vitest skeleton** for defensive regression tests. The suite is regression-driven: tests are added when manual scenarios surface real bugs, not for coverage. See [.claude/plans/TEST-SUITE.md](.claude/plans/TEST-SUITE.md) for the living catalog.
+
+```bash
+cd packages/connector
+npm test          # one-shot run; uses --root ../.. so it sees the root vitest.config.ts
+npm run test:watch # watch mode for the active test file
+```
+
+Tests live at `packages/connector/tests/**/*.test.ts` mirroring `src/` (peer-tests layout, not colocated — `tsconfig.json`'s `rootDir: "src"` would otherwise compile tests into `dist/` and ship them in the OCI image). Use explicit `import { describe, it, expect } from "vitest"` — globals are off. Shared fixtures land in `tests/helpers/` once the second test needs the same factory.
+
+When adding a test in response to a manual finding: append a row to the catalog table in `.claude/plans/TEST-SUITE.md` with the date, scenario, source file, test file, and status (`failing` → `passing` once the fix lands).
 
 ## Inspector UI notes
 

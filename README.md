@@ -158,6 +158,16 @@ Twilio-authored Node MCPs follow the Type 1 shape but live under `mcp/bundled/<n
 
 To pick up changes to `mcp_servers`, restart the script — those connections happen at boot. `policy` changes pick up via Reconnect.
 
+## Tests
+
+```bash
+cd packages/connector
+npm test            # one-shot vitest run
+npm run test:watch  # watch mode
+```
+
+Tests live at `packages/connector/tests/**/*.test.ts`. Regression-driven — see [`.claude/plans/TEST-SUITE.md`](.claude/plans/TEST-SUITE.md) for the living catalog and the rationale for peer-tests over colocation.
+
 ## CLI
 
 ```

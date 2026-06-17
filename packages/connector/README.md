@@ -111,6 +111,18 @@ await createMcpHttpServer({ name: "my-mcp", tools: [echo] });
 
 No `package.json`, no build step, no port to pick. The connector spawns `tsx server.ts` for you.
 
+## Tests
+
+Vitest skeleton for defensive regression tests. The suite is regression-driven: tests are added when manual scenarios surface real bugs. See [`.claude/plans/TEST-SUITE.md`](../../.claude/plans/TEST-SUITE.md).
+
+```bash
+cd packages/connector
+npm test           # one-shot run
+npm run test:watch # watch mode
+```
+
+Tests live at `packages/connector/tests/**/*.test.ts` mirroring `src/`. Use explicit `import { describe, it, expect } from "vitest"` — globals are off.
+
 ## CLI
 
 The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
