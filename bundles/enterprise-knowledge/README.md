@@ -115,3 +115,28 @@ Alternative: **Chroma** (file-based, zero external service). Set `EK_VECTOR_STOR
 Step 2 (this skeleton): `mcp`, `pydantic`. That's it.
 
 Step 4 adds: `llama-index-core`, `llama-index-vector-stores-postgres`, `llama-index-vector-stores-chroma`, `llama-index-embeddings-huggingface`, `llama-index-readers-web`, `psycopg`, `chromadb`. Held under the `[llamaindex]` extra in [pyproject.toml](pyproject.toml) for now so the stub stays installable without LlamaIndex weight.
+
+## GDrive OAuth user setup
+
+The bundle reads pre-minted OAuth tokens; it deliberately does NOT run the browser flow itself (interactive auth inside a Type 3 stdio child would deadlock the MCP wire). One-time mint flow:
+
+1. **Mint an OAuth client** in [GCP Console](https://console.cloud.google.com/apis/credentials) → "Create Credentials" → "OAuth client ID" → Application type: **Desktop app**. Download the JSON.
+2. **Run the helper** on a machine with a browser:
+
+   ```bash
+   cd bundles/enterprise-knowledge
+   uv pip install -e .[gdrive]
+   python scripts/mint-gdrive-token.py \
+       --client-secrets ~/Downloads/oauth-client.json \
+       --output ~/.config/mcp-connector/gdrive-token.json
+   ```
+
+   A browser tab opens for consent; the helper writes `token.json` (mode 600) to `--output` and exits.
+3. **Point the bundle at the token** in this folder's `.env`:
+
+   ```
+   EK_GDRIVE_AUTH=oauth_user
+   EK_GDRIVE_TOKEN_PATH=/Users/you/.config/mcp-connector/gdrive-token.json
+   ```
+
+The token's refresh-token keeps it alive across normal expirations. If it stops working (revoked, password changed, etc.), re-run the helper. For headless deployments, prefer `EK_GDRIVE_AUTH=service_account` instead — share the Drive folder with the service account's email; no browser ever required.
