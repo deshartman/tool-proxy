@@ -51,3 +51,4 @@ mock/customers/data.ts
 # the registrationToken handed back by the controller). Customer never edits
 # directly; clearing it forces a fresh mint on next start.
 **/.connector-state.json
+graphify-out/*
