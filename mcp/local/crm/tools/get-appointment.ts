@@ -20,7 +20,7 @@ export const getAppointment: Tool = {
         inputSchema: {
           phone: z
             .string()
-            .describe("Customer phone number, E.164 format (e.g. +61401277115)."),
+            .describe("Customer phone number, E.164 format (e.g. +15551239999)."),
         },
       },
       async ({ phone }) => {

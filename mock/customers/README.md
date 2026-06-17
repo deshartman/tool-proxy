@@ -30,7 +30,7 @@ The [orders MCP](../../mcp/local/orders/) reads from this service via
 
 | Phone | Name | Orders |
 |---|---|---|
-| +61401277115 | Des Hartman | `ord_des_1` (delivered, 12d), `ord_des_2` (shipped, 3d), `ord_des_3` (pending, 1d) |
+| +15551239999 | Dana Demo | `ord_dana_1` (delivered, 12d), `ord_dana_2` (shipped, 3d), `ord_dana_3` (pending, 1d) |
 | +14155550101 | Alice Anderson | `ord_42` (delivered, 16d) |
 | +14155550102 | Bob Brown | `ord_77` (delivered, 47d — fails 30-day refund window) |
 | +14155550103 | Carol Chen | `ord_91` (pending, 8d) |

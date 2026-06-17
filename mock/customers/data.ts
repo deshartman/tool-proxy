@@ -8,10 +8,11 @@
 //      orderId / age / status / amount so the procedure's three branches
 //      (eligible / >30d / not-delivered) still fire as before.
 //
-//   2. Des Hartman (+61401277115) — the calling-to-check-on-orders demo
+//   2. Dana Demo (+15551239999) — the calling-to-check-on-orders demo
 //      customer, with three interactions chosen to give the LLM something
 //      to talk about: one refund-eligible delivered order, one shipped,
-//      one pending.
+//      one pending. Number is in the 555 reserved range so it can never
+//      collide with a real subscriber anywhere.
 
 export interface Interaction {
   orderId: string;
@@ -37,12 +38,12 @@ const daysAgo = (n: number): string => new Date(Date.now() - n * DAY_MS).toISOSt
 
 const CUSTOMERS: Customer[] = [
   {
-    name: "Des",
-    surname: "Hartman",
-    phone: "+61401277115",
+    name: "Dana",
+    surname: "Demo",
+    phone: "+15551239999",
     interactions: [
       {
-        orderId: "ord_des_1",
+        orderId: "ord_dana_1",
         date: daysAgo(12),
         reason: "online purchase",
         resolution: "delivered to address",
@@ -52,7 +53,7 @@ const CUSTOMERS: Customer[] = [
         currency: "USD",
       },
       {
-        orderId: "ord_des_2",
+        orderId: "ord_dana_2",
         date: daysAgo(3),
         reason: "online purchase",
         resolution: "in transit",
@@ -62,7 +63,7 @@ const CUSTOMERS: Customer[] = [
         currency: "USD",
       },
       {
-        orderId: "ord_des_3",
+        orderId: "ord_dana_3",
         date: daysAgo(1),
         reason: "online purchase",
         resolution: "awaiting fulfillment",

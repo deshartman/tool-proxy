@@ -48,7 +48,7 @@ Seeded in [mock/customers/data.ts](../../../mock/customers/data.ts):
 
 | `customer phone` | Name | Orders |
 |---|---|---|
-| `+61401277115` | Des Hartman | 3 (delivered, shipped, pending) |
+| `+15551239999` | Dana Demo | 3 (delivered, shipped, pending) |
 | `+14155550101` | Alice Anderson | `ord_42` — delivered, ~16d, refund-eligible |
 | `+14155550102` | Bob Brown | `ord_77` — delivered, ~47d, fails 30-day window |
 | `+14155550103` | Carol Chen | `ord_91` — pending, fails status gate |
@@ -62,7 +62,7 @@ Seeded in [mock/customers/calendar.ts](../../../mock/customers/calendar.ts). Tec
 
 | `phone`           | Pre-booked slot              |
 |---|---|
-| `+61401277115`    | ~14 working days out, 10:00 UTC (Des Hartman — focal customer for the reschedule demo) |
+| `+15551239999`    | ~14 working days out, 10:00 UTC (Dana Demo — focal customer for the reschedule demo) |
 | `+14155550101`    | ~2 working days out, 14:00 UTC (Alice Anderson) |
 | `+14155550102`    | ~7 working days out, 11:00 UTC (Bob Brown) |
 

@@ -85,13 +85,13 @@ function makeAppointment(
   };
 }
 
-// Seed: Des is the focal customer (his is the appointment about to be
+// Seed: Dana is the focal customer (their appointment is about to be
 // rescheduled). Alice and Bob also have upcoming bookings so the calendar
 // has realistic congestion.
 APPOINTMENTS.push(
-  makeAppointment("+61401277115", "Des Hartman",   workingDayAtUTC(14, 10)),
-  makeAppointment("+14155550101", "Alice Anderson", workingDayAtUTC(2, 14)),
-  makeAppointment("+14155550102", "Bob Brown",      workingDayAtUTC(7, 11)),
+  makeAppointment("+15551239999", "Dana Demo",       workingDayAtUTC(14, 10)),
+  makeAppointment("+14155550101", "Alice Anderson",  workingDayAtUTC(2, 14)),
+  makeAppointment("+14155550102", "Bob Brown",       workingDayAtUTC(7, 11)),
 );
 
 export function findAppointmentByPhone(phone: string): Appointment | undefined {
