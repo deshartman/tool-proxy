@@ -14,7 +14,9 @@
     }
   },
   "scripts": {
-    "build": "tsc -b && node scripts/postbuild.mjs"
+    "build": "tsc -b && node scripts/postbuild.mjs",
+    "test": "vitest run --root ../.. --passWithNoTests",
+    "test:watch": "vitest --root ../.."
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
