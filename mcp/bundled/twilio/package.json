@@ -6,6 +6,6 @@
   "description": "Twilio-authored Type 1 MCP shipped in the connector image. Wraps a few Twilio APIs (send_sms, lookup_phone_number, list_recent). Carries its own twilio SDK so it does not leak into the connector's hoisted node_modules.",
   "dependencies": {
     "@sendgrid/client": "^8.1.4",
-    "twilio": "^5.3.0"
+    "twilio": "^6.0.2"
   }
 }
