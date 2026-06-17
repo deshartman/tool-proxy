@@ -378,27 +378,44 @@ function countTools(m: ToolManifest): number {
 
 function sameMcpServers(a: McpServerSpec[], b: McpServerSpec[]): boolean {
   if (a.length !== b.length) return false;
-  // Compare every field that affects how we'd spawn or connect to the entry.
-  // The reconnect path uses this to decide whether YAML changes are safe to
-  // apply live; anything beyond `policy` requires a process restart.
-  return a.every((s, i) => {
-    const t = b[i];
-    if (s.name !== t.name || s.transport !== t.transport) return false;
-    if (s.transport === "http" && t.transport === "http") {
-      if (s.endpoint !== t.endpoint) return false;
-    }
-    if (s.transport === "stdio" && t.transport === "stdio") {
-      if (s.command.length !== t.command.length) return false;
-      if (s.command.some((c, j) => c !== t.command[j])) return false;
-      // `bundled` carries the user-facing Type 3 identifier even after we've
-      // resolved it to a synthetic stdio spec. Compared so an edit from
-      // `bundled: a` to `bundled: b` is detected even if both happen to
-      // resolve to identical commands (or both resolve via dev override).
-      if (s.bundled !== t.bundled) return false;
-    }
-    if (s.dir !== t.dir) return false;
-    return sameStringMap(s.env, t.env);
-  });
+  return a.every((s, i) => sameSpec(s, b[i]));
+}
+
+// Compare every field that affects how we'd spawn or connect to the entry.
+// The reconnect path uses this to decide whether YAML changes are safe to
+// apply live; anything beyond `policy` requires a process restart.
+function sameSpec(s: McpServerSpec, t: McpServerSpec): boolean {
+  if (s.name !== t.name || s.transport !== t.transport) return false;
+  if (s.transport === "http" && t.transport === "http" && !sameHttpEndpoint(s, t)) return false;
+  if (s.transport === "stdio" && t.transport === "stdio" && !sameStdioInvocation(s, t)) return false;
+  if (s.dir !== t.dir) return false;
+  return sameStringMap(s.env, t.env);
+}
+
+function sameHttpEndpoint(
+  s: Extract<McpServerSpec, { transport: "http" }>,
+  t: Extract<McpServerSpec, { transport: "http" }>,
+): boolean {
+  // Skip endpoint comparison for Type 1 entries (yaml has `dir` and no
+  // endpoint; the spawner mutates `endpoint` in at boot to point at the
+  // child's auto-assigned localhost port). The freshly-loaded `t` has no
+  // endpoint, the live `s` has http://127.0.0.1:71xx/mcp — comparing them
+  // produces a false-positive "yaml changed" warning on every reconnect.
+  const isType1 = !!t.dir && !t.endpoint;
+  return isType1 || s.endpoint === t.endpoint;
+}
+
+function sameStdioInvocation(
+  s: Extract<McpServerSpec, { transport: "stdio" }>,
+  t: Extract<McpServerSpec, { transport: "stdio" }>,
+): boolean {
+  if (s.command.length !== t.command.length) return false;
+  if (s.command.some((c, j) => c !== t.command[j])) return false;
+  // `bundled` carries the user-facing Type 3 identifier even after we've
+  // resolved it to a synthetic stdio spec. Compared so an edit from
+  // `bundled: a` to `bundled: b` is detected even if both happen to
+  // resolve to identical commands (or both resolve via dev override).
+  return s.bundled === t.bundled;
 }
 
 function sameStringMap(a?: Record<string, string>, b?: Record<string, string>): boolean {
