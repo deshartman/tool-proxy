@@ -13,7 +13,18 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; }
-body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 14px; background: var(--bg); color: var(--text); }
+html, body { height: 100%; }
+body {
+  /* Flex column so <main> gets exactly the leftover height after <header>,
+     no matter how tall the header grows. Avoids hardcoded calc(100vh - N). */
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+}
 header {
   display: flex;
   align-items: flex-start;
@@ -43,10 +54,13 @@ header .meta .muted + code { margin-right: 0.5rem; }
 
 main {
   /* Left column width is set by JS on #main as --left-col (defaults below).
-     The resizer is a thin draggable strip between the two panes. */
+     The resizer is a thin draggable strip between the two panes. Height
+     comes from the parent flex column (body) so header changes don't need
+     a magic-number subtraction here. */
   display: grid;
   grid-template-columns: var(--left-col, 460px) 6px 1fr;
-  height: calc(100vh - 65px);
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
