@@ -1,6 +1,5 @@
 // Auto-reconnect controller. Owns reconnectAttempt, reconnectTimer,
-// lastDelay, registrationRejected — all the fiddly state that used to be
-// scattered across module-level lets and the main() closure.
+// lastDelay, registrationRejected.
 //
 // Two events come in: a tunnel close / failed dial (`schedule()` — fires a
 // timer that calls back to the supplied `onFire` after the next backoff),

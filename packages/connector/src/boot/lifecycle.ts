@@ -1,5 +1,4 @@
-// Top-level boot orchestrator. Replaces the 644-line main() that used to
-// live in index.ts. Steps:
+// Top-level boot orchestrator. Steps:
 //   1. Load yaml + state, resolve auth posture, start the inspector.
 //   2. Spawn Type 1 children, connect to all local MCP servers in parallel.
 //   3. Build the initial manifest, wire toolDispatch into the inspector.
@@ -9,11 +8,10 @@
 // Mutable state that has to be shared across reconnects (the live `tunnel`
 // reference, `manifest`, the persisted `state` object) lives here as locals
 // and is closed over by the small set of functions that need it. The
-// auto-reconnect counters / timer / lastDelay used to be sprinkled across
-// module-scope and main()-scope; they're now owned by ReconnectController.
-// The inbound-frame dispatch table moved out to tunnel/frame-router.ts so
-// the register-ack error-code branches are a sub-table rather than nested
-// ifs in a closure.
+// auto-reconnect counters / timer / lastDelay are owned by
+// ReconnectController; the inbound-frame dispatch table lives in
+// tunnel/frame-router.ts so the register-ack error-code branches are a
+// sub-table rather than nested ifs in a closure.
 
 import { loadConfig, type McpServerSpec } from "../config.js";
 import { connectAll } from "../servers/connect.js";
@@ -104,8 +102,8 @@ export async function boot(): Promise<void> {
   let shuttingDown = false;
 
   // Auto-reconnect controller. Owns reconnectAttempt / reconnectTimer /
-  // lastDelay / registrationRejected — all the state the old main() carried
-  // as a tangle of `let`s. The fire callback closes over `reconnect()` below.
+  // lastDelay / registrationRejected. The fire callback closes over
+  // `reconnect()` below.
   const reconnectCtl = new ReconnectController({
     getPolicy: () => config.policy.reconnect,
     onFire: () => { void reconnect(`auto attempt ${reconnectCtl.attemptCount()}`); },

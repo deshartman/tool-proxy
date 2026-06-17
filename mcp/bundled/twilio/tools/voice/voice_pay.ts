@@ -77,7 +77,7 @@ export function voicePay(): Tool {
           const pay = r.pay(attrs);
 
           for (const p of prompts ?? []) {
-            const prompt = pay.prompt({ for: p.for } as never);
+            const prompt = pay.prompt({ for: p.for });
             if (p.text) prompt.say(p.text);
           }
           for (const param of parameters ?? []) {

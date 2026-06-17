@@ -4,12 +4,9 @@ import type { ToolManifest } from "./tunnel/frames.js";
 import type { TunnelClient } from "./tunnel/client.js";
 import { renderArgsForLog } from "./policy/redact.js";
 
-// JSON-RPC 2.0 standard error codes.
-const E_PARSE = -32700;
-const E_INVALID_REQUEST = -32600;
+// JSON-RPC 2.0 standard error codes (we only emit the two we actually use).
 const E_METHOD_NOT_FOUND = -32601;
 const E_INVALID_PARAMS = -32602;
-const E_INTERNAL = -32603;
 // Server-defined error space (-32000 to -32099); we use -32010 for everything
 // the customer-side code rejects, with the `kind` field discriminating cause.
 const E_TOOL_REJECTED = -32010;
@@ -34,10 +31,10 @@ export class Dispatcher {
   constructor(private readonly deps: DispatcherDeps) {}
 
   attach(): void {
-    // Compose with any pre-existing onframe (e.g. main()'s register-ack
-    // listener that persists the registrationToken). The dispatcher only
-    // cares about `rpc` frames; everything else falls through to the
-    // previously-installed handler.
+    // Compose with any pre-existing onframe (e.g. the boot-installed
+    // frame router that handles register-ack and webhook frames). The
+    // dispatcher only cares about `rpc` frames; everything else falls
+    // through to the previously-installed handler.
     const previous = this.deps.tunnel.onframe;
     this.deps.tunnel.onframe = (frame) => {
       if (frame.type === "rpc") {
@@ -157,12 +154,3 @@ function parseRequest(payload: unknown): JsonRpcRequest | null {
   return p as JsonRpcRequest;
 }
 
-// Re-export error codes so other modules / tests can reference them by name.
-export const ERROR_CODES = {
-  PARSE: E_PARSE,
-  INVALID_REQUEST: E_INVALID_REQUEST,
-  METHOD_NOT_FOUND: E_METHOD_NOT_FOUND,
-  INVALID_PARAMS: E_INVALID_PARAMS,
-  INTERNAL: E_INTERNAL,
-  TOOL_REJECTED: E_TOOL_REJECTED,
-};

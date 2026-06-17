@@ -1,7 +1,6 @@
-// Inbound frame dispatch for the tunnel. Used to live as an inline closure
-// inside main()'s connectTunnel — pulled out into a pure(ish) factory so
-// the routing logic is independently exercisable and the register-ack
-// error-code branches can be a sub-table instead of nested ifs.
+// Inbound frame dispatch for the tunnel. A pure(ish) factory so the routing
+// logic is independently exercisable and the register-ack error-code
+// branches sit in a sub-table rather than nested ifs.
 //
 // The factory takes the live boot context as an opts bag and returns a
 // `(frame: InboundTunnelFrame) => void` ready to assign to TunnelClient.onframe.

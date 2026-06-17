@@ -12,13 +12,14 @@ interface TokenResponse {
 //
 // On each call to accessToken() returns a cached JWT if it has more than
 // 60s of life left, otherwise mints a fresh one against tokenUrl. The
-// provider is constructed once in main() and reused across reconnects so
+// provider is constructed once during boot and reused across reconnects so
 // the cached JWT survives WS-level redials — only a controller restart
 // long enough to outlive expires_in forces a fresh mint.
 //
 // Mint failures are thrown — the caller (TunnelClient.connect) lets that
-// surface to index.ts's existing connect-failure path which schedules an
-// auto-reconnect with backoff. We never log client_secret or the JWT.
+// surface to the boot lifecycle's existing connect-failure path which
+// schedules an auto-reconnect with backoff. We never log client_secret or
+// the JWT.
 export class OAuthClientCredentialsProvider {
   private cached?: { jwt: string; expiresAt: number };
 
