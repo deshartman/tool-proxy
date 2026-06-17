@@ -105,16 +105,34 @@ def load_sources_yaml(path: Path | None = None) -> list[_SourceEntry]:
 
 
 def bootstrap_sources(path: Path | None = None) -> BootstrapResult:
-    """Auto-register every entry in sources.yaml.
+    """Validate sources.yaml and register every entry.
 
-    Returns a BootstrapResult so the caller can log a summary and so a
-    future operator-facing tool (e.g. `bootstrap_status`) can inspect
-    what happened on the last boot.
+    This is the single-call shape — load + register together. Used by
+    direct callers and tests. The two-step shape (load_sources_yaml →
+    register_sources) is what __main__.py uses to do validation
+    eagerly and registration in a background thread.
 
-    Per-source exceptions are caught here. The whole-file errors (missing
-    file, malformed YAML) are not — they raise from load_sources_yaml.
+    Per-source exceptions are caught in register_sources. Whole-file
+    errors (missing file, malformed YAML) raise from load_sources_yaml.
     """
     entries = load_sources_yaml(path)
+    return register_sources(entries)
+
+
+def register_sources(entries: list["_SourceEntry"]) -> BootstrapResult:
+    """Register each entry via storage.register_source. Idempotent on URL.
+
+    Per-source exceptions are caught here, persisted to ek_sources as
+    status='failed' rows by storage, and reported in BootstrapResult.failed.
+    The caller decides how to surface the result (log summary, push to a
+    future bootstrap_status tool, etc.).
+
+    Safe to call from a background thread: storage.register_source holds
+    storage._lock, so concurrent tool calls from the controller serialize
+    through the same lock. The function blocks per-source on the
+    underlying reader (Drive API calls, file IO) — caller should expect
+    it to take seconds-to-tens-of-seconds for a real-world source list.
+    """
     if not entries:
         logger.info("sources.yaml empty or unset — skipping auto-register")
         return BootstrapResult(indexed=[], newly_indexed=[], failed=[])
@@ -156,4 +174,4 @@ def _resolved_path_from_env() -> Path | None:
     return Path(raw).expanduser()
 
 
-__all__ = ["bootstrap_sources", "load_sources_yaml", "BootstrapResult"]
+__all__ = ["bootstrap_sources", "load_sources_yaml", "register_sources", "BootstrapResult"]

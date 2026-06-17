@@ -36,6 +36,12 @@ REGISTER_SUFFIX = "_register"
 
 server: Server = Server(name="enterprise-knowledge", version=__version__)
 
+# Module-level reference to the background bootstrap task, so the asyncio
+# event loop doesn't garbage-collect it mid-run. Set in _run() once we
+# know there are entries to register; stays alive for the lifetime of the
+# bundle process.
+_bootstrap_task: asyncio.Task[Any] | None = None
+
 
 def _register_tool_for(product: "products.Product") -> Tool:
     return Tool(
@@ -146,11 +152,19 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
 
 async def _run() -> None:
-    # Boot-time auto-register. Per-source failures are persisted; whole-file
-    # errors (malformed YAML, EK_SOURCES_YAML pointing nowhere) raise here
-    # and the bundle fails boot — the spawner readiness probe trips and
-    # the customer sees the error in connector logs.
-    source_loader.bootstrap_sources()
+    # Validate sources.yaml synchronously — a malformed file or a missing
+    # EK_SOURCES_YAML target should fail boot fast, before stdio_server()
+    # opens, so the connector spawner readiness probe surfaces the error.
+    # Per-source registration runs in a background thread *after* stdio
+    # is open, so a slow source (Drive 403 retries, network hiccup) can't
+    # block the connector's tunnel dial. register_source holds storage._lock,
+    # so any tool call that arrives mid-bootstrap serializes safely.
+    source_entries = source_loader.load_sources_yaml()
+    if source_entries:
+        global _bootstrap_task
+        _bootstrap_task = asyncio.create_task(
+            asyncio.to_thread(source_loader.register_sources, source_entries),
+        )
 
     async with stdio_server() as (read_stream, write_stream):
         await server.run(

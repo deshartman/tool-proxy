@@ -87,9 +87,24 @@ def load(url: str, _kind: str | None = None) -> tuple[list[Document], str]:
     stored kind back in so the right reader runs even after URL drift)
     but this loader doesn't condition on it — Drive folder URLs are
     self-describing.
+
+    Pre-filters out shortcuts, subfolders, and non-indexable types
+    before handing to GoogleDriveReader. Without this filter the reader
+    issues files.get_media() against shortcuts — Drive returns 403
+    "Only files with binary content can be downloaded" — and the whole
+    folder ingest crashes. Real Docs/PDFs/.docx alongside shortcuts
+    must still index; the shortcut just shouldn't take down the run.
     """
     folder_id = _extract_folder_id(url)
-    reader = _build_reader(folder_id)
+    file_ids = _list_indexable_file_ids(folder_id)
+    if not file_ids:
+        logger.warning(
+            "no indexable files in gdrive folder %s — only shortcuts, "
+            "subfolders, or unsupported types found", folder_id,
+        )
+        return [], KIND
+
+    reader = _build_reader(file_ids=file_ids)
     documents = reader.load_data()
     _stabilize_doc_ids(documents)
     return documents, KIND
@@ -105,8 +120,16 @@ def _extract_folder_id(url: str) -> str:
     return match.group(1)
 
 
-def _build_reader(folder_id: str) -> Any:
-    """Construct GoogleDriveReader with the right auth payload for the env."""
+def _build_reader(*, folder_id: str | None = None, file_ids: list[str] | None = None) -> Any:
+    """Construct GoogleDriveReader with the right auth payload for the env.
+
+    Caller passes either folder_id (legacy/no-filter path) or file_ids
+    (post-filter path used by load()). They're mutually exclusive in the
+    GoogleDriveReader API.
+    """
+    if (folder_id is None) == (file_ids is None):
+        raise ValueError("exactly one of folder_id, file_ids must be provided")
+
     try:
         from llama_index.readers.google import GoogleDriveReader
     except ImportError as exc:
@@ -125,21 +148,105 @@ def _build_reader(folder_id: str) -> Any:
 
     _refuse_mixed_mode_env(auth_mode)
 
+    common: dict[str, Any] = {"is_cloud": True}
+    if folder_id is not None:
+        common["folder_id"] = folder_id
+    else:
+        common["file_ids"] = file_ids
+
     if auth_mode == "service_account":
-        key_dict = _load_service_account_key()
         return GoogleDriveReader(
-            folder_id=folder_id,
-            service_account_key=key_dict,
-            is_cloud=True,  # don't write a token.json; service account doesn't need one
+            service_account_key=_load_service_account_key(),
+            **common,
         )
 
     # oauth_user
-    user_info = _load_authorized_user_info()
     return GoogleDriveReader(
-        folder_id=folder_id,
-        authorized_user_info=user_info,
-        is_cloud=True,  # don't refresh-and-rewrite token.json from inside the bundle
+        authorized_user_info=_load_authorized_user_info(),
+        **common,
     )
+
+
+# Mime types we won't try to download. Shortcuts have no binary content
+# (Drive returns 403 "Only files with binary content can be downloaded"),
+# folders aren't files, and the *.shortcut sentinel covers Drive shortcuts
+# generally. Add to this list if a customer reports a new "metadata-only"
+# type that's leaking through. The reader's own _mimetypes map covers the
+# Google Workspace types it can export (.docx/.xlsx/.pptx); anything else
+# is treated as a downloadable binary by Drive's get_media endpoint.
+_SKIP_MIMETYPES: frozenset[str] = frozenset({
+    "application/vnd.google-apps.shortcut",
+    "application/vnd.google-apps.folder",
+})
+
+
+def _list_indexable_file_ids(folder_id: str) -> list[str]:
+    """List the folder via the Drive API directly, return file_ids that the
+    reader can actually download.
+
+    We do this listing ourselves (instead of letting GoogleDriveReader
+    discover the folder contents) so we can drop shortcuts and other
+    non-downloadable types before they trigger 403s during ingest. The
+    SA path the reader uses is the same as what we'd authenticate with,
+    so listing-then-loading is one extra round-trip — well worth it
+    given that one shortcut crashes the whole folder otherwise.
+
+    Subfolders are skipped today (the v1 reader doesn't recurse). When
+    recursion lands, this function should fan out into them.
+    """
+    try:
+        from googleapiclient.discovery import build
+        from google.oauth2 import service_account as sa_module
+        from google.oauth2.credentials import Credentials
+    except ImportError as exc:
+        raise ImportError(
+            "Google Drive reader requires the [gdrive] extra. Install "
+            "with `uv pip install -e .[gdrive]` (dev) or rebuild the "
+            "bundle's image with the extra enabled."
+        ) from exc
+
+    auth_mode = os.environ.get(ENV_AUTH, DEFAULT_AUTH).strip().lower()
+    if auth_mode == "service_account":
+        creds = sa_module.Credentials.from_service_account_info(
+            _load_service_account_key(),
+            scopes=["https://www.googleapis.com/auth/drive.readonly"],
+        )
+    else:
+        creds = Credentials.from_authorized_user_info(
+            _load_authorized_user_info(),
+            scopes=["https://www.googleapis.com/auth/drive.readonly"],
+        )
+
+    svc = build("drive", "v3", credentials=creds)
+
+    indexable: list[str] = []
+    skipped: dict[str, int] = {}
+    page_token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "q": f"'{folder_id}' in parents and trashed=false",
+            "fields": "nextPageToken,files(id,name,mimeType)",
+            "supportsAllDrives": True,
+            "includeItemsFromAllDrives": True,
+            "pageSize": 1000,
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+        res = svc.files().list(**kwargs).execute()
+        for f in res.get("files", []):
+            mt = f.get("mimeType", "")
+            if mt in _SKIP_MIMETYPES:
+                skipped[mt] = skipped.get(mt, 0) + 1
+                continue
+            indexable.append(f["id"])
+        page_token = res.get("nextPageToken")
+        if not page_token:
+            break
+
+    if skipped:
+        details = ", ".join(f"{n} {mt.rsplit('.', 1)[-1]}s" for mt, n in skipped.items())
+        logger.info("gdrive folder %s: skipped %s", folder_id, details)
+    return indexable
 
 
 def _refuse_mixed_mode_env(auth_mode: str) -> None:
