@@ -375,11 +375,37 @@ async function runOnce({ simple, readers, serverName, tool, runBtn, status, resu
   }
 }
 
+// Walk a tool-call result and replace any string that's actually a
+// JSON-encoded object/array with the parsed value, so the renderer
+// shows nested structure instead of escape-noise. Primitives are left
+// as-is — unwrapping "42" → 42 or "true" → true would be visually
+// misleading. Recurses into parsed values to handle JSON-in-JSON.
+function unwrapEmbeddedJsonString(s) {
+  const trimmed = s.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return s;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object') return unwrapEmbeddedJson(parsed);
+  } catch { /* not JSON — fall through */ }
+  return s;
+}
+
+function unwrapEmbeddedJson(value) {
+  if (typeof value === 'string') return unwrapEmbeddedJsonString(value);
+  if (Array.isArray(value)) return value.map(unwrapEmbeddedJson);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = unwrapEmbeddedJson(v);
+    return out;
+  }
+  return value;
+}
+
 function renderRunResult(body, status, result) {
   if (body.ok) {
     status.textContent = 'ok';
     status.className = 'run-status ok';
-    result.textContent = JSON.stringify(body.result, null, 2);
+    result.textContent = JSON.stringify(unwrapEmbeddedJson(body.result), null, 2);
   } else {
     status.textContent = 'error';
     status.className = 'run-status err';
