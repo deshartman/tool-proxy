@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.js";
-import { connectServer } from "./servers/index.js";
+import { connectServer } from "./servers/connect.js";
 
 // `mcp-connector discover` — non-interactive: connects to every MCP server in
 // the YAML, calls tools/list on each, prints the result, then exits. Useful

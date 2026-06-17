@@ -1,8 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { McpServerSpec } from "../config.js";
-import type { McpServerConnection } from "./index.js";
-import { makeMcpConnection } from "./http.js";
+import { makeConnection, type McpServerConnection } from "./index.js";
 
 export async function connectStdio(
   spec: Extract<McpServerSpec, { transport: "stdio" }>
@@ -19,5 +18,5 @@ export async function connectStdio(
   const transport = new StdioClientTransport({ command, args, env });
   const client = new Client({ name: "mcp-shim-connector", version: "0.1.0" }, { capabilities: {} });
   await client.connect(transport);
-  return makeMcpConnection(spec.name, "stdio", client);
+  return makeConnection(spec.name, "stdio", client);
 }

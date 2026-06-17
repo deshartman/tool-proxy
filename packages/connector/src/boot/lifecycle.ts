@@ -16,7 +16,8 @@
 // ifs in a closure.
 
 import { loadConfig, type McpServerSpec } from "../config.js";
-import { connectAll, type McpServerConnection } from "../servers/index.js";
+import { connectAll } from "../servers/connect.js";
+import type { McpServerConnection } from "../servers/index.js";
 import { buildManifest } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
 import { TunnelClient } from "../tunnel/client.js";
