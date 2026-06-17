@@ -238,10 +238,17 @@ function buildServerCard(s) {
   card.className = 'server-card';
   const count = s.tools.length;
   const countLabel = count === 1 ? '1 tool' : `${count} tools`;
+  const collapsed = isServerCollapsed(s.name);
+  if (collapsed) card.classList.add('collapsed');
   card.innerHTML = `
-    <div class="server-label">MCP Server</div>
-    <div class="server-name">${escapeHtml(s.name)}</div>
-    <div class="server-meta">${escapeHtml(s.transport)} · ${countLabel}</div>
+    <button type="button" class="server-header" aria-expanded="${!collapsed}">
+      <span class="server-toggle" aria-hidden="true">▾</span>
+      <span class="server-header-text">
+        <span class="server-label">MCP Server</span>
+        <span class="server-name">${escapeHtml(s.name)}</span>
+        <span class="server-meta">${escapeHtml(s.transport)} · ${countLabel}</span>
+      </span>
+    </button>
     <div class="tools-section">
       <div class="tools-section-label">Available Tools</div>
     </div>
@@ -250,7 +257,30 @@ function buildServerCard(s) {
   for (const t of s.tools) {
     toolsSection.appendChild(buildToolRow(s.name, t));
   }
+  card.querySelector('.server-header').addEventListener('click', () => {
+    const nowCollapsed = !card.classList.contains('collapsed');
+    card.classList.toggle('collapsed', nowCollapsed);
+    card.querySelector('.server-header').setAttribute('aria-expanded', String(!nowCollapsed));
+    setServerCollapsed(s.name, nowCollapsed);
+  });
   return card;
+}
+
+// Server cards default to collapsed — most operators want a high-level
+// list of MCPs first, drilling into a specific server's tools is the
+// less-common second step. localStorage stores the EXPANDED state (so
+// fresh laptops start fully collapsed without preloading a deny-list of
+// every server name).
+const EXPAND_KEY_PREFIX = 'inspector.serverExpanded.';
+function isServerCollapsed(name) {
+  try { return localStorage.getItem(EXPAND_KEY_PREFIX + name) !== '1'; }
+  catch { return true; }
+}
+function setServerCollapsed(name, collapsed) {
+  try {
+    if (collapsed) localStorage.removeItem(EXPAND_KEY_PREFIX + name);
+    else localStorage.setItem(EXPAND_KEY_PREFIX + name, '1');
+  } catch { /* private mode etc. */ }
 }
 
 function buildToolRow(serverName, t) {
@@ -265,6 +295,176 @@ function buildToolRow(serverName, t) {
     setSelection({ kind: 'tool', key: row.dataset.key, tool: t, serverName });
   });
   return row;
+}
+
+// Schema-driven invocation form. Reads inputSchema.properties to render a
+// labeled input per top-level field; falls back to a JSON textarea for
+// shapes the simple renderer can't handle (nested objects, arrays, etc.).
+// POSTs to /tool/call and renders the result as pretty-printed JSON.
+function buildToolRunner(serverName, tool) {
+  const wrap = document.createElement('div');
+  wrap.className = 'tool-runner';
+
+  const schema = tool.inputSchema || { type: 'object', properties: {}, required: [] };
+  const props = (schema.type === 'object' && schema.properties) ? schema.properties : null;
+  const required = new Set(schema.required ?? []);
+  const simple = props && Object.values(props).every(canRenderInline);
+
+  wrap.innerHTML = `
+    <div class="tool-runner-head">Run</div>
+    <div class="tool-runner-fields"></div>
+    <div class="tool-runner-actions">
+      <button type="button" class="run-btn">Run</button>
+      <span class="run-status"></span>
+    </div>
+    <pre class="run-result" hidden></pre>
+  `;
+  const fields = wrap.querySelector('.tool-runner-fields');
+  const status = wrap.querySelector('.run-status');
+  const result = wrap.querySelector('.run-result');
+  const runBtn = wrap.querySelector('.run-btn');
+
+  // Track each field's read-current-value function so we can assemble args
+  // on submit without re-querying the DOM by name.
+  const readers = [];
+
+  if (simple) {
+    for (const [name, spec] of Object.entries(props)) {
+      const isReq = required.has(name);
+      fields.appendChild(buildField(name, spec, isReq, readers));
+    }
+  } else {
+    appendJsonFallback(fields, required, readers);
+  }
+
+  runBtn.addEventListener('click', () => {
+    void runOnce({ simple, readers, serverName, tool, runBtn, status, result });
+  });
+
+  return wrap;
+}
+
+async function runOnce({ simple, readers, serverName, tool, runBtn, status, result }) {
+  let args;
+  try {
+    args = simple ? assembleArgsFromInline(readers) : readers[0]();
+  } catch (e) {
+    status.textContent = String(e.message || e);
+    status.className = 'run-status err';
+    return;
+  }
+  status.textContent = 'running...';
+  status.className = 'run-status pending';
+  runBtn.disabled = true;
+  try {
+    const resp = await fetch('/tool/call', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ server: serverName, tool: tool.name, args }),
+    });
+    const body = await resp.json();
+    renderRunResult(body, status, result);
+    result.hidden = false;
+  } catch (e) {
+    status.textContent = String(e.message || e);
+    status.className = 'run-status err';
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+function renderRunResult(body, status, result) {
+  if (body.ok) {
+    status.textContent = 'ok';
+    status.className = 'run-status ok';
+    result.textContent = JSON.stringify(body.result, null, 2);
+  } else {
+    status.textContent = 'error';
+    status.className = 'run-status err';
+    result.textContent = body.error || '(no error message)';
+  }
+}
+
+function canRenderInline(spec) {
+  if (!spec || typeof spec !== 'object') return false;
+  const t = spec.type;
+  return t === 'string' || t === 'integer' || t === 'number' || t === 'boolean';
+}
+
+// Fallback when inputSchema isn't a flat object: render one big JSON
+// textarea pre-populated with a stub of required keys. Operator edits the
+// raw JSON; on submit we parse it.
+function appendJsonFallback(fields, required, readers) {
+  const stub = required.size > 0
+    ? Object.fromEntries([...required].map((k) => [k, '']))
+    : {};
+  const ta = document.createElement('textarea');
+  ta.className = 'run-json';
+  ta.rows = 6;
+  ta.value = JSON.stringify(stub, null, 2);
+  const lbl = document.createElement('label');
+  lbl.className = 'field';
+  lbl.innerHTML = `<span class="field-name">arguments (JSON)</span>`;
+  lbl.appendChild(ta);
+  fields.appendChild(lbl);
+  readers.push(() => {
+    const trimmed = ta.value.trim();
+    if (!trimmed) return {};
+    try { return JSON.parse(trimmed); }
+    catch (e) { throw new Error(`arguments JSON is invalid: ${e.message}`); }
+  });
+}
+
+function buildField(name, spec, required, readers) {
+  const lbl = document.createElement('label');
+  lbl.className = 'field';
+  const desc = spec.description ? `<span class="field-desc">${escapeHtml(spec.description)}</span>` : '';
+  const reqMark = required ? '<span class="field-req">*</span>' : '';
+  lbl.innerHTML = `<span class="field-name">${escapeHtml(name)}${reqMark}</span>${desc}`;
+
+  const read = appendInputForType(lbl, name, spec);
+  readers.push(read);
+  return lbl;
+}
+
+function appendInputForType(lbl, name, spec) {
+  if (spec.type === 'boolean') {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    if (spec.default === true) cb.checked = true;
+    lbl.appendChild(cb);
+    return () => ({ name, value: cb.checked, present: true });
+  }
+  if (spec.type === 'integer' || spec.type === 'number') {
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    if (spec.type === 'integer') inp.step = '1';
+    if (spec.default !== undefined) inp.value = String(spec.default);
+    if (typeof spec.minimum === 'number') inp.min = String(spec.minimum);
+    if (typeof spec.maximum === 'number') inp.max = String(spec.maximum);
+    lbl.appendChild(inp);
+    return () => ({ name, value: coerceNumber(inp.value, spec.type), present: inp.value !== '' });
+  }
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  if (spec.default !== undefined) inp.value = String(spec.default);
+  lbl.appendChild(inp);
+  return () => ({ name, value: inp.value, present: inp.value !== '' });
+}
+
+function coerceNumber(raw, jsonType) {
+  if (raw === '') return undefined;
+  if (jsonType === 'integer') return Number.parseInt(raw, 10);
+  return Number(raw);
+}
+
+function assembleArgsFromInline(readers) {
+  const out = {};
+  for (const read of readers) {
+    const { name, value, present } = read();
+    if (present) out[name] = value;
+  }
+  return out;
 }
 
 function setSelection(next) {
@@ -307,6 +507,7 @@ function renderDetail() {
       </div>
       <pre>${renderToolShape(selection.tool)}</pre>
     `;
+    card.appendChild(buildToolRunner(selection.serverName, selection.tool));
     elDetailContent.appendChild(card);
     return;
   }

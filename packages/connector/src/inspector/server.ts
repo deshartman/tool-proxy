@@ -55,10 +55,22 @@ export interface InspectorState {
 
 const RING_SIZE = 500;
 
+// Inspector-driven tool invocation. The connector main loop wires this
+// to the same `servers` map the dispatcher uses, so an operator running
+// a tool from the inspector goes through the identical dispatch path as
+// the controller — same callTool method on the LocalServer interface.
+// Returns the raw result JSON the SDK gives us, or rejects with a clear
+// error message that the inspector route surfaces as `{ok:false,error}`.
+export type ToolDispatch = (server: string, tool: string, args: unknown) => Promise<unknown>;
+
 export class Inspector {
   // Caller can wire this to its reconnect routine; invoked when the UI
   // POSTs /reconnect.
   onReconnect?: () => void;
+
+  // Caller wires this to a callTool dispatcher; invoked when the UI POSTs
+  // /tool/call. Optional — when undefined, the route returns 503.
+  toolDispatch?: ToolDispatch;
 
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
   private readonly frames: FrameTap[] = [];
@@ -211,6 +223,52 @@ async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector
   inspector.publishWebhookSnapshot();
 }
 
+interface ToolCallBody {
+  server?: string;
+  tool?: string;
+  args?: unknown;
+}
+
+// Operator-driven tool invocation from the inspector UI. Goes through the
+// connector's existing servers map (wired via inspector.toolDispatch in
+// index.ts) so this exercises the same callTool path the controller uses
+// for inbound RPC. Loopback-bound only — same trust boundary as the rest
+// of the inspector. See CLAUDE.md "Inspector port is localhost-only".
+async function handleToolCall(req: IncomingMessage, res: ServerResponse, inspector: Inspector): Promise<void> {
+  const dispatch = inspector.toolDispatch;
+  if (!dispatch) {
+    res.statusCode = 503;
+    res.setHeader("content-type", "application/json");
+    res.end('{"ok":false,"error":"tool dispatch not configured"}');
+    return;
+  }
+
+  let body: ToolCallBody;
+  try { body = (await readJsonBody(req) as ToolCallBody) ?? {}; }
+  catch { res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return; }
+
+  const server = typeof body.server === "string" ? body.server : undefined;
+  const tool = typeof body.tool === "string" ? body.tool : undefined;
+  const args = body.args ?? {};
+  if (!server || !tool) {
+    res.statusCode = 400;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ ok: false, error: 'missing "server" or "tool"' }));
+    return;
+  }
+
+  res.setHeader("content-type", "application/json");
+  try {
+    const result = await dispatch(server, tool, args);
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true, result }));
+  } catch (err) {
+    const message = (err as Error)?.message ?? String(err);
+    res.statusCode = 200;          // application-level error, not transport
+    res.end(JSON.stringify({ ok: false, error: message }));
+  }
+}
+
 function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Inspector, mcp: string): void {
   const reg = inspector.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
@@ -270,6 +328,10 @@ export function startInspector(port: number, inspector: Inspector): void {
       const mcp = url.searchParams.get("mcp");
       if (!mcp) { res.statusCode = 400; res.end('missing "mcp" query param'); return; }
       handleStream(req, res, inspector, mcp);
+      return;
+    }
+    if (path === "/tool/call" && req.method === "POST") {
+      void handleToolCall(req, res, inspector);
       return;
     }
     if (path === "/" || path === "/index.html") { void serveStatic(res, "index.html"); return; }

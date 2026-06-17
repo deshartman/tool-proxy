@@ -215,6 +215,20 @@ async function main() {
   log.info({ tools: countTools(manifest) }, `built manifest`);
   inspector?.setManifest(manifest);
 
+  // Wire operator-driven tool invocation from the inspector UI into the same
+  // servers map the dispatcher uses for controller-driven calls. Same callTool
+  // path; same per-tool timeout. Loopback-bound, same trust boundary as the
+  // rest of the inspector — see CLAUDE.md "Inspector port is localhost-only".
+  if (inspector) {
+    inspector.toolDispatch = async (serverName, toolName, args) => {
+      const server = servers.get(serverName);
+      if (!server) throw new Error(`no local MCP server '${serverName}'`);
+      return server.callTool(toolName, args, {
+        timeoutMs: config.policy.tool_timeout_ms,
+      });
+    };
+  }
+
   await connectTunnel("initial");
 
   // SIGHUP — reload YAML, rebuild manifest, push delta.
