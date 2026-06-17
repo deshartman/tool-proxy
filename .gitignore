@@ -29,6 +29,18 @@ __pycache__/
 **/connector.yaml
 !**/connector.yaml.example
 
+# EK bundle's declarative source list — customer-authored copy of
+# sources.yaml.example. Lives at mcp/bundled/enterprise-knowledge/sources.yaml.
+# Gitignored; only the *.example template ships.
+**/sources.yaml
+!**/sources.yaml.example
+
+# Per-bundle secrets directory. Holds service-account JSON keys, OAuth
+# token caches, etc. — anything credential-shaped that the bundle's
+# .env points at. Gitignored unconditionally; secrets never ship in
+# the source tree. Customer mounts these from a volume in production.
+**/secrets/
+
 # Connector state file — written by the connector on first register (holds
 # the registrationToken handed back by the controller). Customer never edits
 # directly; clearing it forces a fresh mint on next start.

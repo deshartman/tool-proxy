@@ -132,24 +132,6 @@ async function main() {
     `config loaded`
   );
 
-  // 1a. Spawn Type 1 children (http transport + dir + no endpoint). Mutates
-  // the spec list to fill in `endpoint` so the dispatch path below sees a
-  // uniform shape.
-  const spawned: SpawnedChild[] = await spawnType1Children(config.mcp_servers, { log: logLine });
-  if (spawned.length > 0) {
-    const summary = spawned.map((c) => c.name + "=" + c.port).join(", ");
-    log.info({ count: spawned.length, children: summary }, `spawned Type 1 children`);
-  }
-
-  // 1b. Connect to all local MCP servers in parallel. Fail fast if any are unreachable.
-  log.info(`connecting to ${config.mcp_servers.length} local MCP server(s)`);
-  const servers = await connectAll(config.mcp_servers);
-  log.info({ servers: [...servers.keys()] }, `connected to local servers`);
-
-  // 2. Build initial manifest.
-  let manifest: ToolManifest = await buildManifest(config, servers, version, configPath);
-  log.info({ tools: countTools(manifest) }, `built manifest`);
-
   // The yaml carries `controller_url` (HTTPS root, used for the register API
   // and shown in the inspector). TunnelClient upgrades https:// → wss:// and
   // appends the /mcp-tunnel path in tunnel/client.ts before dialling.
@@ -171,14 +153,16 @@ async function main() {
     },
   });
 
-  // 3. Inspector first, so it survives tunnel cycles. Holds a reference to
-  // the webhook registry so its loopback /internal/webhook/* routes can drive
-  // SDK ↔ connector IPC without opening a separate listener.
+  // 1. Inspector starts FIRST — before any Type 1 children spawn. Children
+  // that consume the SDK's createWebhookEndpoint() open a stream against
+  // 127.0.0.1:INSPECTOR_PORT immediately on boot; the inspector has to be
+  // listening by then or the first allocation hits ECONNREFUSED. Doing this
+  // before spawn closes that race for every bundle, not just Twilio.
+  // The manifest is filled in below via setManifest() once children connect.
   const inspector = inspectorPort > 0
     ? new Inspector({
         controllerUrl: config.tunnel.controller_url,
         state: "connecting",
-        manifest,
         webhooks,
       })
     : undefined;
@@ -210,6 +194,26 @@ async function main() {
     );
     startInspector(inspectorPort, inspector);
   }
+
+  // 2a. Spawn Type 1 children (http transport + dir + no endpoint). Mutates
+  // the spec list to fill in `endpoint` so the dispatch path below sees a
+  // uniform shape. Bundled children that immediately call createWebhookEndpoint
+  // succeed because the inspector is already listening above.
+  const spawned: SpawnedChild[] = await spawnType1Children(config.mcp_servers, { log: logLine });
+  if (spawned.length > 0) {
+    const summary = spawned.map((c) => c.name + "=" + c.port).join(", ");
+    log.info({ count: spawned.length, children: summary }, `spawned Type 1 children`);
+  }
+
+  // 2b. Connect to all local MCP servers in parallel. Fail fast if any are unreachable.
+  log.info(`connecting to ${config.mcp_servers.length} local MCP server(s)`);
+  const servers = await connectAll(config.mcp_servers);
+  log.info({ servers: [...servers.keys()] }, `connected to local servers`);
+
+  // 3. Build initial manifest and push it into the inspector (already running).
+  let manifest: ToolManifest = await buildManifest(config, servers, version, configPath);
+  log.info({ tools: countTools(manifest) }, `built manifest`);
+  inspector?.setManifest(manifest);
 
   await connectTunnel("initial");
 

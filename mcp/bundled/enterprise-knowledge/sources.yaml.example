@@ -1,0 +1,30 @@
+# Enterprise Knowledge — declarative source list.
+#
+# Copy this file to sources.yaml in the same directory and edit. Point
+# the bundle at it via EK_SOURCES_YAML in this folder's .env, e.g.:
+#
+#   EK_SOURCES_YAML=/etc/mcp-connector/mcp/bundled/enterprise-knowledge/sources.yaml
+#
+# Or in dev (where the connector runs from a checkout):
+#
+#   EK_SOURCES_YAML=/Users/you/repo/mcp/bundled/enterprise-knowledge/sources.yaml
+#
+# The bundle reads this on every boot and calls the matching <id>_register
+# tool for each entry. `register_source` is idempotent on URL — entries
+# already indexed are no-ops; entries that fail (path missing, Drive
+# folder un-shared, network hiccup) are recorded with status='failed'
+# and surface to the Controller via sources_fetch.
+#
+# `kind` is NOT a YAML field. The bundle picks the right reader from the
+# URL itself via the products registry's url_match predicates.
+
+sources:
+  # Local files — file:// URL or absolute path. Directories recurse.
+  # - url: file:///srv/internal-handbook
+  # - url: /Users/you/Documents/runbooks
+  #   refresh_hint: weekly
+
+  # Google Drive folder — full URL copied from a browser. Requires the
+  # [gdrive] install extra and EK_GDRIVE_* env vars (see .env.example).
+  # - url: https://drive.google.com/drive/folders/0ABCDEFGHIJKL
+  #   refresh_hint: daily

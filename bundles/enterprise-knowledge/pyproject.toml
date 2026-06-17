@@ -15,6 +15,7 @@ authors = [{ name = "Twilio" }]
 dependencies = [
   "mcp>=1.2.0",
   "pydantic>=2.7",
+  "pyyaml>=6.0",
   "llama-index-core>=0.11,<0.13",
   "llama-index-vector-stores-postgres>=0.2",
   "llama-index-embeddings-openai>=0.2",
@@ -28,6 +29,15 @@ dependencies = [
 # bundle's reachable network surface.
 local = [
   "llama-index-embeddings-huggingface>=0.3",
+]
+
+# Google Drive reader. Install with `uv pip install -e .[gdrive]` when
+# any sources.yaml entry points at a Drive folder. Same lockdown
+# discipline as [local]: deployments that don't use Drive must NOT
+# install this — keeps googleapis.com out of the bundle's reachable
+# surface.
+gdrive = [
+  "llama-index-readers-google>=0.4",
 ]
 
 [project.scripts]
