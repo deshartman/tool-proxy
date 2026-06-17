@@ -218,10 +218,10 @@ function toRelative(target: string, base: string): string {
   return `./${r}`;
 }
 
-function quoteIfNeeded(v: string): string {
+function quoteIfNeeded(value: string): string {
   // Allow ${...} interpolation tokens through bare. Other values get
   // double-quoted if they contain anything YAML would mis-parse.
-  if (/^\$\{[^}]+\}$/.test(v)) return v;
-  if (/^[A-Za-z0-9_./:\-+@]+$/.test(v) && !/^[-?:&*!|>%@`#]/.test(v)) return v;
-  return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  if (/^\$\{[^}]+\}$/.test(value)) return value;
+  if (/^[A-Za-z0-9_./:\-+@]+$/.test(value) && !/^[-?:&*!|>%@`#]/.test(value)) return value;
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

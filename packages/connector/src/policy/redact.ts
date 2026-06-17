@@ -23,9 +23,9 @@ function redact(args: unknown): string {
   return safeStringify(out);
 }
 
-function safeStringify(v: unknown): string {
+function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(v);
+    return JSON.stringify(value);
   } catch {
     return "<unserializable>";
   }

@@ -64,12 +64,12 @@ export function makeConnection(
 }
 
 // Helper: shape a DiscoveredTool into a ToolDescriptor with the allowed flag set.
-export function toDescriptor(t: DiscoveredTool, allowed: boolean): ToolDescriptor {
+export function toDescriptor(tool: DiscoveredTool, allowed: boolean): ToolDescriptor {
   return {
-    name: t.name,
-    description: t.description,
-    inputSchema: t.inputSchema,
-    outputSchema: t.outputSchema,
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    outputSchema: tool.outputSchema,
     allowed,
   };
 }

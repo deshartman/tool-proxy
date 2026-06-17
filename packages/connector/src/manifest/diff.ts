@@ -29,13 +29,13 @@ export function diffManifest(prev: ToolManifest, next: ToolManifest): ManifestDe
   return { added, removed, changed };
 }
 
-export function isEmptyDelta(d: ManifestDelta): boolean {
-  return d.added.length === 0 && d.removed.length === 0 && d.changed.length === 0;
+export function isEmptyDelta(delta: ManifestDelta): boolean {
+  return delta.added.length === 0 && delta.removed.length === 0 && delta.changed.length === 0;
 }
 
-function flatten(m: ToolManifest): Map<string, { server: string; tool: ToolDescriptor }> {
+function flatten(manifest: ToolManifest): Map<string, { server: string; tool: ToolDescriptor }> {
   const out = new Map<string, { server: string; tool: ToolDescriptor }>();
-  for (const server of m.servers) {
+  for (const server of manifest.servers) {
     for (const tool of server.tools) {
       out.set(`${server.name}.${tool.name}`, { server: server.name, tool });
     }
