@@ -16,15 +16,17 @@
 body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 14px; background: var(--bg); color: var(--text); }
 header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 0.75rem 1.25rem;
+  padding: 0.9rem 1.25rem;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
-header h1 { font-size: 1rem; margin: 0 0 2px; font-weight: 600; }
+header h1 { font-size: 1rem; margin: 0 0 0.5rem; font-weight: 600; }
+.header-meta { display: flex; flex-direction: column; gap: 4px; }
 header .meta { font-size: 0.75rem; }
 header .meta code { font-family: var(--mono); color: var(--accent); }
+header .meta .muted + code { margin-right: 0.5rem; }
 .muted { color: var(--muted); }
 .status { font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; font-family: var(--mono); }
 .status-open         { background: rgba(63, 185, 80, 0.15); color: var(--green); }

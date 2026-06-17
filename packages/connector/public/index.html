@@ -7,15 +7,35 @@
 </head>
 <body>
   <header>
-    <div>
+    <div class="header-meta">
       <h1>MCP Connector Inspector</h1>
       <div class="meta">
         <span class="muted">controller:</span>
         <code id="controller-url">…</code>
       </div>
       <div class="meta">
+        <span class="muted">connector:</span>
+        <code id="hdr-name">…</code>
+        <span class="muted">id:</span>
+        <code id="hdr-id">—</code>
+      </div>
+      <div class="meta">
+        <span class="muted">env:</span>
+        <code id="hdr-env">—</code>
+        <span class="muted">version:</span>
+        <code id="hdr-ver">—</code>
+      </div>
+      <div class="meta">
         <span class="muted">identity:</span>
         <span id="identity" class="identity identity-unknown">…</span>
+      </div>
+      <div class="meta">
+        <span class="muted">last register-ack:</span>
+        <code id="hdr-ack-at">—</code>
+      </div>
+      <div class="meta">
+        <span class="muted">tunnel open since:</span>
+        <code id="hdr-open-since">—</code>
       </div>
     </div>
     <span id="status" class="status status-connecting">connecting…</span>
@@ -31,9 +51,6 @@
         <div class="section-body">
           <div id="manifest-empty" class="empty">No manifest yet — connector hasn't built one.</div>
           <div id="manifest" hidden>
-            <div class="meta-row"><span class="muted">connectorId</span><code id="m-connector"></code></div>
-            <div class="meta-row"><span class="muted">environment</span><code id="m-env"></code></div>
-            <div class="meta-row"><span class="muted">version</span><code id="m-ver"></code></div>
             <div id="m-servers"></div>
           </div>
         </div>
