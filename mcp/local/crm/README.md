@@ -46,7 +46,7 @@ Inspector UI: <http://localhost:9090/>.
 
 Seeded in [mock/customers/data.ts](../../../mock/customers/data.ts):
 
-| `customer phone` | Name | Orders |
+| `customer_phone` | Name | Orders |
 |---|---|---|
 | `+15551239999` | Dana Demo | 3 (delivered, shipped, pending) |
 | `+14155550101` | Alice Anderson | `ord_42` — delivered, ~16d, refund-eligible |

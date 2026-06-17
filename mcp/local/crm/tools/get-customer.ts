@@ -20,13 +20,12 @@ export const getCustomer: Tool = {
           "Returns the customer's identity profile (name, surname, phone, email) keyed by phone. " +
           "Identity only — order history is fetched separately via get_recent.",
         inputSchema: {
-          "customer phone": z
+          customer_phone: z
             .string()
             .describe("Customer phone number, E.164 format (e.g. +15551239999)."),
         },
       },
-      async (args) => {
-        const phone = args["customer phone"];
+      async ({ customer_phone: phone }) => {
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), REQ_TIMEOUT_MS);
         try {
