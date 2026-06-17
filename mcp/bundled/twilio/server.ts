@@ -1,5 +1,7 @@
 import { createMcpHttpServer, createLogger } from "@mcp-shim/connector/sdk";
 import { onStatusCallback } from "./status-callback.js";
+import { createTwilioClient } from "./twilio-client.js";
+import { makeSendGridProvider } from "./sendgrid-client.js";
 import { messagesCreate } from "./tools/messaging/messages_create.js";
 import { messagesFetch } from "./tools/messaging/messages_fetch.js";
 import { messagingServicesFetch } from "./tools/messaging/messaging_services_fetch.js";
@@ -44,28 +46,36 @@ function pickFirst(payload: unknown, keys: string[]): string | undefined {
 const pickSid    = (p: unknown) => pickFirst(p, ["MessageSid", "CallSid"]);
 const pickStatus = (p: unknown) => pickFirst(p, ["MessageStatus", "CallStatus"]);
 
+// Build clients at boot. Twilio is eager-validated (every voice/messaging/
+// verify/lookups tool needs it; failing fast surfaces missing creds before
+// the first tool call). SendGrid is a lazy provider — operators who never
+// fire an email_* tool don't need SENDGRID_API_KEY just to boot. Matches
+// the prior singleton's lazy contract.
+const twilio = createTwilioClient();
+const sendgridProvider = makeSendGridProvider();
+
 await createMcpHttpServer({
   name: "apis",
   tools: [
-    messagesCreate,
-    messagesFetch,
-    messagingServicesFetch,
-    contentTemplatesFetch,
-    callsCreate,
-    callsFetch,
-    voiceSay,
-    voicePlay,
-    voiceDial,
-    voicePay,
-    voiceTranscriptionStart,
-    voiceTranscriptionStop,
-    verifySend,
-    verifyCheck,
-    verifyServicesFetch,
-    lookupsFetch,
-    emailSend,
-    emailFetch,
-    emailSearch,
-    emailTemplatesFetch,
+    messagesCreate(twilio),
+    messagesFetch(twilio),
+    messagingServicesFetch(twilio),
+    contentTemplatesFetch(twilio),
+    callsCreate(twilio),
+    callsFetch(twilio),
+    voiceSay(),
+    voicePlay(),
+    voiceDial(),
+    voicePay(),
+    voiceTranscriptionStart(),
+    voiceTranscriptionStop(),
+    verifySend(twilio),
+    verifyCheck(twilio),
+    verifyServicesFetch(twilio),
+    lookupsFetch(twilio),
+    emailSend(sendgridProvider),
+    emailFetch(sendgridProvider),
+    emailSearch(sendgridProvider),
+    emailTemplatesFetch(sendgridProvider),
   ],
 });

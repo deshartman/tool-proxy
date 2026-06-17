@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { getTwilioClient } from "../../twilio-client.js";
+import type { TwilioClient } from "../../twilio-client.js";
 import { getDefaultStatusCallback } from "../../status-callback.js";
 
 type Channel = "sms" | "whatsapp" | "rcs";
@@ -17,66 +17,67 @@ function defaultFrom(channel: Channel): string | undefined {
   return process.env.TWILIO_FROM_NUMBER;
 }
 
-export const messagesCreate: Tool = {
-  name: "messages_create",
-  register(server) {
-    server.registerTool(
-      "messages_create",
-      {
-        description:
-          "Send a message via SMS, WhatsApp, or RCS. The connector prepends the channel prefix to to/from. For templated WhatsApp/RCS sends, set contentSid (and contentVariables for placeholders). INCURS CHARGES.",
-        inputSchema: {
-          channel: z.enum(["sms", "whatsapp", "rcs"]).describe(
-            "Channel selector. 'sms' uses raw E.164. 'whatsapp' prepends whatsapp:. 'rcs' prepends rcs: (from is an agent ID).",
-          ),
-          to: z.string().describe("E.164 destination number, e.g. +15551234567 (no channel prefix — tool prepends it)"),
-          body: z.string().min(1).max(1600).optional().describe("Message body. Optional when contentSid is set."),
-          contentSid: z.string().optional().describe("Content template SID (HXxxxx). Required for WhatsApp/RCS templated sends outside the 24h session window."),
-          contentVariables: z.record(z.string(), z.string()).optional().describe("Placeholder values for the content template (string keys)."),
-          mediaUrl: z.array(z.string()).optional().describe("Media URLs for MMS/WhatsApp media messages."),
-          from: z.string().optional().describe("Override the env-configured sender. (Tool adds the channel prefix.)"),
-          messagingServiceSid: z.string().optional().describe("Use a Messaging Service instead of an explicit from. Mutually exclusive with from."),
-          statusCallback: z.string().optional().describe(
-            "Webhook URL for delivery status updates (https://…). Leave unset and pass receiveStatusCallbacks=true to use the connector-managed default URL.",
-          ),
-          receiveStatusCallbacks: z.boolean().optional().describe(
-            "When true and statusCallback is unset, route Twilio's delivery status updates back through the connector's webhook ingress (visible in the inspector and any onStatusCallback listener).",
-          ),
+export function messagesCreate(client: TwilioClient): Tool {
+  return {
+    name: "messages_create",
+    register(server) {
+      server.registerTool(
+        "messages_create",
+        {
+          description:
+            "Send a message via SMS, WhatsApp, or RCS. The connector prepends the channel prefix to to/from. For templated WhatsApp/RCS sends, set contentSid (and contentVariables for placeholders). INCURS CHARGES.",
+          inputSchema: {
+            channel: z.enum(["sms", "whatsapp", "rcs"]).describe(
+              "Channel selector. 'sms' uses raw E.164. 'whatsapp' prepends whatsapp:. 'rcs' prepends rcs: (from is an agent ID).",
+            ),
+            to: z.string().describe("E.164 destination number, e.g. +15551234567 (no channel prefix — tool prepends it)"),
+            body: z.string().min(1).max(1600).optional().describe("Message body. Optional when contentSid is set."),
+            contentSid: z.string().optional().describe("Content template SID (HXxxxx). Required for WhatsApp/RCS templated sends outside the 24h session window."),
+            contentVariables: z.record(z.string(), z.string()).optional().describe("Placeholder values for the content template (string keys)."),
+            mediaUrl: z.array(z.string()).optional().describe("Media URLs for MMS/WhatsApp media messages."),
+            from: z.string().optional().describe("Override the env-configured sender. (Tool adds the channel prefix.)"),
+            messagingServiceSid: z.string().optional().describe("Use a Messaging Service instead of an explicit from. Mutually exclusive with from."),
+            statusCallback: z.string().optional().describe(
+              "Webhook URL for delivery status updates (https://…). Leave unset and pass receiveStatusCallbacks=true to use the connector-managed default URL.",
+            ),
+            receiveStatusCallbacks: z.boolean().optional().describe(
+              "When true and statusCallback is unset, route Twilio's delivery status updates back through the connector's webhook ingress (visible in the inspector and any onStatusCallback listener).",
+            ),
+          },
         },
-      },
-      async ({ channel, to, body, contentSid, contentVariables, mediaUrl, from, messagingServiceSid, statusCallback, receiveStatusCallbacks }) => {
-        if (!body && !contentSid) {
-          throw new Error("Either body or contentSid must be provided");
-        }
+        async ({ channel, to, body, contentSid, contentVariables, mediaUrl, from, messagingServiceSid, statusCallback, receiveStatusCallbacks }) => {
+          if (!body && !contentSid) {
+            throw new Error("Either body or contentSid must be provided");
+          }
 
-        const fromBase = from ?? defaultFrom(channel);
-        const messagingService = messagingServiceSid ?? process.env.TWILIO_MESSAGING_SERVICE_SID;
-        if (!fromBase && !messagingService) {
-          throw new Error(
-            "from is required (or set TWILIO_FROM_NUMBER / TWILIO_WHATSAPP_FROM / TWILIO_RCS_AGENT, or pass messagingServiceSid)",
-          );
-        }
+          const fromBase = from ?? defaultFrom(channel);
+          const messagingService = messagingServiceSid ?? process.env.TWILIO_MESSAGING_SERVICE_SID;
+          if (!fromBase && !messagingService) {
+            throw new Error(
+              "from is required (or set TWILIO_FROM_NUMBER / TWILIO_WHATSAPP_FROM / TWILIO_RCS_AGENT, or pass messagingServiceSid)",
+            );
+          }
 
-        const prefix = CHANNEL_PREFIX[channel];
-        const opts: Record<string, unknown> = { to: `${prefix}${to}` };
-        if (fromBase) opts.from = `${prefix}${fromBase}`;
-        if (messagingService) opts.messagingServiceSid = messagingService;
-        if (body) opts.body = body;
-        if (contentSid) opts.contentSid = contentSid;
-        if (contentVariables) opts.contentVariables = JSON.stringify(contentVariables);
-        if (mediaUrl) opts.mediaUrl = mediaUrl;
-        const resolvedCallback = statusCallback ?? (receiveStatusCallbacks ? await getDefaultStatusCallback() : undefined);
-        if (resolvedCallback) opts.statusCallback = resolvedCallback;
+          const prefix = CHANNEL_PREFIX[channel];
+          const opts: Record<string, unknown> = { to: `${prefix}${to}` };
+          if (fromBase) opts.from = `${prefix}${fromBase}`;
+          if (messagingService) opts.messagingServiceSid = messagingService;
+          if (body) opts.body = body;
+          if (contentSid) opts.contentSid = contentSid;
+          if (contentVariables) opts.contentVariables = JSON.stringify(contentVariables);
+          if (mediaUrl) opts.mediaUrl = mediaUrl;
+          const resolvedCallback = statusCallback ?? (receiveStatusCallbacks ? await getDefaultStatusCallback() : undefined);
+          if (resolvedCallback) opts.statusCallback = resolvedCallback;
 
-        const client = getTwilioClient();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const message = await client.messages.create(opts as any);
-        return {
-          content: [
-            { type: "text", text: `sent sid=${message.sid} status=${message.status} channel=${channel}` },
-          ],
-        };
-      },
-    );
-  },
-};
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const message = await client.messages.create(opts as any);
+          return {
+            content: [
+              { type: "text", text: `sent sid=${message.sid} status=${message.status} channel=${channel}` },
+            ],
+          };
+        },
+      );
+    },
+  };
+}
