@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, createConnection } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { isType1Spawn, type McpServerSpec } from "./config.js";
+import { envNumber } from "./env.js";
 
 // Resolve tsx's bin from the connector package's own node_modules so spawn
 // doesn't fall back to PATH/npx network lookup. tsx is a runtime dep.
@@ -35,7 +36,7 @@ export async function spawnType1Children(
   opts: SpawnerOptions = {}
 ): Promise<SpawnedChild[]> {
   const log = opts.log ?? (() => {});
-  const basePort = opts.basePort ?? Number(process.env.MCP_BASE_PORT ?? 7100);
+  const basePort = opts.basePort ?? envNumber("MCP_BASE_PORT", 7100);
   const readyTimeoutMs = opts.readyTimeoutMs ?? 5000;
 
   const children: SpawnedChild[] = [];

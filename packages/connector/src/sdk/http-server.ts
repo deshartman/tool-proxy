@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Tool } from "./tool.js";
 import { createLogger } from "../logger.js";
+import { envNumber } from "../env.js";
 
 export interface CreateMcpHttpServerOptions {
   name: string;
@@ -23,7 +24,7 @@ export interface McpHttpServerHandle {
 // Stateful StreamableHTTPServerTransport with randomUUID session IDs is the
 // only mode the SDK's HTTP transport supports for our use.
 export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Promise<McpHttpServerHandle> {
-  const requestedPort = opts.port ?? Number(process.env.PORT ?? 0);
+  const requestedPort = opts.port ?? envNumber("PORT", 0);
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),

@@ -4,6 +4,7 @@ import { boot } from "./boot/lifecycle.js";
 import { runDiscover } from "./discover.js";
 import { runInit } from "./init.js";
 import { createLogger } from "./logger.js";
+import { envString } from "./env.js";
 
 const log = createLogger("connector");
 
@@ -32,7 +33,7 @@ async function dispatch(): Promise<void> {
       await boot();
       return;
     case "version":
-      console.log(process.env.CONNECTOR_VERSION ?? "dev");
+      console.log(envString("CONNECTOR_VERSION", "dev"));
       return;
     case "discover":
       await runDiscover(rest);

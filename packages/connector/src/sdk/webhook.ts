@@ -26,6 +26,7 @@
 
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { createLogger } from "../logger.js";
+import { envNumber } from "../env.js";
 
 const log = createLogger("sdk-webhook");
 
@@ -78,7 +79,7 @@ export interface WebhookEndpoint {
 }
 
 export function createWebhookEndpoint(opts: WebhookEndpointOptions): Promise<WebhookEndpoint> {
-  const port = opts.inspectorPort ?? Number(process.env.INSPECTOR_PORT ?? 9090);
+  const port = opts.inspectorPort ?? envNumber("INSPECTOR_PORT", 9090);
   if (!port || Number.isNaN(port)) {
     return Promise.reject(new Error(
       `inspector port not resolvable. Set INSPECTOR_PORT or pass {inspectorPort} to createWebhookEndpoint. ` +

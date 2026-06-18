@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { loadConfig } from "./config.js";
 import { connectServer } from "./servers/connect.js";
+import { envOptional } from "./env.js";
 
 // `mcp-connector discover` — non-interactive: connects to every MCP server in
 // the YAML, calls tools/list on each, prints the result, then exits. Useful
@@ -22,7 +23,7 @@ tools/list, and prints the discovered tools per server.`);
     return;
   }
 
-  const configPath = values.config ?? process.env.CONNECTOR_CONFIG;
+  const configPath = values.config ?? envOptional("CONNECTOR_CONFIG");
   if (!configPath) throw new Error("CONNECTOR_CONFIG env var or --config <path> is required");
   const config = loadConfig(configPath);
 

@@ -29,23 +29,30 @@ import { WebhookRegistry } from "../tunnel/webhook-registry.js";
 import { ReconnectController } from "../tunnel/reconnect.js";
 import { createFrameRouter } from "../tunnel/frame-router.js";
 import { resolveAuth } from "./auth.js";
+import { requireEnv } from "./require-env.js";
+import { envOptional, envString, envNumber } from "../env.js";
 
 const log = createLogger("connector");
 // Adapter for downstream callbacks that take `(msg: string) => void`.
 const logLine = log.info.bind(log);
 
 export async function boot(): Promise<void> {
-  const envConfigPath = process.env.CONNECTOR_CONFIG;
-  if (!envConfigPath) throw new Error("CONNECTOR_CONFIG env var is required");
-  // Captured into a typed `string` const so the inner async closures don't
-  // need non-null assertions — TS narrowing of `process.env.X` doesn't
-  // survive across the closure boundary even after a guard.
-  const configPath: string = envConfigPath;
-  const version = process.env.CONNECTOR_VERSION ?? "dev";
-  // Set INSPECTOR_PORT=0 to disable; defaults to 9090.
+  // Preflight: every required env var checked in one pass before yaml load
+  // or auth resolution. Throws a consolidated error naming all missing
+  // pieces so an admin fixes them in one .env edit, not boot-fix-reboot
+  // across three scattered errors.
+  requireEnv();
+
+  // requireEnv guarantees CONNECTOR_CONFIG is set; the local const exists
+  // because TS narrowing of `process.env.X` doesn't survive across the
+  // inner async closures even after a guard.
+  const configPath: string = envOptional("CONNECTOR_CONFIG") as string;
+  const version = envString("CONNECTOR_VERSION", "dev");
+  // INSPECTOR_PORT=0 disables (the --no-inspector flag also sets this).
+  // Empty/unset → 9090 default; non-numeric throws via envNumber.
   const inspectorPort = process.env.INSPECTOR_PORT === "0"
     ? 0
-    : Number(process.env.INSPECTOR_PORT ?? 9090);
+    : envNumber("INSPECTOR_PORT", 9090);
 
   const config = loadConfig(configPath);
   const auth = resolveAuth(config.tunnel.auth_token);

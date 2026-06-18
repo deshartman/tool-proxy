@@ -9,9 +9,15 @@ import { defineConfig } from "vitest/config";
 //
 // Globals are off; tests should explicitly import { describe, it, expect }
 // from "vitest" so it's obvious where the runtime comes from.
+//
+// `unstubEnvs: true` auto-restores vi.stubEnv() mutations between test cases.
+// Many connector surfaces read process.env directly (see TEST-SUITE.md
+// "Env-var surface — coverage map"); without this, a stub leaks into the
+// next case. Set globally so individual tests don't need afterEach plumbing.
 export default defineConfig({
   test: {
     include: ["packages/connector/tests/**/*.test.ts"],
     environment: "node",
+    unstubEnvs: true,
   },
 });

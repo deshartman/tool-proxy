@@ -15,6 +15,7 @@
 // output, the OCI image and `> log.txt` redirects get raw JSON.
 
 import { pino, type Logger, type LoggerOptions } from "pino";
+import { envString } from "./env.js";
 
 let root: Logger | undefined;
 
@@ -26,7 +27,7 @@ function shouldPretty(): boolean {
 function getRoot(): Logger {
   if (root) return root;
   const opts: LoggerOptions = {
-    level: process.env.LOG_LEVEL ?? "info",
+    level: envString("LOG_LEVEL", "info"),
   };
   if (shouldPretty()) {
     opts.transport = {

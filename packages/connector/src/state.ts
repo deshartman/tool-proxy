@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { envString } from "./env.js";
 
 // Persistent state for a registered connector. Currently holds just the
 // registrationToken handed back by the controller on first connect; future
@@ -19,7 +20,7 @@ export interface ConnectorState {
 const DEFAULT_PATH = "packages/connector/.connector-state.json";
 
 export function defaultStatePath(): string {
-  return resolve(process.env.CONNECTOR_STATE_PATH ?? DEFAULT_PATH);
+  return resolve(envString("CONNECTOR_STATE_PATH", DEFAULT_PATH));
 }
 
 export function readState(path: string = defaultStatePath()): ConnectorState {

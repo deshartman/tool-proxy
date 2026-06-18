@@ -194,6 +194,12 @@ The plan called this out as the highest-risk piece — read carefully before cha
 
 Don't replace the per-spec env map with calls to `dotenv.config({path: ...})` in `loadConfig` — that mutates `process.env` and breaks the isolation guarantee.
 
+### Env reading rule — empty string == not set
+
+All `process.env` reads in `src/` go through [`src/env.ts`](packages/connector/src/env.ts) (`envString` / `envOptional` / `envNumber`). The whole-module rule: **an empty-string env var is treated as "not set"** — fall back to the documented default. An admin who writes `FOO=` (blank line) in `.env` expects "leave this unset"; `??` previously let `""` flow through (`Number("")=0`, `resolve("")=cwd`, pino throws on empty level). `envNumber` additionally throws an admin-actionable error when set to a non-numeric value (naming the var, the bad value, and the recovery), instead of silently coercing to `NaN`. The single deliberate exception is the YAML `${VAR}` interpolator in [`config.ts`](packages/connector/src/config.ts), which substitutes the literal empty string and lets the zod schema produce a more specific validation error.
+
+Boot-time required-env preflight runs once in [`src/boot/require-env.ts`](packages/connector/src/boot/require-env.ts) (`requireEnv()`) before yaml load or auth resolution. It consolidates every missing required var (`CONNECTOR_CONFIG`, `CONTROLLER_URL`, `CONNECTOR_NAME`, plus the static-bearer-vs-OAuth2 posture) into a single error block so an admin fixes them in one `.env` edit pass. The auth-posture branch is posture-aware: setting `OAUTH_CLIENT_ID` triggers a "you started OAuth2; here's what else you need" message rather than three separate "X is required" lines.
+
 In production, each connector deployment is its own container — same yaml shape, just one container per `tunnel.name`.
 
 ## Reconnect semantics
