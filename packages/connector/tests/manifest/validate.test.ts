@@ -31,14 +31,13 @@ beforeEach(() => {
   debugSpy.mockClear();
 });
 
-// validateManifestSchemas is the manifest-time guardrail behind the
+// validateManifestSchemas is the manifest-time advisory behind the
 // hydration story. The behaviours pinned here:
-//   * Type 1 / Type 3 missing schema → log.error per tool, no throw
-//     (we authored these, but a missing schema is a bug we report and
-//     keep booting from — the rest of the manifest still works)
-//   * Type 2 (external) missing schema → silent pass-through
-//     (we don't author these; the controller handles it gracefully)
-//   * Healthy manifest → no log at all
+//   * MCP we ship missing schema → ONE log.warn per server, listing every
+//     affected tool (terse, friendly, actionable). Connector keeps booting.
+//   * External MCP missing schema → silent pass-through (controller handles
+//     missing schemas on its end).
+//   * Healthy manifest → no log at all.
 
 function specType1(name: string): McpServerSpec {
   return {
@@ -101,38 +100,42 @@ function makeManifest(
   };
 }
 
-// Concatenate every error-call's serialized arguments so a `toContain` on
-// the result hits whether the missing tool id ended up in the structured
+// Concatenate every warn-call's serialized arguments so a `toContain` on
+// the result hits whether a missing tool id ended up in the structured
 // arg or the message string.
-function errorOutput(): string {
-  return errorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
+function warnOutput(): string {
+  return warnSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
 }
 
 describe("validateManifestSchemas", () => {
-  it("logs nothing when every Type 1 / Type 3 tool has an outputSchema", () => {
+  it("logs nothing when every shipped tool has an outputSchema", () => {
     const config = makeConfig([specType1("crm"), specType3("enterprise-knowledge")]);
     const manifest = makeManifest([
       { name: "crm", tools: [tool("get_recent", true), tool("get_customer", true)] },
       { name: "enterprise-knowledge", tools: [tool("knowledge_query", true)] },
     ]);
     expect(() => validateManifestSchemas(manifest, config)).not.toThrow();
-    expect(errorSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it("logs ERROR per offending Type 1 tool but does NOT throw", () => {
+  it("logs one WARN per server, naming each missing tool, but does NOT throw", () => {
     const config = makeConfig([specType1("crm")]);
     const manifest = makeManifest([
       { name: "crm", tools: [tool("get_recent", true), tool("issue_refund", false)] },
     ]);
     expect(() => validateManifestSchemas(manifest, config)).not.toThrow();
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-    const out = errorOutput();
-    expect(out).toContain("crm.issue_refund");
-    expect(out).not.toContain("crm.get_recent");
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const out = warnOutput();
+    expect(out).toContain("crm");
+    expect(out).toContain("issue_refund");
+    // Healthy tool must NOT appear in the warning.
+    expect(out).not.toContain("get_recent");
+    // No error logs — this is advisory, not an error.
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it("logs ERROR for every missing Type 1 / Type 3 tool — no aggregation, one call each", () => {
+  it("aggregates one WARN per server even when multiple tools on that server are missing", () => {
     const config = makeConfig([
       specType1("crm"),
       specType1("sample"),
@@ -144,35 +147,37 @@ describe("validateManifestSchemas", () => {
       { name: "enterprise-knowledge", tools: [tool("knowledge_query", false)] },
     ]);
     validateManifestSchemas(manifest, config);
-    expect(errorSpy).toHaveBeenCalledTimes(4);
-    const out = errorOutput();
-    expect(out).toContain("crm.get_customer");
-    expect(out).toContain("crm.issue_refund");
-    expect(out).toContain("sample.uuid");
-    expect(out).toContain("enterprise-knowledge.knowledge_query");
+    // Three servers with missing tools → exactly three WARN lines (not four
+    // — crm aggregates its two missing tools into a single line). One
+    // line per server is the whole point of the new shape.
+    expect(warnSpy).toHaveBeenCalledTimes(3);
+    const out = warnOutput();
+    expect(out).toContain("get_customer");
+    expect(out).toContain("issue_refund");
+    expect(out).toContain("sample");
+    expect(out).toContain("uuid");
+    expect(out).toContain("enterprise-knowledge");
+    expect(out).toContain("knowledge_query");
   });
 
   it("logs nothing for an empty manifest", () => {
     const config = makeConfig([]);
     const manifest = makeManifest([]);
     expect(() => validateManifestSchemas(manifest, config)).not.toThrow();
-    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("Type 2 external tools missing schema pass through silently — controller handles them", () => {
-    // The trust boundary point: we don't author Type 2 upstream tools, so
-    // we don't get to enforce their shape. The controller has been coded
-    // to handle missing schemas gracefully on its end.
+  it("external (Type 2) tools missing schema pass through silently — controller handles them", () => {
     const config = makeConfig([specType2Http("aviation-weather")]);
     const manifest = makeManifest([
       { name: "aviation-weather", tools: [tool("wx_metar", false)] },
     ]);
     validateManifestSchemas(manifest, config);
-    expect(errorSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it("mixed: Type 1 missing logs ERROR; Type 2 missing is silent", () => {
+  it("mixed: shipped MCP missing schema warns; external MCP missing schema is silent", () => {
     const config = makeConfig([
       specType1("crm"),
       specType2Http("aviation-weather"),
@@ -182,12 +187,42 @@ describe("validateManifestSchemas", () => {
       { name: "aviation-weather", tools: [tool("wx_metar", false)] },
     ]);
     validateManifestSchemas(manifest, config);
-    // Exactly one error line — the Type 1 gap. Type 2 stays silent;
-    // if aviation-weather leaks into the error log the trust boundary
+    // Exactly one warning — the shipped MCP's gap. The external MCP stays
+    // silent; if aviation-weather leaks into the warn log the boundary
     // has collapsed.
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-    const out = errorOutput();
-    expect(out).toContain("crm.issue_refund");
-    expect(out).not.toContain("aviation-weather.wx_metar");
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const out = warnOutput();
+    expect(out).toContain("crm");
+    expect(out).toContain("issue_refund");
+    expect(out).not.toContain("aviation-weather");
+    expect(out).not.toContain("wx_metar");
+  });
+
+  it("uses singular wording for a single missing tool", () => {
+    const config = makeConfig([specType1("crm")]);
+    const manifest = makeManifest([
+      { name: "crm", tools: [tool("issue_refund", false)] },
+    ]);
+    validateManifestSchemas(manifest, config);
+    const out = warnOutput();
+    // "1 tool ... does not declare ... this tool by name only" rather
+    // than "1 tools ... do not ... these tools by name only".
+    expect(out).toContain("1 tool ");
+    expect(out).toContain(" does not declare");
+    expect(out).toContain("this tool by name only");
+    expect(out).not.toContain("1 tools ");
+    expect(out).not.toContain("these tools");
+  });
+
+  it("uses plural wording for multiple missing tools on one server", () => {
+    const config = makeConfig([specType1("crm")]);
+    const manifest = makeManifest([
+      { name: "crm", tools: [tool("get_customer", false), tool("issue_refund", false)] },
+    ]);
+    validateManifestSchemas(manifest, config);
+    const out = warnOutput();
+    expect(out).toContain("2 tools");
+    expect(out).toContain(" do not declare");
+    expect(out).toContain("these tools by name only");
   });
 });
