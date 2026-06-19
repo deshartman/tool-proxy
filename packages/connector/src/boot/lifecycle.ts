@@ -18,6 +18,7 @@ import { connectAll } from "../servers/connect.js";
 import type { McpServerConnection } from "../servers/index.js";
 import { buildManifest } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
+import { validateManifestSchemas } from "../manifest/validate.js";
 import { TunnelClient } from "../tunnel/client.js";
 import { Dispatcher } from "../dispatcher.js";
 import type { ToolManifest } from "../tunnel/frames.js";
@@ -154,6 +155,12 @@ export async function boot(): Promise<void> {
 
   // 3. Build initial manifest and push it into the inspector (already running).
   let manifest: ToolManifest = await buildManifest(config, servers, version, configPath);
+  // Manifest-time guardrail: log.error per Type 1 / Type 3 tool that ships
+  // without an outputSchema. Doesn't throw — a missing schema is a per-tool
+  // bug we should report loudly, but the rest of the manifest still works
+  // and the broken tool just won't support hydration until we ship a fix.
+  // See .claude/plans/OUTPUT-SCHEMA.md.
+  validateManifestSchemas(manifest, config);
   log.info({ tools: countTools(manifest) }, `built manifest`);
   inspector?.setManifest(manifest);
 

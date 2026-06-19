@@ -4,6 +4,10 @@ import twilio from "twilio";
 
 const { VoiceResponse } = twilio.twiml;
 
+const OutputSchema = {
+  twiml: z.string().describe("Complete <Response> TwiML XML."),
+};
+
 export function voiceTranscriptionStop(): Tool {
   return {
     name: "voice_transcription_stop",
@@ -21,14 +25,17 @@ export function voiceTranscriptionStop(): Tool {
                 "Friendly name of the transcription session to stop. Must match the name used when starting.",
               ),
           },
+          outputSchema: OutputSchema,
         },
         async ({ name }) => {
           const response = new VoiceResponse();
           const attrs: Record<string, unknown> = {};
           if (name) attrs.name = name;
           response.stop().transcription(attrs);
+          const xml = response.toString();
           return {
-            content: [{ type: "text", text: response.toString() }],
+            structuredContent: { twiml: xml },
+            content: [{ type: "text", text: xml }],
           };
         },
       );

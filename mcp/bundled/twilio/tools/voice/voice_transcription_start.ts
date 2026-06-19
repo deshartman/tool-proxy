@@ -4,6 +4,10 @@ import twilio from "twilio";
 
 const { VoiceResponse } = twilio.twiml;
 
+const OutputSchema = {
+  twiml: z.string().describe("Complete <Response> TwiML XML."),
+};
+
 export function voiceTranscriptionStart(): Tool {
   return {
     name: "voice_transcription_start",
@@ -39,6 +43,7 @@ export function voiceTranscriptionStart(): Tool {
               .optional()
               .describe("SID or unique name of a Voice Intelligence service to apply."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ name, languageCode, statusCallbackUrl, partialResults, intelligenceService }) => {
           const response = new VoiceResponse();
@@ -49,8 +54,10 @@ export function voiceTranscriptionStart(): Tool {
           if (partialResults !== undefined) attrs.partialResults = partialResults;
           if (intelligenceService) attrs.intelligenceService = intelligenceService;
           response.start().transcription(attrs);
+          const xml = response.toString();
           return {
-            content: [{ type: "text", text: response.toString() }],
+            structuredContent: { twiml: xml },
+            content: [{ type: "text", text: xml }],
           };
         },
       );

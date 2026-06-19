@@ -2,6 +2,11 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import type { TwilioClient } from "../../twilio-client.js";
 
+const OutputSchema = {
+  sid: z.string().describe("Call SID (CAxxxx) — the handle for subsequent calls_fetch / status events."),
+  status: z.string().describe("Initial Twilio Call status, e.g. 'queued', 'initiated', 'ringing'."),
+};
+
 export function callsCreate(client: TwilioClient): Tool {
   return {
     name: "calls_create",
@@ -17,6 +22,7 @@ export function callsCreate(client: TwilioClient): Tool {
             url: z.string().optional().describe("Webhook URL that returns TwiML when Twilio dials the call (https://…)."),
             statusCallback: z.string().optional().describe("Webhook URL for call lifecycle status updates (https://…)."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ to, from, twiml, url, statusCallback }) => {
           const fromNumber = from ?? process.env.TWILIO_FROM_NUMBER;
@@ -31,10 +37,10 @@ export function callsCreate(client: TwilioClient): Tool {
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const call = await client.calls.create(opts as any);
+          const data = { sid: call.sid, status: call.status };
           return {
-            content: [
-              { type: "text", text: `dialed sid=${call.sid} status=${call.status}` },
-            ],
+            structuredContent: data,
+            content: [{ type: "text", text: `dialed sid=${data.sid} status=${data.status}` }],
           };
         },
       );

@@ -17,6 +17,15 @@ function defaultFrom(channel: Channel): string | undefined {
   return process.env.TWILIO_FROM_NUMBER;
 }
 
+// Conservative subset of the Twilio Message resource — the fields a
+// procedure most commonly references after a send (sid for tracking,
+// status for early-state visibility, channel echo for branching).
+const OutputSchema = {
+  sid: z.string().describe("Message SID (SM/MM prefix)."),
+  status: z.string().describe("Twilio Message status, e.g. 'queued', 'sent', 'delivered'."),
+  channel: z.enum(["sms", "whatsapp", "rcs"]).describe("Echoed channel selector."),
+};
+
 export function messagesCreate(client: TwilioClient): Tool {
   return {
     name: "messages_create",
@@ -44,6 +53,7 @@ export function messagesCreate(client: TwilioClient): Tool {
               "When true and statusCallback is unset, route Twilio's delivery status updates back through the connector's webhook ingress (visible in the inspector and any onStatusCallback listener).",
             ),
           },
+          outputSchema: OutputSchema,
         },
         async ({ channel, to, body, contentSid, contentVariables, mediaUrl, from, messagingServiceSid, statusCallback, receiveStatusCallbacks }) => {
           if (!body && !contentSid) {
@@ -71,9 +81,11 @@ export function messagesCreate(client: TwilioClient): Tool {
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const message = await client.messages.create(opts as any);
+          const data = { sid: message.sid, status: message.status, channel };
           return {
+            structuredContent: data,
             content: [
-              { type: "text", text: `sent sid=${message.sid} status=${message.status} channel=${channel}` },
+              { type: "text", text: `sent sid=${data.sid} status=${data.status} channel=${data.channel}` },
             ],
           };
         },

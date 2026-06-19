@@ -2,6 +2,23 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import type { TwilioClient } from "../../twilio-client.js";
 
+// Fields the handler projects today. duration is a string in the SDK
+// (Twilio returns it as a stringified integer); startTime/endTime are
+// SDK Date instances. Schema treats both as nullable strings/unknown so
+// procedures get correctly-typed projection without us misclaiming Date.
+const OutputSchema = {
+  sid: z.string().describe("Call SID."),
+  status: z.string().describe("Twilio Call status."),
+  direction: z.string().nullable().describe("'inbound' / 'outbound-api' / 'outbound-dial' / 'outbound-reply'."),
+  to: z.string().nullable().describe("Destination address."),
+  from: z.string().nullable().describe("Caller-ID."),
+  duration: z.string().nullable().describe("Duration in seconds, stringified by the SDK."),
+  startTime: z.unknown().describe("Twilio SDK Date or null when not yet started."),
+  endTime: z.unknown().describe("Twilio SDK Date or null when in-flight."),
+  price: z.string().nullable().describe("Call price in priceUnit, stringified by the SDK."),
+  priceUnit: z.string().nullable().describe("ISO 4217 currency code for `price`."),
+};
+
 export function callsFetch(client: TwilioClient): Tool {
   return {
     name: "calls_fetch",
@@ -13,6 +30,7 @@ export function callsFetch(client: TwilioClient): Tool {
           inputSchema: {
             sid: z.string().describe("Call SID, e.g. CAxxxxxxxx"),
           },
+          outputSchema: OutputSchema,
         },
         async ({ sid }) => {
           const call = await client.calls(sid).fetch();
@@ -28,7 +46,10 @@ export function callsFetch(client: TwilioClient): Tool {
             price: call.price,
             priceUnit: call.priceUnit,
           };
-          return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+          return {
+            structuredContent: summary,
+            content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
+          };
         },
       );
     },

@@ -2,6 +2,17 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import type { TwilioClient } from "../../twilio-client.js";
 
+const OutputSchema = {
+  sid: z.string().describe("Verify Service SID (VAxxxx)."),
+  friendlyName: z.string().nullable().describe("Operator-facing label."),
+  codeLength: z.number().nullable().describe("Number of digits in the OTP."),
+  lookupEnabled: z.boolean().nullable().describe("Whether Lookup pre-checks numbers."),
+  skipSmsToLandlines: z.boolean().nullable().describe("Skip SMS to landline-classified numbers."),
+  dtmfInputRequired: z.boolean().nullable().describe("Require DTMF input on call channel."),
+  ttsName: z.string().nullable().describe("TTS voice name for call channel."),
+  psd2Enabled: z.boolean().nullable().describe("PSD2 SCA mode flag."),
+};
+
 export function verifyServicesFetch(client: TwilioClient): Tool {
   return {
     name: "verify_services_fetch",
@@ -13,6 +24,7 @@ export function verifyServicesFetch(client: TwilioClient): Tool {
           inputSchema: {
             sid: z.string().optional().describe("Verify Service SID (VAxxxx). Defaults to TWILIO_VERIFY_SERVICE_SID."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ sid }) => {
           const targetSid = sid ?? process.env.TWILIO_VERIFY_SERVICE_SID;
@@ -28,7 +40,10 @@ export function verifyServicesFetch(client: TwilioClient): Tool {
             ttsName: service.ttsName,
             psd2Enabled: service.psd2Enabled,
           };
-          return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+          return {
+            structuredContent: summary,
+            content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
+          };
         },
       );
     },

@@ -82,13 +82,24 @@ Drop a folder under `mcp/local/<name>/`:
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
+const OutputSchema = {
+  echoed: z.string().describe("The text we echoed back."),
+};
+
 export const echo: Tool = {
   name: "echo",
   register(server) {
     server.registerTool(
       "echo",
-      { description: "Echo a string back.", inputSchema: { text: z.string() } },
-      async ({ text }) => ({ content: [{ type: "text", text }] })
+      {
+        description: "Echo a string back.",
+        inputSchema: { text: z.string() },
+        outputSchema: OutputSchema,
+      },
+      async ({ text }) => ({
+        structuredContent: { echoed: text },
+        content: [{ type: "text", text }],
+      }),
     );
   },
 };
@@ -110,6 +121,18 @@ await createMcpHttpServer({ name: "my-mcp", tools: [echo] });
 ```
 
 No `package.json`, no build step, no port to pick. The connector spawns `tsx server.ts` for you.
+
+#### `outputSchema` + `structuredContent` — five rules
+
+Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 / Type 3 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker. (See [.claude/plans/OUTPUT-SCHEMA.md](../../.claude/plans/OUTPUT-SCHEMA.md).)
+
+1. **Plain object of zod fields, NOT `z.object({...})`.** SDK convention — wrapping in `z.object` changes the inferred argument type and breaks the handler signature. See [`mcp/local/crm/tools/get-recent.ts`](../../mcp/local/crm/tools/get-recent.ts) for the canonical shape.
+2. **Every field gets `.describe(...)`.** This is the contract authors read in the controller UI.
+3. **Return both `content[]` AND `structuredContent` on success.** `content[0].text` is the human-readable form (LLM consumption); `structuredContent` is the machine-shaped sibling field that the controller's `projectPath()` reads from directly. Mismatch between the two is a bug — they should serialize to the same data.
+4. **Schema describes the projection target, not the upstream SDK response.** For tools that wrap an external API, list *only* the fields the handler currently returns. Widen later if a procedure needs more.
+5. **Errors return `content[]` only — no `structuredContent`.** Tool-level failure is signalled via `isError: true` (or just an error envelope in `content[0].text`). Do NOT also set `structuredContent` on the error path — the SDK validates `structuredContent` against `outputSchema` even when `isError: true`, and an error envelope shape (`{ error: "no_customer" }`) won't match a success schema. The schema describes the success shape only.
+
+Type 2 tools (external `endpoint:` / `command:` MCPs) advertise whatever their upstream `tools/list` returns. The connector forwards that verbatim — schema or not — and the controller handles the missing-schema case gracefully.
 
 ## Tests
 

@@ -8,6 +8,11 @@ function toRecipients(input: string | string[]): Recipient[] {
   return (Array.isArray(input) ? input : [input]).map((email) => ({ email }));
 }
 
+const OutputSchema = {
+  messageId: z.string().describe("SendGrid x-message-id header — the handle for email_fetch / email_search."),
+  statusCode: z.number().describe("HTTP status code from /v3/mail/send (typically 202)."),
+};
+
 export function emailSend(getClient: SendGridClientProvider): Tool {
   return {
     name: "email_send",
@@ -56,6 +61,7 @@ export function emailSend(getClient: SendGridClientProvider): Tool {
               .optional()
               .describe("Optional file attachments. Each content field must be base64-encoded."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ to, from, subject, text, html, templateId, dynamicTemplateData, cc, bcc, attachments }) => {
           if (!templateId && !text && !html) {
@@ -103,9 +109,11 @@ export function emailSend(getClient: SendGridClientProvider): Tool {
             body,
           });
           const messageId = response.headers["x-message-id"] ?? "(no x-message-id header)";
+          const data = { messageId, statusCode: response.statusCode };
           return {
+            structuredContent: data,
             content: [
-              { type: "text", text: `sent x-message-id=${messageId} status=${response.statusCode}` },
+              { type: "text", text: `sent x-message-id=${data.messageId} status=${data.statusCode}` },
             ],
           };
         },

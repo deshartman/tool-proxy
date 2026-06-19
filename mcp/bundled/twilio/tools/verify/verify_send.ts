@@ -2,6 +2,12 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import type { TwilioClient } from "../../twilio-client.js";
 
+const OutputSchema = {
+  sid: z.string().describe("Verification attempt SID."),
+  status: z.string().describe("Twilio Verify status, e.g. 'pending'."),
+  channel: z.string().describe("Echoed channel ('sms' / 'call' / 'email' / 'whatsapp')."),
+};
+
 export function verifySend(client: TwilioClient): Tool {
   return {
     name: "verify_send",
@@ -16,6 +22,7 @@ export function verifySend(client: TwilioClient): Tool {
             serviceSid: z.string().optional().describe("Verify Service SID (VAxxxx). Defaults to TWILIO_VERIFY_SERVICE_SID."),
             locale: z.string().optional().describe("BCP-47 locale, e.g. en-US."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ to, channel, serviceSid, locale }) => {
           const targetSid = serviceSid ?? process.env.TWILIO_VERIFY_SERVICE_SID;
@@ -26,9 +33,11 @@ export function verifySend(client: TwilioClient): Tool {
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const verification = await client.verify.v2.services(targetSid).verifications.create(opts as any);
+          const data = { sid: verification.sid, status: verification.status, channel: verification.channel };
           return {
+            structuredContent: data,
             content: [
-              { type: "text", text: `sent sid=${verification.sid} status=${verification.status} channel=${verification.channel}` },
+              { type: "text", text: `sent sid=${data.sid} status=${data.status} channel=${data.channel}` },
             ],
           };
         },

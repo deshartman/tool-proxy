@@ -23,6 +23,10 @@ const clientItem = z.object({
   identity: z.string().describe("Client identity registered against your TwiML app."),
 });
 
+const OutputSchema = {
+  twiml: z.string().describe("Complete <Response> TwiML XML."),
+};
+
 export function voiceDial(): Tool {
   return {
     name: "voice_dial",
@@ -54,6 +58,7 @@ export function voiceDial(): Tool {
             sips: z.array(sipItem).optional().describe("SIP destinations as <Sip> children."),
             clients: z.array(clientItem).optional().describe("Twilio Client destinations as <Client> children."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ callerId, timeout, record, answerOnBridge, action, numbers, sips, clients }) => {
           if (!numbers?.length && !sips?.length && !clients?.length) {
@@ -84,8 +89,10 @@ export function voiceDial(): Tool {
             dial.client(client.identity);
           }
 
+          const xml = response.toString();
           return {
-            content: [{ type: "text", text: response.toString() }],
+            structuredContent: { twiml: xml },
+            content: [{ type: "text", text: xml }],
           };
         },
       );

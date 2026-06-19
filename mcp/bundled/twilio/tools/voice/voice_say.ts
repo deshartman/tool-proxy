@@ -4,6 +4,12 @@ import twilio from "twilio";
 
 const { VoiceResponse } = twilio.twiml;
 
+// TwiML-builder projection: the rendered XML. Procedure authors usually
+// feed it straight into calls_create.twiml or a webhook response.
+const OutputSchema = {
+  twiml: z.string().describe("Complete <Response> TwiML XML."),
+};
+
 export function voiceSay(): Tool {
   return {
     name: "voice_say",
@@ -32,6 +38,7 @@ export function voiceSay(): Tool {
               .optional()
               .describe("Times to repeat. 0 means loop until the call ends."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ text, voice, language, loop }) => {
           const response = new VoiceResponse();
@@ -40,8 +47,10 @@ export function voiceSay(): Tool {
           if (language) attrs.language = language;
           if (loop !== undefined) attrs.loop = loop;
           response.say(attrs, text);
+          const xml = response.toString();
           return {
-            content: [{ type: "text", text: response.toString() }],
+            structuredContent: { twiml: xml },
+            content: [{ type: "text", text: xml }],
           };
         },
       );

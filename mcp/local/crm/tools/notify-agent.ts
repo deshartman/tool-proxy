@@ -24,6 +24,16 @@ function newNotificationId(): string {
   return `ntf_${randomBytes(5).toString("hex")}`;
 }
 
+// Always-success contract — this is a mock dispatcher; there's no failure
+// path. Schema describes the delivery receipt fields a procedure quotes
+// back to the customer.
+const OutputSchema = {
+  notificationId: z.string().describe("Process-local notification identifier (ntf_<hex>)."),
+  appointmentId: z.string().describe("Echoed from input — pin the link in projections."),
+  message: z.string().describe("Echoed body; useful when projecting back into a TwiML say."),
+  deliveredAt: z.string().describe("Delivery timestamp, ISO 8601 UTC."),
+};
+
 export const notifyAgent: Tool = {
   name: "notify_agent",
   register(server) {
@@ -45,6 +55,7 @@ export const notifyAgent: Tool = {
                 "from <oldStart> to <newStart>'.",
             ),
         },
+        outputSchema: OutputSchema,
       },
       async ({ appointmentId, message }) => {
         const record: NotificationRecord = {
@@ -58,6 +69,7 @@ export const notifyAgent: Tool = {
           "agent notified",
         );
         return {
+          structuredContent: record,
           content: [{ type: "text", text: JSON.stringify(record, null, 2) }],
         };
       },

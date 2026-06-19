@@ -7,6 +7,34 @@ import type { Tool } from "@mcp-shim/connector/sdk";
 const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
 const REQ_TIMEOUT_MS = 4000;
 
+// Mirrors mock/customers/calendar.ts Appointment shape. Reschedule
+// procedures project these fields directly (e.g. {{ get_appointment.start }}
+// to quote the old slot back to the customer). Error envelope
+// ({ error: "no_appointment" }) goes via content[] only — see plan rule #5.
+const OutputSchema = {
+  appointmentId: z.string().describe("Stable appointment identifier (apt_<hex>)."),
+  customerPhone: z.string().describe("Customer's phone in E.164."),
+  customerName: z.string().describe("Customer's given name."),
+  agentName: z.string().describe("Assigned technician's name."),
+  start: z.string().describe("Slot start time, ISO 8601 UTC."),
+  end: z.string().describe("Slot end time, start + 1h."),
+  status: z.enum(["scheduled", "rescheduled", "cancelled"]).describe("Appointment status."),
+  rescheduledAt: z.string().optional().describe("If status='rescheduled', when the move was logged."),
+  rescheduledFrom: z.string().optional().describe("If status='rescheduled', the original start time."),
+};
+
+interface AppointmentResponse {
+  appointmentId: string;
+  customerPhone: string;
+  customerName: string;
+  agentName: string;
+  start: string;
+  end: string;
+  status: "scheduled" | "rescheduled" | "cancelled";
+  rescheduledAt?: string;
+  rescheduledFrom?: string;
+}
+
 export const getAppointment: Tool = {
   name: "get_appointment",
   register(server) {
@@ -22,6 +50,7 @@ export const getAppointment: Tool = {
             .string()
             .describe("Customer phone number, E.164 format (e.g. +15551239999)."),
         },
+        outputSchema: OutputSchema,
       },
       async ({ phone }) => {
         const ctl = new AbortController();
@@ -37,8 +66,9 @@ export const getAppointment: Tool = {
             };
           }
           if (!res.ok) throw new Error(`mock-customers ${res.status}`);
-          const body = await res.json();
+          const body = await res.json() as AppointmentResponse;
           return {
+            structuredContent: body,
             content: [{ type: "text", text: JSON.stringify(body, null, 2) }],
           };
         } finally {
