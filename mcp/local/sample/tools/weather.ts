@@ -23,6 +23,15 @@ async function fetchJson(url: string): Promise<unknown> {
   }
 }
 
+// Bucket A (JSON-shaped) per OUTPUT-SCHEMA.md — projection-friendly fields
+// for the next forecast period. The handler still returns a human-readable
+// content[0].text for the LLM, but the structuredContent is the procedure-
+// author target.
+const OutputSchema = {
+  periodName: z.string().describe("Forecast period name (e.g. 'Tonight', 'Tuesday')."),
+  detailedForecast: z.string().describe("Free-text forecast for that period."),
+};
+
 export const weather: Tool = {
   name: "weather",
   register(server) {
@@ -34,6 +43,7 @@ export const weather: Tool = {
           lat: z.number().min(-90).max(90),
           lon: z.number().min(-180).max(180),
         },
+        outputSchema: OutputSchema,
       },
       async ({ lat, lon }) => {
         const points = await fetchJson(`https://api.weather.gov/points/${lat},${lon}`) as {
@@ -46,12 +56,12 @@ export const weather: Tool = {
         };
         const next = forecast?.properties?.periods?.[0];
         if (!next) throw new Error("weather.gov returned no forecast periods");
+        const data = { periodName: next.name, detailedForecast: next.detailedForecast };
         return {
-          content: [
-            { type: "text", text: `${next.name}: ${next.detailedForecast}` },
-          ],
+          structuredContent: data,
+          content: [{ type: "text", text: `${next.name}: ${next.detailedForecast}` }],
         };
-      }
+      },
     );
   },
 };
