@@ -10,6 +10,18 @@ interface CustomerLookupResponse {
   customer: { name: string; surname: string; phone?: string; email?: string };
 }
 
+// outputSchema describes the success-path projection target. The error
+// envelope ({ error: "no_customer" }) is signalled via content[] only —
+// per the OUTPUT-SCHEMA plan rule #5, structuredContent is set only on
+// the success path so the SDK doesn't try to validate an error envelope
+// against this success shape.
+const OutputSchema = {
+  name: z.string().describe("Customer's given name."),
+  surname: z.string().describe("Customer's family name."),
+  phone: z.string().nullable().describe("E.164 phone (canonical), or null if not on file."),
+  email: z.string().nullable().describe("Email, or null if not on file."),
+};
+
 export const getCustomer: Tool = {
   name: "get_customer",
   register(server) {
@@ -24,6 +36,7 @@ export const getCustomer: Tool = {
             .string()
             .describe("Customer phone number, E.164 format (e.g. +15551239999)."),
         },
+        outputSchema: OutputSchema,
       },
       async ({ customer_phone: phone }) => {
         const ctl = new AbortController();
@@ -41,13 +54,10 @@ export const getCustomer: Tool = {
           if (!res.ok) throw new Error(`mock-customers ${res.status}`);
           const body = await res.json() as CustomerLookupResponse;
           const { name, surname, phone: phoneOut, email } = body.customer;
+          const data = { name, surname, phone: phoneOut ?? null, email: email ?? null };
           return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({ name, surname, phone: phoneOut ?? null, email: email ?? null }, null, 2),
-              },
-            ],
+            structuredContent: data,
+            content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           };
         } finally {
           clearTimeout(timer);

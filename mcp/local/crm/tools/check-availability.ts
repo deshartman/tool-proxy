@@ -8,6 +8,33 @@ import type { Tool } from "@mcp-shim/connector/sdk";
 const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
 const REQ_TIMEOUT_MS = 4000;
 
+// Mirrors mock/customers/calendar.ts AvailabilityResult. The mock service
+// always returns 200 with this body shape — `available` distinguishes the
+// success vs. unavailable cases, but neither is an "error" in the MCP
+// sense, so structuredContent is populated for both.
+const OutputSchema = {
+  requested: z.string().describe("Echoed input — the slot start time, ISO 8601 UTC."),
+  available: z.boolean().describe("True if the slot is bookable as-is."),
+  reason: z
+    .enum(["outside_working_hours", "in_the_past", "slot_taken"])
+    .optional()
+    .describe("Reason the slot is unavailable; absent when available=true."),
+  daysFromNow: z.number().describe("Whole UTC days from today to the requested slot. 0 = today."),
+  isSameDay: z.boolean().describe("Convenience flag: daysFromNow === 0."),
+  technician: z.string().describe("Technician the availability is computed for."),
+  suggestions: z.array(z.string()).describe("Up to 3 nearby free slot start times (ISO 8601 UTC); empty when available=true."),
+};
+
+interface AvailabilityResponse {
+  requested: string;
+  available: boolean;
+  reason?: "outside_working_hours" | "in_the_past" | "slot_taken";
+  daysFromNow: number;
+  isSameDay: boolean;
+  technician: string;
+  suggestions: string[];
+}
+
 export const checkAvailability: Tool = {
   name: "check_availability",
   register(server) {
@@ -24,6 +51,7 @@ export const checkAvailability: Tool = {
             .string()
             .describe("Slot start time, ISO 8601 UTC (e.g. 2026-06-22T14:00:00Z)."),
         },
+        outputSchema: OutputSchema,
       },
       async ({ start }) => {
         const ctl = new AbortController();
@@ -34,8 +62,9 @@ export const checkAvailability: Tool = {
             { signal: ctl.signal },
           );
           if (!res.ok) throw new Error(`mock-customers ${res.status}`);
-          const body = await res.json();
+          const body = await res.json() as AvailabilityResponse;
           return {
+            structuredContent: body,
             content: [{ type: "text", text: JSON.stringify(body, null, 2) }],
           };
         } finally {

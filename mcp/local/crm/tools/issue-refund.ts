@@ -42,6 +42,21 @@ function newRefundId(): string {
   return `ref_${randomBytes(6).toString("hex")}`;
 }
 
+// Success-path projection target. Both error envelopes (already_refunded,
+// amount_exceeds_order_total) are signalled via content[] only — per the
+// OUTPUT-SCHEMA plan rule #5, structuredContent is set only when the
+// refund actually issues so the SDK doesn't validate the error envelope
+// against this success shape.
+const OutputSchema = {
+  refundId: z.string().describe("Process-local refund identifier (ref_<hex>)."),
+  orderId: z.string().describe("Echoed from the input — pin the link in projections."),
+  amount: z.number().describe("Refunded amount, in the order's currency."),
+  currency: z.string().describe("ISO 4217 currency code."),
+  issuedAt: z.string().describe("Refund issuance timestamp, ISO 8601 UTC."),
+  status: z.literal("issued").describe("Always 'issued' on the success path."),
+  reason: z.string().nullable().describe("Free-text reason if supplied at call time, else null."),
+};
+
 export const issueRefund: Tool = {
   name: "issue_refund",
   register(server) {
@@ -57,6 +72,7 @@ export const issueRefund: Tool = {
           currency: z.string().default("USD").describe("ISO 4217 currency code."),
           reason: z.string().optional().describe("Free-text reason recorded with the refund."),
         },
+        outputSchema: OutputSchema,
       },
       async ({ orderId, amount, currency, reason }) => {
         const existing = REFUND_LEDGER.get(orderId);
@@ -102,25 +118,18 @@ export const issueRefund: Tool = {
         };
         REFUND_LEDGER.set(orderId, record);
 
+        const data = {
+          refundId: record.refundId,
+          orderId,
+          amount: record.amount,
+          currency: record.currency,
+          issuedAt: record.issuedAt,
+          status: "issued" as const,
+          reason: reason ?? null,
+        };
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  refundId: record.refundId,
-                  orderId,
-                  amount: record.amount,
-                  currency: record.currency,
-                  issuedAt: record.issuedAt,
-                  status: "issued",
-                  reason: reason ?? null,
-                },
-                null,
-                2
-              ),
-            },
-          ],
+          structuredContent: data,
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
         };
       }
     );
