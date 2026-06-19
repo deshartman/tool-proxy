@@ -155,9 +155,11 @@ export async function boot(): Promise<void> {
 
   // 3. Build initial manifest and push it into the inspector (already running).
   let manifest: ToolManifest = await buildManifest(config, servers, version, configPath);
-  // Manifest-time guardrail: throws if any Type 1 / Type 3 tool we ship is
-  // missing outputSchema (gated by STRICT_OUTPUT_SCHEMA). Off by default
-  // during the rollout in .claude/plans/OUTPUT-SCHEMA.md; flips to on at S6.
+  // Manifest-time guardrail: log.error per Type 1 / Type 3 tool that ships
+  // without an outputSchema. Doesn't throw — a missing schema is a per-tool
+  // bug we should report loudly, but the rest of the manifest still works
+  // and the broken tool just won't support hydration until we ship a fix.
+  // See .claude/plans/OUTPUT-SCHEMA.md.
   validateManifestSchemas(manifest, config);
   log.info({ tools: countTools(manifest) }, `built manifest`);
   inspector?.setManifest(manifest);

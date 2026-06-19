@@ -34,25 +34,6 @@ export function envOptional(
   return isBlank(raw) ? undefined : raw;
 }
 
-// Boolean env reader. Empty-or-unset → defaultValue. Set values follow the
-// shell convention: "1" / "true" / "yes" / "on" (case-insensitive) → true;
-// "0" / "false" / "no" / "off" → false. Anything else throws so an admin
-// fixing a typo gets a fail-fast at boot rather than silent default-coercion.
-export function envFlag(
-  name: string,
-  defaultValue: boolean,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  const raw = env[name];
-  if (isBlank(raw)) return defaultValue;
-  const lowered = raw.toLowerCase();
-  if (lowered === "1" || lowered === "true" || lowered === "yes" || lowered === "on") return true;
-  if (lowered === "0" || lowered === "false" || lowered === "no" || lowered === "off") return false;
-  throw new Error(
-    `${name} must be a boolean (1/0, true/false, yes/no, on/off); got ${JSON.stringify(raw)}. Unset to use the default (${defaultValue}).`,
-  );
-}
-
 // Numeric env reader. Empty-or-unset → defaultValue. Set-but-non-numeric
 // throws an admin-actionable error naming the var and the bad value rather
 // than silently coercing to NaN/0 (the prior `Number("foo")` foot-gun).
