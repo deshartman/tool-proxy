@@ -2,6 +2,10 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import type { SendGridClientProvider } from "../../sendgrid-client.js";
 
+const OutputSchema = {
+  body: z.unknown().describe("SendGrid /v3/messages search response body. Typically { messages: [...] }."),
+};
+
 export function emailSearch(getClient: SendGridClientProvider): Tool {
   return {
     name: "email_search",
@@ -25,6 +29,7 @@ export function emailSearch(getClient: SendGridClientProvider): Tool {
               .optional()
               .describe("Max results to return (1-1000). Default 10."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ query, limit }) => {
           const client = getClient();
@@ -33,7 +38,10 @@ export function emailSearch(getClient: SendGridClientProvider): Tool {
             url: "/v3/messages",
             qs: { query, limit: limit ?? 10 },
           });
-          return { content: [{ type: "text", text: JSON.stringify(body, null, 2) }] };
+          return {
+            structuredContent: { body },
+            content: [{ type: "text", text: JSON.stringify(body, null, 2) }],
+          };
         },
       );
     },

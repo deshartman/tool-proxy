@@ -29,6 +29,10 @@ const parameterItem = z.object({
   value: z.string().describe("Custom parameter value."),
 });
 
+const OutputSchema = {
+  twiml: z.string().describe("Complete <Response> TwiML XML."),
+};
+
 export function voicePay(): Tool {
   return {
     name: "voice_pay",
@@ -63,6 +67,7 @@ export function voicePay(): Tool {
               .optional()
               .describe("Custom name/value parameters forwarded to the payment connector."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ chargeAmount, currency, paymentConnector, paymentMethod, description, action, maxAttempts, prompts, parameters }) => {
           const response = new VoiceResponse();
@@ -84,8 +89,10 @@ export function voicePay(): Tool {
             pay.parameter({ name: param.name, value: param.value });
           }
 
+          const xml = response.toString();
           return {
-            content: [{ type: "text", text: response.toString() }],
+            structuredContent: { twiml: xml },
+            content: [{ type: "text", text: xml }],
           };
         },
       );

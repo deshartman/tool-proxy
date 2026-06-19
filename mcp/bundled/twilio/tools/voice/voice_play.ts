@@ -4,6 +4,10 @@ import twilio from "twilio";
 
 const { VoiceResponse } = twilio.twiml;
 
+const OutputSchema = {
+  twiml: z.string().describe("Complete <Response> TwiML XML."),
+};
+
 export function voicePlay(): Tool {
   return {
     name: "voice_play",
@@ -33,6 +37,7 @@ export function voicePlay(): Tool {
               .optional()
               .describe("Times to repeat. 0 means loop until the call ends."),
           },
+          outputSchema: OutputSchema,
         },
         async ({ url, digits, loop }) => {
           if (!url && !digits) {
@@ -43,8 +48,10 @@ export function voicePlay(): Tool {
           if (digits) attrs.digits = digits;
           if (loop !== undefined) attrs.loop = loop;
           response.play(attrs, url);
+          const xml = response.toString();
           return {
-            content: [{ type: "text", text: response.toString() }],
+            structuredContent: { twiml: xml },
+            content: [{ type: "text", text: xml }],
           };
         },
       );
