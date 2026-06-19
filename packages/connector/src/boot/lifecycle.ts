@@ -120,7 +120,7 @@ export async function boot(): Promise<void> {
   });
 
   if (inspector) {
-    inspector.onReconnect = () => { void reconnect("inspector requested"); };
+    inspector.onReconnect = () => { void reconnect("inspector requested", { manual: true }); };
     inspector.setIdentity(
       state.registrationToken
         ? { kind: "bound", tokenLen: state.registrationToken.length }
@@ -293,8 +293,16 @@ export async function boot(): Promise<void> {
     startTimers();
   }
 
-  async function reconnect(reason: string): Promise<void> {
-    if (reconnecting) return;
+  async function reconnect(reason: string, opts?: { manual?: boolean }): Promise<void> {
+    // Auto-fires that arrive while a reconnect is already in flight are
+    // genuine duplicates — drop them. Manual operator clicks are NOT
+    // duplicates: they're the escape hatch from a stuck dial (e.g. a
+    // hung TLS handshake during a network outage), so we let them through
+    // and rely on the close-then-redial below to abort the in-flight WS.
+    if (reconnecting && !opts?.manual) return;
+    if (reconnecting && opts?.manual) {
+      log.info({ reason }, `manual reconnect overriding in-flight attempt`);
+    }
     reconnecting = true;
     try {
       // A manual click or an auto-fire both come through here. Either way,
@@ -309,6 +317,8 @@ export async function boot(): Promise<void> {
       reconnectCtl.clearRejected();
       log.info({ reason }, `reconnect requested`);
       stopTimers();
+      // close() on a CONNECTING ws aborts the in-flight handshake — that's
+      // how a manual override unblocks a hung dial.
       tunnel?.close("reconnect");
       tunnel = undefined;
 

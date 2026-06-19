@@ -29,21 +29,56 @@ header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 1rem;
   padding: 0.9rem 1.25rem;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 header h1 { font-size: 1rem; margin: 0 0 0.5rem; font-weight: 600; }
-.header-meta { display: flex; flex-direction: column; gap: 4px; }
+.header-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 header .meta { font-size: 0.75rem; }
 header .meta code { font-family: var(--mono); color: var(--accent); }
 header .meta .muted + code { margin-right: 0.5rem; }
 .muted { color: var(--muted); }
-.status { font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; font-family: var(--mono); }
-.status-open         { background: rgba(63, 185, 80, 0.15); color: var(--green); }
-.status-connecting   { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
-.status-reconnecting { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
-.status-closed       { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+/* Status pill is the primary "is this thing alive?" signal. Bigger,
+ * locked to the right edge with flex-shrink:0 so it never wraps off
+ * screen on narrow viewports. The dot before the label is a small
+ * visual anchor — green/yellow/red traffic-light intuition. */
+.status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  flex-shrink: 0;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status-open         { background: rgba(63, 185, 80, 0.18);  color: var(--green); }
+.status-connecting   { background: rgba(210, 153, 34, 0.18); color: var(--yellow); }
+.status-reconnecting { background: rgba(210, 153, 34, 0.18); color: var(--yellow); }
+.status-closed       { background: rgba(248, 81, 73, 0.18);  color: var(--red); }
+/* Pulse animation while a dial is in flight so it's clearly live, not
+ * a stale snapshot. */
+.status-connecting::before,
+.status-reconnecting::before {
+  animation: status-pulse 1s ease-in-out infinite;
+}
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
 
 .identity { font-family: var(--mono); padding: 1px 6px; border-radius: 4px; cursor: help; }
 .identity-bound      { background: rgba(63, 185, 80, 0.15); color: var(--green); }

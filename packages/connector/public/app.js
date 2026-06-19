@@ -51,17 +51,28 @@ elClear.addEventListener('click', () => {
   if (selection?.kind === 'frame') setSelection(null);
 });
 
+// Reconnect button: disable + show 'reconnecting…' until the SSE stream
+// reports a state change away from 'connecting' / 'reconnecting'. The
+// previous version reset the label after a hard-coded 1500ms regardless
+// of whether the dial succeeded — looked healthy even when the connector
+// was hung on a half-open TLS handshake.
+const RECONNECT_LABEL_DEFAULT = 'reconnect';
+const RECONNECT_LABEL_PENDING = 'reconnecting…';
+function setReconnectButtonState(connectionState) {
+  // 'connecting' (initial dial) and 'reconnecting' (in backoff window)
+  // both keep the button locked; 'open' and 'closed' release it.
+  const inFlight = connectionState === 'connecting' || connectionState === 'reconnecting';
+  elReconnect.disabled = inFlight;
+  elReconnect.textContent = inFlight ? RECONNECT_LABEL_PENDING : RECONNECT_LABEL_DEFAULT;
+}
 elReconnect.addEventListener('click', async () => {
   elReconnect.disabled = true;
-  const original = elReconnect.textContent;
-  elReconnect.textContent = 'reconnecting…';
+  elReconnect.textContent = RECONNECT_LABEL_PENDING;
   try {
     await fetch('/reconnect', { method: 'POST' });
-  } catch { /* ignore */ }
-  setTimeout(() => {
-    elReconnect.disabled = false;
-    elReconnect.textContent = original;
-  }, 1500);
+  } catch { /* ignore — SSE will show terminal state */ }
+  // No timer reset: the SSE state event will toggle the label back
+  // when the connector emits state=open or state=closed.
 });
 
 function setIdentity(identity) {
@@ -674,6 +685,7 @@ function fmtIso(iso) {
 function applySnapshot(s) {
   elController.textContent = s.controllerUrl;
   setStatus(s.state, s.reconnect);
+  setReconnectButtonState(s.state);
   setIdentity(s.identity);
   setHeader(s.header);
   renderManifest(s.manifest);
@@ -736,7 +748,10 @@ function connectSse() {
     const ev = JSON.parse(e.data);
     switch (ev.kind) {
       case 'snapshot': applySnapshot(ev); break;
-      case 'state':    setStatus(ev.state, ev.reconnect); break;
+      case 'state':
+        setStatus(ev.state, ev.reconnect);
+        setReconnectButtonState(ev.state);
+        break;
       case 'identity': setIdentity(ev.identity); break;
       case 'header':   setHeader(ev.header); break;
       case 'manifest': renderManifest(ev.manifest); break;

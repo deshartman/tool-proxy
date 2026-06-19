@@ -32,6 +32,13 @@ export class TunnelClient {
   private closed = false;
   private _state: WsState = "connecting";
 
+  // Hard cap on the WS handshake. A network outage or a half-open TLS
+  // socket can leave a dial hanging for minutes (we observed 4 min before
+  // the OS finally fired ECONNRESET) which strands the connector in
+  // reconnecting=true and makes the manual Reconnect button feel dead.
+  // 10s is generous — a healthy controller responds in ~300ms.
+  private static readonly DIAL_TIMEOUT_MS = 10_000;
+
   constructor(
     private readonly url: string,
     private readonly authToken?: string,
@@ -75,18 +82,39 @@ export class TunnelClient {
       const ws = new WebSocket(wsUrl, { headers });
       this.ws = ws;
 
+      // Dial-timeout. Without this, a half-open TLS handshake can hang
+      // for the kernel TCP timeout (~4min) and the connector sits stuck
+      // in reconnecting=true. 10s is the hard cap.
+      const timeoutMs = TunnelClient.DIAL_TIMEOUT_MS;
+      const dialTimer = setTimeout(() => {
+        // Abort the dial. terminate() forces a close even mid-handshake,
+        // which the existing 'close' handler picks up.
+        try { ws.terminate(); } catch { /* swallow */ }
+        reject(new Error(`Tunnel dial timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const clearDialTimer = (): void => clearTimeout(dialTimer);
+
       ws.once("open", () => {
+        clearDialTimer();
         this.setState("open");
         resolve();
       });
       ws.once("unexpected-response", (_req, res) => {
+        clearDialTimer();
         reject(new Error(`Tunnel rejected with status ${res.statusCode}`));
       });
       ws.on("error", (error) => {
-        if (ws.readyState === WebSocket.CONNECTING) reject(error);
-        else this.onerror?.(error);
+        if (ws.readyState === WebSocket.CONNECTING) {
+          clearDialTimer();
+          reject(error);
+        } else {
+          this.onerror?.(error);
+        }
       });
-      ws.on("close", () => this.handleClose());
+      ws.on("close", () => {
+        clearDialTimer();
+        this.handleClose();
+      });
       ws.on("message", (data, isBinary) => {
         if (isBinary) return;
         this.handleMessage(rawDataToString(data));
