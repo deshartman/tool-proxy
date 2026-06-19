@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
-import { weather } from "../../../../../mcp/local/sample/tools/weather.js";
+import { weather } from "@mcp/local/sample/tools/weather.js";
 import {
   captureRegistration,
   asZodObject,

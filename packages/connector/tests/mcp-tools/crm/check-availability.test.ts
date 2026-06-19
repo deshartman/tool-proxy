@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
-import { checkAvailability } from "../../../../../mcp/local/crm/tools/check-availability.js";
+import { checkAvailability } from "@mcp/local/crm/tools/check-availability.js";
 import {
   captureRegistration,
   asZodObject,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { now } from "../../../../../mcp/local/sample/tools/now.js";
+import { now } from "@mcp/local/sample/tools/now.js";
 import {
   captureRegistration,
   asZodObject,

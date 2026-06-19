@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { uuid } from "../../../../../mcp/local/sample/tools/uuid.js";
+import { uuid } from "@mcp/local/sample/tools/uuid.js";
 import {
   captureRegistration,
   asZodObject,

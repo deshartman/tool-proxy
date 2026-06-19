@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { notifyAgent } from "../../../../../mcp/local/crm/tools/notify-agent.js";
+import { notifyAgent } from "@mcp/local/crm/tools/notify-agent.js";
 import {
   captureRegistration,
   asZodObject,

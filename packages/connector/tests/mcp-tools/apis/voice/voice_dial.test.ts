@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { voiceDial } from "../../../../../../mcp/bundled/twilio/tools/voice/voice_dial.js";
+import { voiceDial } from "@mcp/bundled/twilio/tools/voice/voice_dial.js";
 import {
   captureRegistration,
   asZodObject,

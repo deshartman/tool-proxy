@@ -9,6 +9,10 @@
     "declaration": true,
     "composite": true,
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    "paths": {
+      "@connector/*": ["./packages/connector/src/*"],
+      "@mcp/*": ["./mcp/*"]
+    }
   }
 }

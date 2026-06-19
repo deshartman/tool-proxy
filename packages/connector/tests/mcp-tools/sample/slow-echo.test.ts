@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { slowEcho } from "../../../../../mcp/local/sample/tools/slow-echo.js";
+import { slowEcho } from "@mcp/local/sample/tools/slow-echo.js";
 import {
   captureRegistration,
   asZodObject,

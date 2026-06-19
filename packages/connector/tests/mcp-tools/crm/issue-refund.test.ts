@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
-import { issueRefund } from "../../../../../mcp/local/crm/tools/issue-refund.js";
+import { issueRefund } from "@mcp/local/crm/tools/issue-refund.js";
 import {
   captureRegistration,
   asZodObject,

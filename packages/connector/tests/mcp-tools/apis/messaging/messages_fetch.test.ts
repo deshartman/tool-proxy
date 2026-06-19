@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { messagesFetch } from "../../../../../../mcp/bundled/twilio/tools/messaging/messages_fetch.js";
-import type { TwilioClient } from "../../../../../../mcp/bundled/twilio/twilio-client.js";
+import { messagesFetch } from "@mcp/bundled/twilio/tools/messaging/messages_fetch.js";
+import type { TwilioClient } from "@mcp/bundled/twilio/twilio-client.js";
 import {
   captureRegistration,
   asZodObject,

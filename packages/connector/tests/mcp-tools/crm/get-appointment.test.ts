@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
-import { getAppointment } from "../../../../../mcp/local/crm/tools/get-appointment.js";
+import { getAppointment } from "@mcp/local/crm/tools/get-appointment.js";
 import {
   captureRegistration,
   asZodObject,

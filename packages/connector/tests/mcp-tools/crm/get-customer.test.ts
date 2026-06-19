@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import { getCustomer } from "../../../../../mcp/local/crm/tools/get-customer.js";
+import { getCustomer } from "@mcp/local/crm/tools/get-customer.js";
 import {
   captureRegistration,
   asZodObject,
