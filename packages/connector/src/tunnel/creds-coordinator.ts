@@ -84,14 +84,14 @@ export class CredsCoordinator {
       pending.resolve({}, "none");
       return;
     }
-    const env = frame.env ?? {};
+    const env = stripEmptyValues(frame.env ?? {});
     const source = frame.source ?? "none";
     pending.resolve(env, source);
     this.applyEnvSafely(pending.mcp, env, source, "creds-response");
   }
 
   handleUpdate(frame: CredsUpdateFrame): void {
-    this.applyEnvSafely(frame.mcp, frame.env, frame.source, frame.reason ?? "creds-update");
+    this.applyEnvSafely(frame.mcp, stripEmptyValues(frame.env), frame.source, frame.reason ?? "creds-update");
   }
 
   // Fire-and-forget wrapper. A supervisor restart that throws (e.g. child
@@ -165,4 +165,19 @@ export class CredsCoordinator {
       this.pending.set(requestId, pending);
     });
   }
+}
+
+// Strip keys whose value is the empty string. Defensive against controllers
+// that send `{X: ""}` to mean "no value" — the connector's project-wide
+// rule (env.ts) treats empty == not-set, so we normalize at the wire entry
+// point so every downstream reader (supervisor envEquals, bundle gating,
+// inspector status) sees a consistent shape. See docs/MCP-PROTOCOL.md
+// §"creds-response — controller MUST omit absent keys" for the contract;
+// this function is the connector-side defensive backstop.
+function stripEmptyValues(env: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== "") out[key] = value;
+  }
+  return out;
 }

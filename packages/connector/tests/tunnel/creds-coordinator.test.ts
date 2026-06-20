@@ -166,3 +166,184 @@ describe("CredsCoordinator error isolation", () => {
     await reload;
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// Defensive tests for the empty-string strip at the wire boundary.
+//
+// docs/MCP-PROTOCOL.md §"creds-response — controller MUST omit absent
+// keys" specifies the contract. The connector's stripEmptyValues helper
+// is the defensive backstop: a controller that violates the contract
+// (sends `{X: ""}` when omitting was intended) MUST NOT cause restart
+// churn or crash the connector. The supervisor's envEquals no-op-skip
+// guard (commit 0900b8c) treats `{}` and `{X: ""}` as different
+// payloads — without this strip, the same "no SendGrid creds" reply
+// would thrash the apis child every time it arrived.
+//
+// Three creds shapes that must all converge to the same supervisor
+// payload when controllers are inconsistent:
+//   1. Controller omits the absent key:           env: { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN }
+//   2. Controller sends empty string for absent:  env: { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, SENDGRID_API_KEY: "" }
+//   3. Controller sends entirely empty payload:   env: {}
+//
+// All three should reach supervisor.applyControllerEnv with values that
+// produce identical behaviour — no empty-string keys leak through.
+// ──────────────────────────────────────────────────────────────────────
+describe("CredsCoordinator strips empty-string values from controller-supplied env", () => {
+  it("creds-response: drops empty-string keys before reaching the supervisor", async () => {
+    const apply = vi.fn().mockResolvedValue({ applied: true, restarted: false });
+    const { coordinator } = buildCoordinator({ applyControllerEnv: apply });
+
+    const reload = coordinator.reload("apis", "twilio", []);
+    const requestId = [
+      ...(coordinator as unknown as { pending: Map<string, { mcp: string }> }).pending.keys(),
+    ][0];
+
+    coordinator.handleResponse({
+      type: "creds-response",
+      requestId,
+      env: {
+        TWILIO_ACCOUNT_SID: "AC123",
+        TWILIO_AUTH_TOKEN: "tok",
+        SENDGRID_API_KEY: "",
+      },
+      source: "twilio-tunnel-row",
+    });
+
+    await flush();
+    await flush();
+
+    // Only the two non-empty keys reach the supervisor.
+    expect(apply).toHaveBeenCalledWith(
+      "apis",
+      { TWILIO_ACCOUNT_SID: "AC123", TWILIO_AUTH_TOKEN: "tok" },
+      "twilio-tunnel-row",
+      "creds-response",
+    );
+    await reload;
+  });
+
+  it("creds-update: same strip applies on the controller-push path", async () => {
+    const apply = vi.fn().mockResolvedValue({ applied: true, restarted: true });
+    const { coordinator } = buildCoordinator({ applyControllerEnv: apply });
+
+    coordinator.handleUpdate({
+      type: "creds-update",
+      mcp: "apis",
+      env: {
+        TWILIO_ACCOUNT_SID: "AC123",
+        TWILIO_AUTH_TOKEN: "tok",
+        SENDGRID_API_KEY: "",
+        EMPTY_OPTIONAL: "",
+      },
+      source: "twilio-tunnel-row",
+      reason: "rotation",
+    });
+
+    await flush();
+    await flush();
+
+    expect(apply).toHaveBeenCalledWith(
+      "apis",
+      { TWILIO_ACCOUNT_SID: "AC123", TWILIO_AUTH_TOKEN: "tok" },
+      "twilio-tunnel-row",
+      "rotation",
+    );
+  });
+
+  it("convergence: all three controller shapes for 'no SendGrid' produce identical supervisor payloads", async () => {
+    // The contract claim from MCP-PROTOCOL.md: a controller that has no
+    // SendGrid for an org can express that three ways. The connector
+    // MUST treat all three as equivalent so envEquals doesn't see a
+    // difference and trigger a pointless restart.
+    const calls: Array<Record<string, string>> = [];
+    const apply = vi.fn().mockImplementation(
+      (_mcp: string, env: Record<string, string>) => {
+        calls.push(env);
+        return Promise.resolve({ applied: true, restarted: false });
+      },
+    );
+    const { coordinator } = buildCoordinator({ applyControllerEnv: apply });
+
+    const shapes: Array<Record<string, string>> = [
+      // Shape 1: omitted absent key (the spec-correct shape)
+      { TWILIO_ACCOUNT_SID: "AC123", TWILIO_AUTH_TOKEN: "tok" },
+      // Shape 2: empty-string absent key (controller bug — defensive backstop)
+      { TWILIO_ACCOUNT_SID: "AC123", TWILIO_AUTH_TOKEN: "tok", SENDGRID_API_KEY: "" },
+      // Shape 3: even more keys empty
+      { TWILIO_ACCOUNT_SID: "AC123", TWILIO_AUTH_TOKEN: "tok", SENDGRID_API_KEY: "", FUTURE_KEY: "" },
+    ];
+
+    for (const env of shapes) {
+      coordinator.handleUpdate({
+        type: "creds-update",
+        mcp: "apis",
+        env,
+        source: "twilio-tunnel-row",
+      });
+      await flush();
+      await flush();
+    }
+
+    expect(calls).toHaveLength(3);
+    // Every call delivered the same payload to the supervisor.
+    expect(calls[0]).toEqual(calls[1]);
+    expect(calls[1]).toEqual(calls[2]);
+    expect(calls[0]).toEqual({ TWILIO_ACCOUNT_SID: "AC123", TWILIO_AUTH_TOKEN: "tok" });
+  });
+
+  it("preserves real values that contain whitespace or special characters", async () => {
+    // Strip is empty-string-only, NOT a generic falsy filter. A real
+    // value of "  " (whitespace) or "0" or "false" must reach the
+    // supervisor untouched.
+    const apply = vi.fn().mockResolvedValue({ applied: true, restarted: false });
+    const { coordinator } = buildCoordinator({ applyControllerEnv: apply });
+
+    coordinator.handleUpdate({
+      type: "creds-update",
+      mcp: "apis",
+      env: {
+        REAL_VALUE: "AC123",
+        WHITESPACE: "   ",
+        ZERO: "0",
+        FALSE: "false",
+        EMPTY_TO_DROP: "",
+      },
+      source: "operator-entered",
+    });
+
+    await flush();
+    await flush();
+
+    expect(apply).toHaveBeenCalledWith(
+      "apis",
+      { REAL_VALUE: "AC123", WHITESPACE: "   ", ZERO: "0", FALSE: "false" },
+      "operator-entered",
+      "creds-update",
+    );
+  });
+
+  it("does not crash on undefined env in creds-response (reply with only an error field)", async () => {
+    const apply = vi.fn().mockResolvedValue({ applied: true, restarted: false });
+    const { coordinator, log } = buildCoordinator({ applyControllerEnv: apply });
+
+    const reload = coordinator.reload("apis", "twilio", []);
+    const requestId = [
+      ...(coordinator as unknown as { pending: Map<string, { mcp: string }> }).pending.keys(),
+    ][0];
+
+    // env field omitted entirely — the existing `?? {}` fallback handles
+    // it, then stripEmptyValues runs on the empty default.
+    coordinator.handleResponse({
+      type: "creds-response",
+      requestId,
+      source: "none",
+    });
+
+    await flush();
+    await flush();
+
+    expect(apply).toHaveBeenCalledWith("apis", {}, "none", "creds-response");
+    expect(log.error).not.toHaveBeenCalled();
+    await reload;
+  });
+});

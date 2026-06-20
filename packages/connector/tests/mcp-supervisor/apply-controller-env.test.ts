@@ -140,6 +140,47 @@ describe("McpSupervisor.applyControllerEnv no-op skip", () => {
     expect(result).toEqual({ applied: false, restarted: false });
   });
 
+  it("envEquals: skip restart when an apparent change is just key reordering or value re-assertion", async () => {
+    // The coordinator's stripEmptyValues is the first line of defense
+    // against the "empty string vs omitted" controller bug. The
+    // supervisor's envEquals is the second: even if the strip is
+    // bypassed (e.g. a future caller goes direct to applyControllerEnv),
+    // an env that's structurally identical to the prior one MUST NOT
+    // restart the child.
+    plantRunningEntry(privates, "apis", { TWILIO_ACCOUNT_SID: "AC123", TWILIO_AUTH_TOKEN: "tok" });
+    const beforeChild = privates.entries.get("apis")?.child;
+
+    // Same key set, same values — applyControllerEnv must skip restart.
+    const result = await supervisor.applyControllerEnv(
+      "apis",
+      { TWILIO_AUTH_TOKEN: "tok", TWILIO_ACCOUNT_SID: "AC123" },  // reordered
+      "twilio-tunnel-row",
+      "creds-update",
+    );
+
+    expect(result).toEqual({ applied: true, restarted: false });
+    expect(privates.entries.get("apis")?.child).toBe(beforeChild);
+    expect(beforeChild?.kill).not.toHaveBeenCalled();
+  });
+
+  it("envEquals: detect a genuine value change even when key set is identical", async () => {
+    // Mirror of the above: same keys, different value should restart.
+    plantRunningEntry(privates, "apis", { TWILIO_AUTH_TOKEN: "old" });
+    const beforeChild = privates.entries.get("apis")?.child;
+
+    await supervisor
+      .applyControllerEnv(
+        "apis",
+        { TWILIO_AUTH_TOKEN: "new" },
+        "twilio-tunnel-row",
+        "creds-update",
+      )
+      .catch(() => undefined);
+
+    expect(privates.entries.get("apis")?.child).toBeUndefined();
+    expect(beforeChild?.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("DOES restart when controller supplies a genuinely new env (the legitimate creds-update path)", async () => {
     plantRunningEntry(privates, "crm", { CRM_TOKEN: "old" });
     const beforeChild = privates.entries.get("crm")?.child;
