@@ -203,4 +203,45 @@ describe("McpSupervisor.applyControllerEnv no-op skip", () => {
     expect(privates.entries.get("crm")?.child).toBeUndefined();
     expect(beforeChild?.kill).toHaveBeenCalledWith("SIGTERM");
   });
+
+  it("stopEntry clears spec.endpoint and __port for Type 1 entries (so the next start re-enters spawnChild)", async () => {
+    // Defensive test for the boot 2026-06-21 (second crash) ECONNREFUSED.
+    // Symptom: a creds-update for the apis MCP killed the running child
+    // (SIGTERM, code 143), then tried to *connect* to the dead port instead
+    // of respawning — fetch failed: connect ECONNREFUSED 127.0.0.1:7102.
+    //
+    // Root cause: spawnChild() mutates spec.endpoint to the auto-assigned
+    // localhost URL after readiness probe. On a subsequent startEntry,
+    // isType1Spawn(spec) returns false (endpoint is set), so spawnChild
+    // is skipped and connectServer dials the dead port. The fix clears
+    // endpoint + __port in stopEntry so the spec is re-classified as
+    // Type 1 spawn on the next start.
+    //
+    // This test plants the post-spawn state directly (endpoint + __port set)
+    // and verifies that applying a new controller env — which triggers
+    // restartEntry → stopEntry → startEntry — clears the mutated fields.
+    plantRunningEntry(privates, "apis", { TWILIO_AUTH_TOKEN: "old" });
+    const entry = privates.entries.get("apis");
+    expect(entry).toBeDefined();
+    // Mutate the spec to the post-spawn shape that spawnChild() produces.
+    const mutSpec = entry?.spec as { endpoint?: string; __port?: number };
+    mutSpec.endpoint = "http://127.0.0.1:7102/mcp";
+    mutSpec.__port = 7102;
+
+    await supervisor
+      .applyControllerEnv(
+        "apis",
+        { TWILIO_AUTH_TOKEN: "new" },
+        "twilio-tunnel-row",
+        "creds-update",
+      )
+      .catch(() => undefined);
+
+    // After stopEntry, the spec must be back to the pre-spawn shape so the
+    // next startEntry call re-enters spawnChild. If this regresses, future
+    // restarts for Type 1 children will leave the connector calling
+    // connectServer against a dead port.
+    expect(mutSpec.endpoint).toBeUndefined();
+    expect(mutSpec.__port).toBeUndefined();
+  });
 });

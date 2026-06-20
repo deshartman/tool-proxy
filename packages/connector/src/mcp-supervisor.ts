@@ -259,6 +259,18 @@ export class McpSupervisor {
       }
       entry.child = undefined;
       if (typeof port === "number") this.reservedPorts.delete(port);
+      // Restore the spec to its pre-spawn shape so isType1Spawn() classifies
+      // it correctly on the next startEntry. spawnChild() mutates `endpoint`
+      // and `__port` at boot; without clearing them here, a creds-driven
+      // restart would skip respawn (isType1Spawn returns false when endpoint
+      // is set) and try to connect to the dead port → ECONNREFUSED.
+      // Gated on `__port` presence: only spawn entries get __port set, so
+      // this leaves Type 2 http entries' author-supplied endpoint untouched.
+      if (typeof port === "number") {
+        const mutSpec = entry.spec as { endpoint?: string; __port?: number };
+        delete mutSpec.endpoint;
+        delete mutSpec.__port;
+      }
     }
     entry.status.process = "stopped";
   }

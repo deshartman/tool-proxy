@@ -156,6 +156,28 @@ export default echo;
 
 If your tool needs env values (API keys, DB URLs, anything secret), declare them via `envKeys: string[]` on each `Tool` and let the controller push them down at runtime. After `register-ack`, the connector sends a `creds-request` per MCP with the de-duped union of every tool's `envKeys`; the controller stores the values in its existing UI / DB and replies with a `creds-response`. Operator edits trigger a `creds-update` push and the supervisor restarts the child with the new env. Today's `mcp/<type>/<name>/.env` files keep working as a fallback (controller-supplied env wins on conflict).
 
+**Conditional tool registration** — when an MCP has hard creds requirements (e.g. `mcp/bundled/twilio/`), gate `tool` registration on env presence at the **server level**, NOT inside individual tools:
+
+```ts
+// mcp/bundled/<name>/server.ts (sketch)
+const REQUIRED = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"] as const;
+const missing = REQUIRED.filter((k) => !process.env[k]);
+const tools: Tool[] = [];
+if (missing.length === 0) {
+  const client = createClient();
+  tools.push(toolA(client), toolB(client), /* ... */);
+} else {
+  log.warn({ missing, required: [...REQUIRED] }, "tools deferred — awaiting creds-update");
+}
+await createMcpHttpServer({ name: "<name>", tools, envKeys: REQUIRED });
+```
+
+Two things make this work:
+- **`envKeys` declared at the server level** (not the per-tool `Tool.envKeys` field). The factory's `/envkeys` endpoint surfaces this list verbatim, so the connector's `creds-request` advertises the right keys even when zero tools have registered yet.
+- **`tools: []` is a valid resting state.** The factory installs an explicit `tools/list` handler returning `{tools: []}` so the connector can build a manifest, register the MCP at the controller, and wait for `creds-update`. When creds arrive, the supervisor restarts the child; the new instance registers tools normally and a `manifest-delta` ships the tool list to the controller.
+
+Keep individual tool files **unaware** of creds gating — register them or don't, but don't make each tool re-check `process.env`. That keeps tools clean and the gating concentrated in `server.ts`.
+
 #### `outputSchema` + `structuredContent` — five rules
 
 Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 / Type 3 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker. (See [.claude/plans/OUTPUT-SCHEMA.md](../../.claude/plans/OUTPUT-SCHEMA.md).)

@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool } from "./tool.js";
 import { createLogger } from "../logger.js";
 import { envNumber } from "../env.js";
@@ -42,6 +43,19 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
     { capabilities: { tools: {} } }
   );
   for (const tool of opts.tools) tool.register(server);
+
+  // McpServer wires its tools/list handler lazily — only when the first
+  // registerTool() runs. A creds-gated MCP that registers zero tools
+  // (e.g. mcp/bundled/twilio/ awaiting TWILIO_AUTH_TOKEN over the wire)
+  // would otherwise return -32601 "Method not found" to tools/list,
+  // killing the connector's buildManifest at boot. Install an empty-list
+  // handler ourselves for that case so the wire response is the normal
+  // MCP semantics: "server up, 0 tools right now." The supervisor's
+  // creds-update restart re-spawns this process with non-empty tools,
+  // and the SDK's own handler takes over from there.
+  if (opts.tools.length === 0) {
+    server.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [] }));
+  }
 
   await server.connect(transport);
 
