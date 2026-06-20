@@ -13,6 +13,14 @@ export interface CreateMcpHttpServerOptions {
   // If omitted, falls back to PORT env var, then to 0 (kernel-assigned).
   // The connector's spawner sets PORT explicitly when auto-allocating.
   port?: number;
+  // Server-level envKeys hint. When set, it replaces the per-tool
+  // aggregation as the authoritative list surfaced on /envkeys. Use this
+  // when tools register conditionally on creds presence — the server still
+  // needs to advertise *which* keys the controller should populate, even
+  // before any tool has registered to declare them itself. The connector
+  // hands this list to the controller via creds-request so the operator
+  // never wonders "what envKeys does this MCP need."
+  envKeys?: string[];
 }
 
 export interface McpHttpServerHandle {
@@ -37,11 +45,13 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
 
   await server.connect(transport);
 
-  // Aggregate envKeys across this server's tools (de-duped, stable order).
-  // Surfaced on /envkeys so the connector can include the union in the
-  // creds-request frame to the controller. Out-of-band of the MCP protocol
-  // itself — keeps the wire format unchanged.
-  const envKeys = aggregateEnvKeys(opts.tools);
+  // Resolve the envKeys list surfaced on /envkeys. Server-level opts.envKeys
+  // wins when provided (use when tools register conditionally and the
+  // per-tool aggregate would be empty until creds arrive). Otherwise fall
+  // back to aggregating envKeys across the registered tools (de-duped,
+  // stable order). Out-of-band of the MCP protocol itself — keeps the wire
+  // format unchanged; consumed by the connector's creds-request frame.
+  const envKeys = opts.envKeys ? dedupe(opts.envKeys) : aggregateEnvKeys(opts.tools);
 
   return new Promise<McpHttpServerHandle>((resolveListen, rejectListen) => {
     const http = createServer((req, res) => {
@@ -97,6 +107,17 @@ function aggregateEnvKeys(tools: Tool[]): string[] {
       seen.add(key);
       out.push(key);
     }
+  }
+  return out;
+}
+
+function dedupe(keys: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const key of keys) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
   }
   return out;
 }

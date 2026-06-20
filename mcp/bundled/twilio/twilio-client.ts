@@ -7,6 +7,12 @@ import { createLogger } from "@mcp-shim/connector/sdk";
 // about (no boot-order coupling) and easier to test (each call gets its
 // own instance from its own env map).
 //
+// Throws when TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN is unset. The throw
+// is a defensive backstop — server.ts gates registration on env presence
+// before calling this factory (see §"Conditional tool registration" in
+// docs/MCP-PROTOCOL.md), so the throw only fires if a future caller
+// bypasses that gate.
+//
 // Auth: TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN. API Key/Secret was removed
 // to keep the bundle's auth shape aligned with the controller's
 // creds-response auto-fill (see docs/MCP-PROTOCOL.md "Twilio-bundled

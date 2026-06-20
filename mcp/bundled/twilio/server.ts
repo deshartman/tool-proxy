@@ -1,4 +1,4 @@
-import { createMcpHttpServer, createLogger } from "@mcp-shim/connector/sdk";
+import { createMcpHttpServer, createLogger, type Tool } from "@mcp-shim/connector/sdk";
 import { onStatusCallback } from "./status-callback.js";
 import { createTwilioClient } from "./twilio-client.js";
 import { makeSendGridProvider } from "./sendgrid-client.js";
@@ -39,24 +39,39 @@ function pickFirst(payload: unknown, keys: string[]): string | undefined {
   if (!payload || typeof payload !== "object") return undefined;
   const obj = payload as Record<string, unknown>;
   for (const key of keys) {
-    if (typeof obj[key] === "string") return obj[key] as string;
+    const value = obj[key];
+    if (typeof value === "string") return value;
   }
   return undefined;
 }
 const pickSid    = (payload: unknown) => pickFirst(payload, ["MessageSid", "CallSid"]);
 const pickStatus = (payload: unknown) => pickFirst(payload, ["MessageStatus", "CallStatus"]);
 
-// Build clients at boot. Twilio is eager-validated (every voice/messaging/
-// verify/lookups tool needs it; failing fast surfaces missing creds before
-// the first tool call). SendGrid is a lazy provider — operators who never
-// fire an email_* tool don't need SENDGRID_API_KEY just to boot. Matches
-// the prior singleton's lazy contract.
-const twilio = createTwilioClient();
-const sendgridProvider = makeSendGridProvider();
+// Creds gating — all-or-nothing.
+//
+// Under MCP-LOADING, the bundle has no `.env` file. Every credential
+// arrives over the WS via creds-response (boot) or creds-update (operator
+// edit), and the supervisor restarts this child whenever the merged env
+// changes — see docs/MCP-PROTOCOL.md.
+//
+// Until ALL three keys are present we register zero tools and let the
+// connector advertise an empty `apis` MCP. When the keys land, the
+// supervisor restarts this process; the next boot registers all 20 tools
+// and the connector pushes a manifest-delta to the controller.
+//
+// envKeys is declared at the server level (not per-tool) so the
+// connector's creds-request advertises the required keys to the controller
+// even when no tool has registered yet. Without that, an empty MCP would
+// also have an empty envKeys list — the controller would not know what to
+// fill in from its tunnel-security row.
+const requiredEnvKeys = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY"] as const;
+const missing = requiredEnvKeys.filter((key) => !process.env[key]);
 
-await createMcpHttpServer({
-  name: "apis",
-  tools: [
+let tools: Tool[] = [];
+if (missing.length === 0) {
+  const twilio = createTwilioClient();
+  const sendgridProvider = makeSendGridProvider();
+  tools = [
     messagesCreate(twilio),
     messagesFetch(twilio),
     messagingServicesFetch(twilio),
@@ -77,5 +92,16 @@ await createMcpHttpServer({
     emailFetch(sendgridProvider),
     emailSearch(sendgridProvider),
     emailTemplatesFetch(sendgridProvider),
-  ],
+  ];
+} else {
+  log.warn(
+    { missing, required: [...requiredEnvKeys] },
+    "deferred — awaiting creds-update",
+  );
+}
+
+await createMcpHttpServer({
+  name: "apis",
+  tools,
+  envKeys: [...requiredEnvKeys],
 });
