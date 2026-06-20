@@ -30,9 +30,9 @@ A controller implementing v1 of this protocol MUST be able to:
 
 1. **Authenticate the WS upgrade.** Verify `Authorization: Bearer <bearer>` against the `tunnel_security_configs` row keyed by `(tenant_id, X-Connector-Name)`. Reject mismatches with HTTP 401. Derive `connectorId` from the matched row + register-frame flow; never trust frame-supplied connectorIds.
 
-2. **Reply to every `creds-request` within ~1s.** Reply shape is always `creds-response` with a matching `requestId`. If the controller has no row for `(connectorId, mcp)`, reply with `{ env: {}, source: "none" }` — this is NOT an error, it's the documented "no row yet" reply. The connector treats it as "creds not available; child registers no tools."
+2. **Reply to every `creds-request` within ~1s.** Reply shape is always `creds-response` with a matching `requestId`. If the controller has no row for `(connectorId, mcp)`, reply with `{ env: {}, source: "none" }` — this is NOT an error, it's the documented "no row yet" reply. The connector treats it as "creds not available; child registers no tools." When a key is unavailable but others are, **omit the absent keys from `env` — never send empty strings.** See §"`creds-response` — controller MUST omit absent keys" for why (the connector's no-op-skip restart guard treats `""` differently from absent, which produces pointless restarts).
 
-3. **Auto-fill `author: "twilio"` requests** from the per-org Twilio credentials it already holds (typically the tunnel-security row). See §"Twilio-bundled auto-fill" — the connector relies on this so customers never enter Twilio creds twice. The mapping is restricted to authentication credentials only; per-call operational values (phone numbers, service SIDs) are tool arguments, not env.
+3. **Auto-fill `author: "twilio"` requests** from the per-org credentials it already holds — Twilio creds (typically the tunnel-security row) AND SendGrid creds (a sibling per-org store). See §"Twilio-bundled auto-fill" — the connector relies on this so customers never enter Twilio or SendGrid creds twice. The mapping is restricted to authentication credentials only; per-call operational values (phone numbers, service SIDs, sender emails) are tool arguments, not env.
 
 4. **Push `creds-update` whenever creds change.** Operator-driven UI edits and tunnel-security rotation MUST both produce a `creds-update` frame. The connector restarts the child with the new env on receipt — that's the *only* way creds reach a running MCP child today, since bundled MCPs no longer read a local `.env`.
 
@@ -141,14 +141,15 @@ When `creds-request` arrives with `author == "twilio"`, the controller fills the
 |---|---|---|
 | `TWILIO_ACCOUNT_SID` | row.accountSid | Always (every posture has it) |
 | `TWILIO_AUTH_TOKEN` | row.authToken | Posture: Auth Token |
+| `SENDGRID_API_KEY` | per-org SendGrid creds (separate from tunnel-security row) | When the operator has configured a SendGrid key for this org |
 | `TWILIO_OAUTH_CLIENT_ID` | row.oauthClientId | Posture: OAuth2 (FUTURE — flagged for revision) |
 | `TWILIO_OAUTH_CLIENT_SECRET` | row.oauthClientSecret | Posture: OAuth2 (FUTURE — flagged for revision) |
 
 **Rules:**
 - Only keys *requested* via `envKeys` get filled. The controller does NOT shotgun every Twilio key.
-- Missing keys (e.g. `TWILIO_AUTH_TOKEN` requested on an OAuth2-posture row) are simply absent in the response. The connector logs a `warn` and the MCP runs without that key — same outcome as today's missing-`.env` case.
+- Missing keys (e.g. `TWILIO_AUTH_TOKEN` requested on an OAuth2-posture row, or `SENDGRID_API_KEY` when no SendGrid is configured) **MUST be omitted from `env` — NOT included as empty strings**. See §"`creds-response` — controller MUST omit absent keys" for the rationale (the connector's no-op-skip restart guard treats `{}` and `{X: ""}` as different payloads and would thrash the child).
 - `source: "twilio-tunnel-row"` lets the inspector status panel show "from Twilio creds — synced when row rotates."
-- The Twilio-bundled MCPs only consume `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` today. The API-Key-posture row (which the controller still accepts at create time for tunnel-handshake verification) does NOT auto-fill any Twilio bundle env — customers on the API-Key posture must either also provide an AuthToken on the row for bundled MCPs to work, or run a sibling Auth-Token row for the connector.
+- Twilio-bundled MCPs consume `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` (Twilio group, 16 tools) and `SENDGRID_API_KEY` (SendGrid group, 4 tools). Each group registers independently — see §"Conditional tool registration". The API-Key-posture row (which the controller still accepts at create time for tunnel-handshake verification) does NOT auto-fill any Twilio bundle env — customers on the API-Key posture must either also provide an AuthToken on the row for bundled MCPs to work, or run a sibling Auth-Token row for the connector.
 
 **Out of scope — operational values are NOT auto-filled.** The tunnel-security row models *authentication credentials only*. Per-call operational values — phone numbers (`from`), Messaging / Verify Service SIDs, sender emails, agent IDs — are caller-supplied as tool arguments, not env vars. Twilio bundled tools do not declare these keys in `envKeys` and the controller does not store them. If a future feature needs to provision operational values, it should ride a separate frame (or a separate field on `creds-response`) rather than overload this row.
 
@@ -194,7 +195,44 @@ Two protocol-visible consequences:
 
 **Server-level `envKeys` declaration.** A creds-gated MCP MUST declare its required keys at the server level (`createMcpHttpServer({ envKeys: [...] })`), not just per-tool. Why: when no tools are registered, per-tool aggregation is empty; the connector's `creds-request` would advertise zero envKeys; the controller would have nothing to fill in even when its tunnel-security row holds the right values. The server-level declaration is what tells the controller *what to populate* before any tool exists. The SDK aggregator at [packages/connector/src/sdk/http-server.ts](../packages/connector/src/sdk/http-server.ts) prefers server-level over per-tool when both are set.
 
-**Why "all-or-nothing" gating, not per-tool.** The Twilio bundle ships with a single trust boundary (Twilio + SendGrid creds belong to the same org / tunnel-security posture). Mixing partial creds — e.g. Twilio works, SendGrid doesn't — would surface 16 working tools and 4 broken ones in the controller, with the broken ones returning an error envelope per call. The bundle-level "all keys present or zero tools" rule trades partial functionality for clearer operator UX. Customer-authored MCPs are free to choose either policy; the protocol supports both.
+**Gating granularity — per-service group, not per-tool or whole-bundle.** The Twilio bundle splits into two independent credential groups:
+
+| Group | Required keys | Tools registered when group's keys are present |
+|---|---|---|
+| Twilio | `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` | messaging (4), voice (8), verify (3), lookups (1) — 16 total |
+| SendGrid | `SENDGRID_API_KEY` | email (4) |
+
+Each group registers independently. A customer running only Twilio (no SendGrid) sees the 16 Twilio tools and zero email tools — the 4 email tools simply aren't advertised. Vice versa for SendGrid-only. Within a group it's all-or-nothing — supplying `TWILIO_ACCOUNT_SID` without `TWILIO_AUTH_TOKEN` registers zero Twilio tools.
+
+This is why the controller MUST omit absent keys from `creds-response.env` rather than sending empty strings — the bundle's per-group gating reads `!process.env[key]`, so `""` and absent are equivalent at the bundle level, BUT sending `""` causes the supervisor's `envEquals` no-op-restart guard to misclassify two identical "no SendGrid creds" payloads as different (`{}` vs `{SENDGRID_API_KEY: ""}`), thrashing the child. See §"creds-response — controller MUST omit absent keys."
+
+## `creds-response` — controller MUST omit absent keys
+
+When the controller has no value for an `envKeys`-requested key, the reply MUST omit that key from `env` — NOT include it as an empty string.
+
+**Rule:**
+
+```jsonc
+// CORRECT — operator has only Twilio creds, no SendGrid
+{ "type": "creds-response", "requestId": "...",
+  "env": { "TWILIO_ACCOUNT_SID": "AC...", "TWILIO_AUTH_TOKEN": "..." },
+  "source": "twilio-tunnel-row" }
+
+// WRONG — same operator state, but key is sent as empty string
+{ "type": "creds-response", "requestId": "...",
+  "env": { "TWILIO_ACCOUNT_SID": "AC...", "TWILIO_AUTH_TOKEN": "...", "SENDGRID_API_KEY": "" },
+  "source": "twilio-tunnel-row" }
+```
+
+**Why:**
+
+- The connector's project-wide rule (see [packages/connector/src/env.ts](../packages/connector/src/env.ts)) treats empty string as "not set," so the gating check `!process.env[key]` returns true either way and the bundle behaves identically — zero tools register for the SendGrid group.
+- BUT the connector's no-op-skip restart guard ([mcp-supervisor.ts](../packages/connector/src/mcp-supervisor.ts) `envEquals`) compares the previously-applied `controllerEnv` to the new one by exact key set + value equality. `{}` and `{SENDGRID_API_KEY: ""}` are NOT equal — so two identical "no SendGrid creds" pushes (e.g. controller redelivering after a WS reconnect) thrash the child even though nothing changed.
+- The empty-string shape is also visually confusing in the inspector and audit log: "controller says: empty value" reads differently from "controller has no value." Keep them distinct on the wire.
+
+**Symmetric rule for `creds-update`:** same — omit, don't empty-string.
+
+**Operator deletes the row entirely:** send `creds-update` with `env: {}` and `source: "none"`. The connector applies the empty merge, supervisor restarts, child registers zero tools (in whichever group the deleted row covered).
 
 ## No local `.env` for the Twilio bundle (rolling out)
 
@@ -347,11 +385,36 @@ This is the cold-start flow when an operator hasn't filled the Twilio row yet. T
 }
 
 // connector spawns/keeps `apis` running with empty env. Bundle's gating
-// logic registers ZERO tools. manifest.servers reflects this:
+// logic registers ZERO tools (no Twilio group, no SendGrid group).
+// manifest.servers reflects this:
 //   { "name": "apis", "author": "twilio", "tools": [] }
 
-// ─── operator fills the row in the controller UI ───
-// controller → connector
+// ─── operator fills only the Twilio half (no SendGrid yet) ───
+// controller → connector — note SENDGRID_API_KEY is OMITTED, not "" empty
+{
+  "type": "creds-update",
+  "mcp": "apis",
+  "env": {
+    "TWILIO_ACCOUNT_SID": "AC...",
+    "TWILIO_AUTH_TOKEN": "auth_token_here"
+  },
+  "source": "twilio-tunnel-row",
+  "reason": "Twilio creds entered by operator alice@example.com"
+}
+
+// connector restarts the apis child. Twilio group's keys are present —
+// 16 Twilio tools register. SendGrid group's key is absent — 0 email
+// tools register. manifest-delta:
+{
+  "type": "manifest-delta",
+  "delta": {
+    "added":   [/* 16 messaging/voice/verify/lookups tools */],
+    "removed": [],
+    "changed": []
+  }
+}
+
+// ─── later, operator adds SendGrid ───
 {
   "type": "creds-update",
   "mcp": "apis",
@@ -361,22 +424,21 @@ This is the cold-start flow when an operator hasn't filled the Twilio row yet. T
     "SENDGRID_API_KEY": "SG..."
   },
   "source": "twilio-tunnel-row",
-  "reason": "Twilio creds entered by operator alice@example.com"
+  "reason": "SendGrid key added by operator alice@example.com"
 }
 
-// connector restarts the apis child with the new env. The child registers
-// all 20 tools this time. Connector emits a manifest-delta:
+// 4 email tools register on top of the existing 16. delta:
 {
   "type": "manifest-delta",
   "delta": {
-    "added":   [/* all 20 apis tools */],
+    "added":   [/* 4 email_* tools */],
     "removed": [],
     "changed": []
   }
 }
 ```
 
-The reverse path (operator deletes the row) sends `creds-update` with `env: {}` + `source: "none"`, supervisor restarts, child registers zero tools, connector emits a delta with all 20 in `removed`.
+The reverse path (operator removes only the SendGrid key) sends `creds-update` with the Twilio keys still present and `SENDGRID_API_KEY` omitted; supervisor restarts; child registers 16 Twilio tools but zero email tools; connector emits a delta with the 4 email tools in `removed`.
 
 ### Boot — older controller (timeout fallback)
 
