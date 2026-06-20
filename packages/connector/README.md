@@ -19,13 +19,15 @@ The connector holds no LLM, runs no agent loop, and reads no documents. It is a 
 
 ## Wire protocol (frames)
 
-Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts):
+Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts); the contract for the controller team is **[`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md)**:
 
 - `register { manifest }` — first frame after connect
 - `manifest-delta { delta }` — diff of `added`/`removed`/`changed` tools
 - `rpc { payload }` — opaque MCP JSON-RPC, both directions
 - `heartbeat { ts }` — every `policy.heartbeat_interval_ms`
 - `goodbye { reason? }` — graceful shutdown signal
+- `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke` — webhook ingress, see [`.claude/plans/STATUS-CALLBACK-MCP.md`](../../.claude/plans/STATUS-CALLBACK-MCP.md)
+- `creds-request` (out) / `creds-response` (in) / `creds-update` (in) — per-MCP creds protocol. The connector asks the controller for env values for each MCP after `register-ack`; the controller stores them in its existing UI/DB and pushes updates when an operator edits them. See [`.claude/plans/MCP-LOADING.md`](../../.claude/plans/MCP-LOADING.md).
 
 Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector splits on the first `.`.
 
@@ -68,7 +70,8 @@ Rotate via the row's **Rotate Secret** (long-lived bearer) or by issuing a new c
 The connector serves an **inspector UI at http://localhost:9090/** showing:
 - live WS state (connecting / open / closed)
 - the current `ToolManifest` and an "Available Tools" list (every discovered tool is Ready)
-- every frame in/out (register, register-ack, rpc, heartbeat, manifest-delta)
+- per-MCP **MCP Status** — process state, creds source (`controller (operator-entered)` / `controller (twilio-tunnel-row)` / `dir/.env` / `none`), restart count + last reason, tools count. Two per-MCP buttons: **Reload creds** (force a `creds-request` for that MCP and restart on response) and **Restart**.
+- every frame in/out (register, register-ack, rpc, heartbeat, manifest-delta, webhook-*, creds-*)
 - a **reconnect** button that re-reads YAML + redials (use after editing `policy`)
 
 To pick up `mcp_servers` changes, restart the connector — those connections are made at process boot. `policy` changes pick up via Reconnect.
@@ -121,6 +124,35 @@ await createMcpHttpServer({ name: "my-mcp", tools: [echo] });
 ```
 
 No `package.json`, no build step, no port to pick. The connector spawns `tsx server.ts` for you.
+
+#### Drop-in shape — skip the `server.ts`
+
+Even simpler: drop a folder under `${MCP_DROPIN_DIR}/<name>/tools/*.ts` with no `server.ts` and no yaml entry. The connector auto-discovers the folder at boot and synthesizes the boilerplate via [`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts). Each `tools/*.ts` should default-export a `Tool` (named exports work as a fallback).
+
+`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` (the example above) or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative.
+
+```ts
+// /var/lib/mcp-connector/customer-mcps/my-mcp/tools/echo.ts
+import { z } from "zod";
+import type { Tool } from "@mcp-shim/connector/sdk";
+
+const echo: Tool = {
+  name: "echo",
+  envKeys: ["ECHO_PREFIX"],   // optional — controller UI uses this hint to surface required keys
+  register(server) {
+    server.registerTool(
+      "echo",
+      { description: "Echo a string back.", inputSchema: { text: z.string() } },
+      async ({ text }) => ({ content: [{ type: "text", text: `${process.env.ECHO_PREFIX ?? ""}${text}` }] }),
+    );
+  },
+};
+export default echo;
+```
+
+#### Per-MCP creds from the controller
+
+If your tool needs env values (API keys, DB URLs, anything secret), declare them via `envKeys: string[]` on each `Tool` and let the controller push them down at runtime. After `register-ack`, the connector sends a `creds-request` per MCP with the de-duped union of every tool's `envKeys`; the controller stores the values in its existing UI / DB and replies with a `creds-response`. Operator edits trigger a `creds-update` push and the supervisor restarts the child with the new env. Today's `mcp/<type>/<name>/.env` files keep working as a fallback (controller-supplied env wins on conflict).
 
 #### `outputSchema` + `structuredContent` — five rules
 

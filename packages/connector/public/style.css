@@ -338,6 +338,55 @@ h2 {
 .webhook-copy { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem; }
 .webhook-copy:hover { color: var(--text); border-color: var(--accent); }
 
+/* MCP Status panel — per-MCP process / creds / restart info + actions */
+#mcp-status-list { list-style: none; margin: 0; padding: 0; }
+.mcp-status-row {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mcp-status-row.mcp-status-running { border-left: 3px solid var(--green); }
+.mcp-status-row.mcp-status-stopped { border-left: 3px solid var(--muted); }
+.mcp-status-row.mcp-status-restarting { border-left: 3px solid var(--yellow); }
+.mcp-status-row.mcp-status-permanently-failed { border-left: 3px solid var(--red); }
+.mcp-status-head { display: flex; justify-content: space-between; align-items: center; }
+.mcp-status-name { font-family: var(--mono); font-size: 0.85rem; color: var(--purple); }
+.mcp-status-state {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 8px;
+  border-radius: 3px;
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent);
+}
+.mcp-status-row.mcp-status-running .mcp-status-state { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+.mcp-status-row.mcp-status-restarting .mcp-status-state { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+.mcp-status-row.mcp-status-permanently-failed .mcp-status-state { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+.mcp-status-meta { font-size: 0.72rem; color: var(--text); display: flex; flex-wrap: wrap; gap: 12px; }
+.mcp-status-meta .muted { color: var(--muted); }
+.mcp-status-actions { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.mcp-status-actions button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+.mcp-status-actions button:hover { color: var(--text); border-color: var(--accent); }
+.mcp-action-status { font-size: 0.7rem; color: var(--muted); }
+.mcp-action-status.pending { color: var(--accent); }
+.mcp-action-status.ok { color: var(--green); }
+.mcp-action-status.err { color: var(--red); }
+
 /* Frame log */
 .controls { font-size: 0.7rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); display: flex; gap: 12px; align-items: center; }
 .controls input { vertical-align: middle; }

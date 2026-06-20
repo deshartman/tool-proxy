@@ -102,6 +102,15 @@ for launcher in "$ROOT"/bundles/*/dev-launch.sh; do
   fi
 done
 
+# Drop-in MCP dir: in dev we point at mcp/local/ so tools/*.ts folders that
+# don't carry a hand-written server.ts get auto-discovered by the connector
+# (W-A1/A2 of MCP-LOADING). Production images use the customer-mount path
+# /var/lib/mcp-connector/customer-mcps/. Don't clobber a user-supplied value.
+if [ -z "${MCP_DROPIN_DIR:-}" ]; then
+  export MCP_DROPIN_DIR="$ROOT/mcp/local"
+  echo "[start-connector] MCP_DROPIN_DIR=$MCP_DROPIN_DIR"
+fi
+
 echo "[start-connector] starting connector with CONNECTOR_CONFIG=$YAML_FILE"
 CONNECTOR_CONFIG="$YAML_FILE" node "$CONNECTOR_BIN" start &
 

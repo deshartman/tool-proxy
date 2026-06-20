@@ -4,6 +4,7 @@ import { resolve as resolvePath } from "node:path";
 import type { FrameTap, WsState } from "../tunnel/client.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 import type { WebhookRegistry, WebhookEvent } from "../tunnel/webhook-registry.js";
+import type { McpStatus } from "../mcp-supervisor.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("inspector");
@@ -56,13 +57,14 @@ export interface HeaderInfo {
 
 // SSE event shape (mirrored as JSON.stringify(payload)).
 export type InspectorEvent =
-  | { kind: "snapshot"; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; identity?: Identity; header?: HeaderInfo; manifest?: ToolManifest; frames: FrameTap[]; webhooks?: WebhookSummary[] }
+  | { kind: "snapshot"; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; identity?: Identity; header?: HeaderInfo; manifest?: ToolManifest; frames: FrameTap[]; webhooks?: WebhookSummary[]; mcpStatuses?: McpStatus[] }
   | { kind: "state"; state: DisplayState; reconnect?: ReconnectInfo }
   | { kind: "identity"; identity: Identity }
   | { kind: "header"; header: HeaderInfo }
   | { kind: "frame"; tap: FrameTap }
   | { kind: "manifest"; manifest: ToolManifest }
-  | { kind: "webhooks"; webhooks: WebhookSummary[] };
+  | { kind: "webhooks"; webhooks: WebhookSummary[] }
+  | { kind: "mcpStatuses"; mcpStatuses: McpStatus[] };
 
 export interface WebhookSummary {
   mcp: string;
@@ -78,6 +80,16 @@ export interface InspectorState {
   header?: HeaderInfo;
   manifest?: ToolManifest;
   webhooks?: WebhookRegistry;
+  mcpStatuses?: McpStatus[];
+}
+
+// Per-MCP operator actions wired by boot/lifecycle. Both routes return
+// after the supervisor (or coordinator) has triggered the underlying work
+// — they don't wait for completion. The UI re-renders from the next
+// mcpStatuses snapshot.
+export interface McpActions {
+  reloadCreds(name: string): Promise<void>;
+  restart(name: string): Promise<void>;
 }
 
 const RING_SIZE = 500;
@@ -98,6 +110,10 @@ export class Inspector {
   // Caller wires this to a callTool dispatcher; invoked when the UI POSTs
   // /tool/call. Optional — when undefined, the route returns 503.
   toolDispatch?: ToolDispatch;
+
+  // Per-MCP operator actions (Reload creds / Restart MCP). Wired by the
+  // boot loop; left undefined here means the routes return 503.
+  mcpActions?: McpActions;
 
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
   private readonly frames: FrameTap[] = [];
@@ -140,6 +156,11 @@ export class Inspector {
     this.broadcast({ kind: "manifest", manifest });
   }
 
+  setMcpStatuses(statuses: McpStatus[]): void {
+    this.current.mcpStatuses = statuses;
+    this.broadcast({ kind: "mcpStatuses", mcpStatuses: statuses });
+  }
+
   setIdentity(identity: Identity): void {
     this.current.identity = identity;
     this.broadcast({ kind: "identity", identity });
@@ -175,6 +196,7 @@ export class Inspector {
       manifest: this.current.manifest,
       frames: [...this.frames],
       webhooks: this.current.webhooks?.snapshot(),
+      mcpStatuses: this.current.mcpStatuses,
     };
   }
 
@@ -308,6 +330,43 @@ async function handleToolCall(req: IncomingMessage, res: ServerResponse, inspect
   }
 }
 
+interface McpActionBody { mcp?: unknown }
+
+async function handleMcpAction(
+  req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+  action: "reloadCreds" | "restart",
+): Promise<void> {
+  const actions = inspector.mcpActions;
+  if (!actions) {
+    res.statusCode = 503;
+    res.setHeader("content-type", "application/json");
+    res.end('{"ok":false,"error":"mcp actions not configured"}');
+    return;
+  }
+  let body: McpActionBody;
+  try { body = (await readJsonBody(req) as McpActionBody) ?? {}; }
+  catch { res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return; }
+  const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
+  if (!mcp) {
+    res.statusCode = 400;
+    res.setHeader("content-type", "application/json");
+    res.end('{"ok":false,"error":"missing mcp"}');
+    return;
+  }
+  res.setHeader("content-type", "application/json");
+  try {
+    if (action === "reloadCreds") await actions.reloadCreds(mcp);
+    else await actions.restart(mcp);
+    res.statusCode = 202;
+    res.end('{"ok":true}');
+  } catch (err) {
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
 function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Inspector, mcp: string): void {
   const reg = inspector.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
@@ -378,6 +437,14 @@ export function startInspector(port: number, inspector: Inspector): void {
     }
     if (path === "/tool/call" && req.method === "POST") {
       void handleToolCall(req, res, inspector);
+      return;
+    }
+    if (path === "/mcp/reload-creds" && req.method === "POST") {
+      void handleMcpAction(req, res, inspector, "reloadCreds");
+      return;
+    }
+    if (path === "/mcp/restart" && req.method === "POST") {
+      void handleMcpAction(req, res, inspector, "restart");
       return;
     }
     if (path === "/" || path === "/index.html") { void serveStatic(res, "index.html"); return; }

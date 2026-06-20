@@ -37,8 +37,20 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
 
   await server.connect(transport);
 
+  // Aggregate envKeys across this server's tools (de-duped, stable order).
+  // Surfaced on /envkeys so the connector can include the union in the
+  // creds-request frame to the controller. Out-of-band of the MCP protocol
+  // itself — keeps the wire format unchanged.
+  const envKeys = aggregateEnvKeys(opts.tools);
+
   return new Promise<McpHttpServerHandle>((resolveListen, rejectListen) => {
     const http = createServer((req, res) => {
+      if (req.url === "/envkeys") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ envKeys }));
+        return;
+      }
       if (req.url !== "/mcp") {
         res.statusCode = 404;
         res.end("not found");
@@ -73,4 +85,18 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
       });
     });
   });
+}
+
+function aggregateEnvKeys(tools: Tool[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tool of tools) {
+    if (!tool.envKeys) continue;
+    for (const key of tool.envKeys) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+  }
+  return out;
 }

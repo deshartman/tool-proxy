@@ -28,6 +28,8 @@ const elDetailEmpty = document.getElementById('detail-empty');
 const elDetailContent = document.getElementById('detail-content');
 const elWebhooksEmpty = document.getElementById('webhooks-empty');
 const elWebhooksList = document.getElementById('webhooks-list');
+const elMcpStatusEmpty = document.getElementById('mcp-status-empty');
+const elMcpStatusList = document.getElementById('mcp-status-list');
 
 let showHeartbeats = false;
 // selection: null | { kind: 'tool', key, tool, serverName } | { kind: 'frame', tap, frameId }
@@ -690,6 +692,7 @@ function applySnapshot(s) {
   setHeader(s.header);
   renderManifest(s.manifest);
   renderWebhooks(s.webhooks);
+  renderMcpStatuses(s.mcpStatuses);
   elFrames.replaceChildren();
   elFrames.classList.add('empty');
   if (s.frames && s.frames.length > 0) {
@@ -703,6 +706,87 @@ function applySnapshot(s) {
   }
   // SSE reconnect: any selected frame is from a prior snapshot — drop it.
   if (selection?.kind === 'frame') setSelection(null);
+}
+
+function renderMcpStatuses(list) {
+  if (!list || list.length === 0) {
+    elMcpStatusList.hidden = true;
+    elMcpStatusList.replaceChildren();
+    elMcpStatusEmpty.hidden = false;
+    return;
+  }
+  elMcpStatusEmpty.hidden = true;
+  elMcpStatusList.hidden = false;
+  elMcpStatusList.replaceChildren();
+  for (const status of list) {
+    elMcpStatusList.appendChild(buildMcpStatusRow(status));
+  }
+}
+
+function buildMcpStatusRow(s) {
+  const li = document.createElement('li');
+  li.className = `mcp-status-row mcp-status-${s.process}`;
+  const credsLine = s.credsLastUpdated
+    ? `${s.credsSource} · ${fmtAgo(s.credsLastUpdated)}`
+    : s.credsSource;
+  const restartLine = s.restartCount === 0
+    ? 'no restarts'
+    : `${s.restartCount} restart${s.restartCount === 1 ? '' : 's'}` + (s.lastRestartReason ? ` (${s.lastRestartReason})` : '');
+  li.innerHTML = `
+    <div class="mcp-status-head">
+      <span class="mcp-status-name">${escapeHtml(s.name)}</span>
+      <span class="mcp-status-state">${escapeHtml(s.process)}</span>
+    </div>
+    <div class="mcp-status-meta">
+      <div><span class="muted">creds:</span> ${escapeHtml(credsLine)}</div>
+      <div><span class="muted">tools:</span> ${s.toolsCount}</div>
+      <div><span class="muted">restarts:</span> ${escapeHtml(restartLine)}</div>
+    </div>
+    <div class="mcp-status-actions">
+      <button type="button" class="mcp-action-reload" data-mcp="${escapeHtml(s.name)}">Reload creds</button>
+      <button type="button" class="mcp-action-restart" data-mcp="${escapeHtml(s.name)}">Restart</button>
+      <span class="mcp-action-status"></span>
+    </div>
+  `;
+  const reload = li.querySelector('.mcp-action-reload');
+  const restart = li.querySelector('.mcp-action-restart');
+  const status = li.querySelector('.mcp-action-status');
+  reload.addEventListener('click', () => void invokeMcpAction('/mcp/reload-creds', s.name, status));
+  restart.addEventListener('click', () => void invokeMcpAction('/mcp/restart', s.name, status));
+  return li;
+}
+
+async function invokeMcpAction(path, mcp, status) {
+  status.textContent = 'working…';
+  status.className = 'mcp-action-status pending';
+  try {
+    const resp = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mcp }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      status.textContent = body.error || `HTTP ${resp.status}`;
+      status.className = 'mcp-action-status err';
+      return;
+    }
+    status.textContent = 'sent';
+    status.className = 'mcp-action-status ok';
+  } catch (e) {
+    status.textContent = String(e.message || e);
+    status.className = 'mcp-action-status err';
+  }
+}
+
+function fmtAgo(ts) {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) {
+    const seconds = Math.max(0, Math.round(diff / 1000));
+    return `${seconds}s ago`;
+  }
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  return `${Math.round(diff / 3_600_000)}h ago`;
 }
 
 function renderWebhooks(list) {
@@ -757,6 +841,7 @@ function connectSse() {
       case 'manifest': renderManifest(ev.manifest); break;
       case 'frame':    appendFrame(ev.tap); break;
       case 'webhooks': renderWebhooks(ev.webhooks); break;
+      case 'mcpStatuses': renderMcpStatuses(ev.mcpStatuses); break;
     }
   };
   es.onerror = () => { /* EventSource auto-retries */ };
