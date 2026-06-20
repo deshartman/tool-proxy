@@ -81,6 +81,8 @@ Before booting the connector you need a **Tunnel Security row** on the controlle
 
 Click Save. The controller shows the minted credentials once — copy.
 
+> **Note for the bundled Twilio MCP:** the bundle is AuthToken-only — its child env reads `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` (see [`mcp/bundled/twilio/.env.example`](mcp/bundled/twilio/.env.example)). Picking the API Key row type above is fine for the tunnel handshake itself, but if you want the bundled MCP to work you also need an Auth Token — either as a sibling row used by the connector, or pasted into `mcp/bundled/twilio/.env` directly. See [`docs/MCP-PROTOCOL.md`](docs/MCP-PROTOCOL.md) "Twilio-bundled auto-fill" for the full table.
+
 ```bash
 npm install
 npm run build

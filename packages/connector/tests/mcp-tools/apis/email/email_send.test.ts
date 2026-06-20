@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { emailSend } from "@mcp/bundled/twilio/tools/email/email_send.js";
 import type { SendGridClientProvider } from "@mcp/bundled/twilio/sendgrid-client.js";
@@ -21,9 +21,6 @@ function fakeProvider(headers: Record<string, string>, statusCode: number): Send
 }
 
 describe("apis.email_send handler", () => {
-  beforeEach(() => {
-    vi.stubEnv("SENDGRID_FROM_EMAIL", "ops@example.com");
-  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -34,6 +31,7 @@ describe("apis.email_send handler", () => {
     const result = asToolResult(
       await reg.handler({
         to: "user@example.com",
+        from: "ops@example.com",
         subject: "hi",
         text: "hello",
       }),

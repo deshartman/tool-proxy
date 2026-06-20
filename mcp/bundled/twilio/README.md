@@ -18,15 +18,15 @@ would stutter (`twilio_apis_twilio_messages_create`).
 
 | Tool | Description | Cost |
 |---|---|---|
-| `messages_create({channel, to, body?, contentSid?, ...})` | Send a message via SMS / WhatsApp / RCS | **incurs charges** |
+| `messages_create({channel, to, from?, messagingServiceSid?, body?, contentSid?, ...})` | Send a message via SMS / WhatsApp / RCS (caller must supply either `from` or `messagingServiceSid`) | **incurs charges** |
 | `messages_fetch({sid})` | Look up a message by SID | free |
-| `messaging_services_fetch({sid?})` | Inspect a Messaging Service's config | free |
+| `messaging_services_fetch({sid})` | Inspect a Messaging Service's config | free |
 | `content_templates_fetch({sid})` | Inspect a Content template (HXxxxx) for use with `messages_create.contentSid` | free |
-| `calls_create({to, twiml?, url?, from?})` | Place an outbound voice call | **incurs charges** |
+| `calls_create({to, from, twiml?, url?})` | Place an outbound voice call | **incurs charges** |
 | `calls_fetch({sid})` | Look up a call by SID | free |
-| `verify_send({to, channel, serviceSid?})` | Send an OTP via Verify | **incurs charges** |
-| `verify_check({to, code, serviceSid?})` | Validate an OTP a user submitted | free |
-| `verify_services_fetch({sid?})` | Inspect a Verify Service's config | free |
+| `verify_send({to, channel, serviceSid})` | Send an OTP via Verify | **incurs charges** |
+| `verify_check({to, code, serviceSid})` | Validate an OTP a user submitted | free |
+| `verify_services_fetch({sid})` | Inspect a Verify Service's config | free |
 | `lookups_fetch({phone_number})` | Twilio Lookup v2 — validate a number | free |
 
 ## Setup
@@ -37,10 +37,10 @@ npm install                              # workspace install (installs tsx for t
 (cd mcp/bundled/twilio && npm install)   # twilio SDK lives here, not in the workspace
 
 cp mcp/bundled/twilio/.env.example mcp/bundled/twilio/.env
-# Fill in TWILIO_ACCOUNT_SID and either:
-#   - TWILIO_API_KEY_SID + TWILIO_API_KEY_SECRET (preferred), or
-#   - TWILIO_AUTH_TOKEN (dev fallback).
-# Plus TWILIO_FROM_NUMBER for messages/calls.
+# Fill in TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN.
+# Plus SENDGRID_API_KEY if you'll use the email_* tools.
+# Operational values (from numbers, service SIDs, sender emails) are
+# caller-supplied per tool call — they no longer come from .env.
 ```
 
 The entry already exists in `packages/connector/connector.yaml.example`:
@@ -63,8 +63,10 @@ folder = `mcp/bundled/twilio`).
 - Real Twilio infrastructure would call these APIs in-process, not through
   an external MCP server. This example exists to show the connector path,
   not to recommend an architecture.
-- For production usage prefer an API Key + Secret pair over `TWILIO_AUTH_TOKEN`
-  — the client picks the key pair when both are set
-  (`twilio-client.ts`).
+- The bundle is AuthToken-only. API Key / Secret was previously supported
+  but removed to keep auth aligned with the controller's Twilio-bundled
+  auto-fill (see [`docs/MCP-PROTOCOL.md`](../../../docs/MCP-PROTOCOL.md)
+  "Twilio-bundled auto-fill"). For revocable per-service credentials, mint a
+  scoped subaccount and use its AuthToken.
 - The connector loads `mcp/bundled/twilio/.env` into *this child's* process
   only — credentials do not reach other MCP children.

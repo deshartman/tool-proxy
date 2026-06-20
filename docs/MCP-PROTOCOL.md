@@ -117,15 +117,18 @@ When `creds-request` arrives with `author == "twilio"`, the controller fills the
 |---|---|---|
 | `TWILIO_ACCOUNT_SID` | row.accountSid | Always (every posture has it) |
 | `TWILIO_AUTH_TOKEN` | row.authToken | Posture: Auth Token |
-| `TWILIO_API_KEY` | row.apiKey | Posture: API Key |
-| `TWILIO_API_SECRET` | row.apiSecret | Posture: API Key |
 | `TWILIO_OAUTH_CLIENT_ID` | row.oauthClientId | Posture: OAuth2 (FUTURE — flagged for revision) |
 | `TWILIO_OAUTH_CLIENT_SECRET` | row.oauthClientSecret | Posture: OAuth2 (FUTURE — flagged for revision) |
 
 **Rules:**
 - Only keys *requested* via `envKeys` get filled. The controller does NOT shotgun every Twilio key.
-- Missing keys (e.g. `TWILIO_AUTH_TOKEN` requested on an API-Key-posture row) are simply absent in the response. The connector logs a `warn` and the MCP runs without that key — same outcome as today's missing-`.env` case.
+- Missing keys (e.g. `TWILIO_AUTH_TOKEN` requested on an OAuth2-posture row) are simply absent in the response. The connector logs a `warn` and the MCP runs without that key — same outcome as today's missing-`.env` case.
 - `source: "twilio-tunnel-row"` lets the inspector status panel show "from Twilio creds — synced when row rotates."
+- The Twilio-bundled MCPs only consume `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` today. The API-Key-posture row (which the controller still accepts at create time for tunnel-handshake verification) does NOT auto-fill any Twilio bundle env — customers on the API-Key posture must either also provide an AuthToken on the row for bundled MCPs to work, or run a sibling Auth-Token row for the connector.
+
+**Out of scope — operational values are NOT auto-filled.** The tunnel-security row models *authentication credentials only*. Per-call operational values — phone numbers (`from`), Messaging / Verify Service SIDs, sender emails, agent IDs — are caller-supplied as tool arguments, not env vars. Twilio bundled tools do not declare these keys in `envKeys` and the controller does not store them. If a future feature needs to provision operational values, it should ride a separate frame (or a separate field on `creds-response`) rather than overload this row.
+
+**Controller storage is implementation-defined; `source: "twilio-tunnel-row"` is informational.** This document specifies the *wire shape* of the auto-fill response — it does not mandate which controller-side row physically holds the values. A controller MAY source `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` from any per-org credential surface (a tunnel-security row, an org-settings row encrypted at rest, an external secret manager, etc.) so long as the lookup is scoped to the WS-authenticated `connectorId` per §"Per-MCP scoping". The `source: "twilio-tunnel-row"` discriminator stays on the wire for backwards-compat and remains informational — the connector's inspector renders it as "from Twilio creds — synced when the source rotates" and treats the value opaquely. Controllers that store creds elsewhere SHOULD still emit `"twilio-tunnel-row"` (rather than coining a new value) until a future protocol revision adds finer-grained source enums.
 
 ## Per-MCP scoping (CRITICAL — security-relevant)
 

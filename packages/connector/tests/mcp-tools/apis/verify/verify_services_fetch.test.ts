@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { verifyServicesFetch } from "@mcp/bundled/twilio/tools/verify/verify_services_fetch.js";
 import type { TwilioClient } from "@mcp/bundled/twilio/twilio-client.js";
@@ -21,9 +21,6 @@ function fakeClient(service: Record<string, unknown>): TwilioClient {
 }
 
 describe("apis.verify_services_fetch handler", () => {
-  beforeEach(() => {
-    vi.stubEnv("TWILIO_VERIFY_SERVICE_SID", "VAxyz");
-  });
   afterEach(() => {
     vi.restoreAllMocks();
   });

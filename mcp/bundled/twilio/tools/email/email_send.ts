@@ -28,8 +28,7 @@ export function emailSend(getClient: SendGridClientProvider): Tool {
               .describe("Recipient email address(es). Single string or array."),
             from: z
               .string()
-              .optional()
-              .describe("Sender email. Falls back to SENDGRID_FROM_EMAIL. Must be a verified sender."),
+              .describe("Sender email. Must be a verified sender."),
             subject: z
               .string()
               .optional()
@@ -71,11 +70,6 @@ export function emailSend(getClient: SendGridClientProvider): Tool {
             throw new Error("subject is required unless templateId is set");
           }
 
-          const fromEmail = from ?? process.env.SENDGRID_FROM_EMAIL;
-          if (!fromEmail) {
-            throw new Error("from is required (or set SENDGRID_FROM_EMAIL)");
-          }
-
           const personalization: Record<string, unknown> = { to: toRecipients(to) };
           if (cc?.length) personalization.cc = toRecipients(cc);
           if (bcc?.length) personalization.bcc = toRecipients(bcc);
@@ -83,7 +77,7 @@ export function emailSend(getClient: SendGridClientProvider): Tool {
 
           const body: Record<string, unknown> = {
             personalizations: [personalization],
-            from: { email: fromEmail },
+            from: { email: from },
           };
           if (subject) body.subject = subject;
           if (templateId) body.template_id = templateId;

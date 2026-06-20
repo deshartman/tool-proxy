@@ -22,14 +22,12 @@ export function verifyServicesFetch(client: TwilioClient): Tool {
         {
           description: "Fetches a Verify Service by SID and returns its code length, lookup config, and channel settings.",
           inputSchema: {
-            sid: z.string().optional().describe("Verify Service SID (VAxxxx). Defaults to TWILIO_VERIFY_SERVICE_SID."),
+            sid: z.string().describe("Verify Service SID (VAxxxx)."),
           },
           outputSchema: OutputSchema,
         },
         async ({ sid }) => {
-          const targetSid = sid ?? process.env.TWILIO_VERIFY_SERVICE_SID;
-          if (!targetSid) throw new Error("sid is required (or set TWILIO_VERIFY_SERVICE_SID)");
-          const service = await client.verify.v2.services(targetSid).fetch();
+          const service = await client.verify.v2.services(sid).fetch();
           const summary = {
             sid: service.sid,
             friendlyName: service.friendlyName,

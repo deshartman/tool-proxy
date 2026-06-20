@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { verifySend } from "@mcp/bundled/twilio/tools/verify/verify_send.js";
 import type { TwilioClient } from "@mcp/bundled/twilio/twilio-client.js";
@@ -21,9 +21,6 @@ function fakeClient(verification: Record<string, unknown>): TwilioClient {
 }
 
 describe("apis.verify_send handler", () => {
-  beforeEach(() => {
-    vi.stubEnv("TWILIO_VERIFY_SERVICE_SID", "VAxyz");
-  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -34,7 +31,7 @@ describe("apis.verify_send handler", () => {
     );
     const reg = captureRegistration(tool);
     const result = asToolResult(
-      await reg.handler({ to: "+15550001111", channel: "sms" }),
+      await reg.handler({ to: "+15550001111", channel: "sms", serviceSid: "VAxyz" }),
     );
     const parsed = asZodObject(reg.outputSchema).parse(result.structuredContent) as {
       sid: string;

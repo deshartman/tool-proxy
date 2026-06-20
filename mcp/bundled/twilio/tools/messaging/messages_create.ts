@@ -11,12 +11,6 @@ const CHANNEL_PREFIX: Record<Channel, string> = {
   rcs: "rcs:",
 };
 
-function defaultFrom(channel: Channel): string | undefined {
-  if (channel === "whatsapp") return process.env.TWILIO_WHATSAPP_FROM;
-  if (channel === "rcs") return process.env.TWILIO_RCS_AGENT;
-  return process.env.TWILIO_FROM_NUMBER;
-}
-
 // Conservative subset of the Twilio Message resource — the fields a
 // procedure most commonly references after a send (sid for tracking,
 // status for early-state visibility, channel echo for branching).
@@ -44,7 +38,7 @@ export function messagesCreate(client: TwilioClient): Tool {
             contentSid: z.string().optional().describe("Content template SID (HXxxxx). Required for WhatsApp/RCS templated sends outside the 24h session window."),
             contentVariables: z.record(z.string(), z.string()).optional().describe("Placeholder values for the content template (string keys)."),
             mediaUrl: z.array(z.string()).optional().describe("Media URLs for MMS/WhatsApp media messages."),
-            from: z.string().optional().describe("Override the env-configured sender. (Tool adds the channel prefix.)"),
+            from: z.string().optional().describe("Sender. For sms: E.164 number. For whatsapp: E.164 number on a registered WhatsApp sender. For rcs: agent ID. Tool adds the channel prefix. Either from or messagingServiceSid must be provided."),
             messagingServiceSid: z.string().optional().describe("Use a Messaging Service instead of an explicit from. Mutually exclusive with from."),
             statusCallback: z.string().optional().describe(
               "Webhook URL for delivery status updates (https://…). Leave unset and pass receiveStatusCallbacks=true to use the connector-managed default URL.",
@@ -60,18 +54,14 @@ export function messagesCreate(client: TwilioClient): Tool {
             throw new Error("Either body or contentSid must be provided");
           }
 
-          const fromBase = from ?? defaultFrom(channel);
-          const messagingService = messagingServiceSid ?? process.env.TWILIO_MESSAGING_SERVICE_SID;
-          if (!fromBase && !messagingService) {
-            throw new Error(
-              "from is required (or set TWILIO_FROM_NUMBER / TWILIO_WHATSAPP_FROM / TWILIO_RCS_AGENT, or pass messagingServiceSid)",
-            );
+          if (!from && !messagingServiceSid) {
+            throw new Error("Either from or messagingServiceSid must be provided");
           }
 
           const prefix = CHANNEL_PREFIX[channel];
           const opts: Record<string, unknown> = { to: `${prefix}${to}` };
-          if (fromBase) opts.from = `${prefix}${fromBase}`;
-          if (messagingService) opts.messagingServiceSid = messagingService;
+          if (from) opts.from = `${prefix}${from}`;
+          if (messagingServiceSid) opts.messagingServiceSid = messagingServiceSid;
           if (body) opts.body = body;
           if (contentSid) opts.contentSid = contentSid;
           if (contentVariables) opts.contentVariables = JSON.stringify(contentVariables);

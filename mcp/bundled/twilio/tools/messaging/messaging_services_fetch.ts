@@ -26,16 +26,12 @@ export function messagingServicesFetch(client: TwilioClient): Tool {
         {
           description: "Fetches a Messaging Service by SID and returns its sender pool config, fallback URL, and feature flags.",
           inputSchema: {
-            sid: z.string().describe("Messaging Service SID, e.g. MGxxxxxxxx").optional(),
+            sid: z.string().describe("Messaging Service SID, e.g. MGxxxxxxxx"),
           },
           outputSchema: OutputSchema,
         },
         async ({ sid }) => {
-          const targetSid = sid ?? process.env.TWILIO_MESSAGING_SERVICE_SID;
-          if (!targetSid) {
-            throw new Error("sid is required (or set TWILIO_MESSAGING_SERVICE_SID)");
-          }
-          const service = await client.messaging.v1.services(targetSid).fetch();
+          const service = await client.messaging.v1.services(sid).fetch();
           const summary = {
             sid: service.sid,
             friendlyName: service.friendlyName,

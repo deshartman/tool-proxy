@@ -7,10 +7,11 @@ import { createLogger } from "@mcp-shim/connector/sdk";
 // about (no boot-order coupling) and easier to test (each call gets its
 // own instance from its own env map).
 //
-// Auth modes (selected by env-var presence; ApiKey is preferred for
-// production):
-//   1. ApiKey:    TWILIO_ACCOUNT_SID + TWILIO_API_KEY_SID + TWILIO_API_KEY_SECRET
-//   2. AuthToken: TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN
+// Auth: TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN. API Key/Secret was removed
+// to keep the bundle's auth shape aligned with the controller's
+// creds-response auto-fill (see docs/MCP-PROTOCOL.md "Twilio-bundled
+// auto-fill"). Customers who want revocable per-service credentials should
+// mint a scoped subaccount AuthToken rather than an API Key.
 
 export type TwilioClient = ReturnType<typeof twilio>;
 
@@ -19,22 +20,13 @@ const log = createLogger("twilio-mcp");
 export function createTwilioClient(env: NodeJS.ProcessEnv = process.env): TwilioClient {
   const sid = env.TWILIO_ACCOUNT_SID;
   const authToken = env.TWILIO_AUTH_TOKEN;
-  const apiKeySid = env.TWILIO_API_KEY_SID;
-  const apiKeySecret = env.TWILIO_API_KEY_SECRET;
 
   if (!sid) {
     throw new Error("TWILIO_ACCOUNT_SID must be set");
   }
-
-  if (apiKeySid && apiKeySecret) {
-    log.info({ auth: "apikey" }, "twilio client ready");
-    return twilio(apiKeySid, apiKeySecret, { accountSid: sid });
+  if (!authToken) {
+    throw new Error("TWILIO_AUTH_TOKEN must be set");
   }
-  if (authToken) {
-    log.info({ auth: "authtoken" }, "twilio client ready");
-    return twilio(sid, authToken);
-  }
-  throw new Error(
-    "Twilio auth missing: set TWILIO_AUTH_TOKEN, OR TWILIO_API_KEY_SID + TWILIO_API_KEY_SECRET",
-  );
+  log.info({ auth: "authtoken" }, "twilio client ready");
+  return twilio(sid, authToken);
 }

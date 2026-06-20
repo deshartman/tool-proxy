@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { callsCreate } from "@mcp/bundled/twilio/tools/voice/calls_create.js";
 import type { TwilioClient } from "@mcp/bundled/twilio/twilio-client.js";
@@ -18,9 +18,6 @@ function fakeClient(callResult: { sid: string; status: string }): TwilioClient {
 }
 
 describe("apis.calls_create handler", () => {
-  beforeEach(() => {
-    vi.stubEnv("TWILIO_FROM_NUMBER", "+15550009999");
-  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -29,7 +26,11 @@ describe("apis.calls_create handler", () => {
     const tool = callsCreate(fakeClient({ sid: "CAxyz", status: "queued" }));
     const reg = captureRegistration(tool);
     const result = asToolResult(
-      await reg.handler({ to: "+15550001111", twiml: "<Response><Say>Hi</Say></Response>" }),
+      await reg.handler({
+        to: "+15550001111",
+        from: "+15550009999",
+        twiml: "<Response><Say>Hi</Say></Response>",
+      }),
     );
     const parsed = asZodObject(reg.outputSchema).parse(result.structuredContent) as {
       sid: string;

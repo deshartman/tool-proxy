@@ -19,20 +19,17 @@ export function verifySend(client: TwilioClient): Tool {
           inputSchema: {
             to: z.string().describe("E.164 phone number for sms/call/whatsapp, or email address for email."),
             channel: z.enum(["sms", "call", "email", "whatsapp"]).describe("Delivery channel for the OTP."),
-            serviceSid: z.string().optional().describe("Verify Service SID (VAxxxx). Defaults to TWILIO_VERIFY_SERVICE_SID."),
+            serviceSid: z.string().describe("Verify Service SID (VAxxxx)."),
             locale: z.string().optional().describe("BCP-47 locale, e.g. en-US."),
           },
           outputSchema: OutputSchema,
         },
         async ({ to, channel, serviceSid, locale }) => {
-          const targetSid = serviceSid ?? process.env.TWILIO_VERIFY_SERVICE_SID;
-          if (!targetSid) throw new Error("serviceSid is required (or set TWILIO_VERIFY_SERVICE_SID)");
-
           const opts: Record<string, unknown> = { to, channel };
           if (locale) opts.locale = locale;
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const verification = await client.verify.v2.services(targetSid).verifications.create(opts as any);
+          const verification = await client.verify.v2.services(serviceSid).verifications.create(opts as any);
           const data = { sid: verification.sid, status: verification.status, channel: verification.channel };
           return {
             structuredContent: data,

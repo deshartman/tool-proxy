@@ -21,15 +21,12 @@ export function verifyCheck(client: TwilioClient): Tool {
           inputSchema: {
             to: z.string().describe("The same to value used in verify_send (E.164 phone or email)."),
             code: z.string().describe("The OTP the user submitted."),
-            serviceSid: z.string().optional().describe("Verify Service SID (VAxxxx). Defaults to TWILIO_VERIFY_SERVICE_SID."),
+            serviceSid: z.string().describe("Verify Service SID (VAxxxx)."),
           },
           outputSchema: OutputSchema,
         },
         async ({ to, code, serviceSid }) => {
-          const targetSid = serviceSid ?? process.env.TWILIO_VERIFY_SERVICE_SID;
-          if (!targetSid) throw new Error("serviceSid is required (or set TWILIO_VERIFY_SERVICE_SID)");
-
-          const result = await client.verify.v2.services(targetSid).verificationChecks.create({ to, code });
+          const result = await client.verify.v2.services(serviceSid).verificationChecks.create({ to, code });
           const summary = {
             sid: result.sid,
             status: result.status,

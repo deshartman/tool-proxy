@@ -38,6 +38,8 @@ The WS handshake is gated by per-tunnel auth that the controller mints. Before b
 - **Twilio Auth Token** or **Twilio API Key** → controller mints a long-lived `ts_<...>` bearer, shown once. Paste it into `TUNNEL_AUTH_TOKEN`.
 - **OAuth 2.0 (client_credentials)** → controller mints a `client_id` + `client_secret`. Paste them into `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`, and set `OAUTH_TOKEN_URL` to the URL the UI shows. The connector mints a fresh 1h JWT against that endpoint on each reconnect (and refreshes <60s before expiry mid-session).
 
+> The bundled Twilio MCP under [`mcp/bundled/twilio/`](../../mcp/bundled/twilio/) is AuthToken-only at the bundle-env layer. If you pick the **Twilio API Key** row type above for the tunnel handshake, the bundled MCP still needs `TWILIO_AUTH_TOKEN` — either via the controller's auto-fill (mint an Auth Token row alongside it) or pasted directly into `mcp/bundled/twilio/.env`.
+
 ```bash
 # from repo root
 npm install
