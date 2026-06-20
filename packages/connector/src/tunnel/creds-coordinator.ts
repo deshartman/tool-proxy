@@ -87,11 +87,30 @@ export class CredsCoordinator {
     const env = frame.env ?? {};
     const source = frame.source ?? "none";
     pending.resolve(env, source);
-    void this.applyEnv(pending.mcp, env, source, "creds-response");
+    this.applyEnvSafely(pending.mcp, env, source, "creds-response");
   }
 
   handleUpdate(frame: CredsUpdateFrame): void {
-    void this.applyEnv(frame.mcp, frame.env, frame.source, frame.reason ?? "creds-update");
+    this.applyEnvSafely(frame.mcp, frame.env, frame.source, frame.reason ?? "creds-update");
+  }
+
+  // Fire-and-forget wrapper. A supervisor restart that throws (e.g. child
+  // fails to come back up on a creds-driven respawn) MUST NOT become an
+  // unhandled rejection that crashes the connector — log it and move on.
+  // The MCP stays in its stopped/failed state; the inspector status panel
+  // surfaces the failure for the operator.
+  private applyEnvSafely(
+    mcp: string,
+    env: Record<string, string>,
+    source: "twilio-tunnel-row" | "operator-entered" | "none",
+    reason: string,
+  ): void {
+    this.applyEnv(mcp, env, source, reason).catch((err) => {
+      this.opts.log.error(
+        { mcp, reason, err: err as Error },
+        `creds apply failed — MCP may be in a degraded state`,
+      );
+    });
   }
 
   private async applyEnv(

@@ -138,6 +138,18 @@ export class McpSupervisor {
   ): Promise<{ applied: boolean; restarted: boolean }> {
     const entry = this.entries.get(mcp);
     if (!entry) return { applied: false, restarted: false };
+
+    // Skip restart when the controller has nothing to add. `source: "none"`
+    // with empty env means "no row for this MCP — fall back to dir/.env"
+    // per docs/MCP-PROTOCOL.md. Restarting a running child for an empty
+    // payload would kill it and produce no behavioural change. Same when
+    // the env is identical to what we already merged on a prior call.
+    const isEmptyNone = source === "none" && Object.keys(env).length === 0;
+    const sameAsPrev = envEquals(entry.controllerEnv, env);
+    if (isEmptyNone || sameAsPrev) {
+      return { applied: true, restarted: false };
+    }
+
     entry.controllerEnv = env;
     entry.status.credsLastUpdated = nowMs();
     entry.status.credsSource = source === "none" ? entry.status.credsSource : "controller";
@@ -337,6 +349,14 @@ export class McpSupervisor {
 
 function nowMs(): number {
   return Date.now();
+}
+
+function envEquals(a: Record<string, string>, b: Record<string, string>): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const k of aKeys) if (a[k] !== b[k]) return false;
+  return true;
 }
 
 function canBind(port: number): Promise<boolean> {
