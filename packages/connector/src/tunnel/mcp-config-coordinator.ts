@@ -34,11 +34,18 @@ export interface McpConfigCoordinatorOpts {
   send: (frame: TunnelFrame) => void;
   supervisor: McpSupervisor;
   log: Logger;
-  // Boot soft-wait. If no snapshot arrives within this window after
+  // Snapshot soft-wait. If no snapshot arrives within this window after
   // register-ack, the coordinator emits mcp-config-resync { reason: "boot" }
   // so an older controller surfaces explicitly rather than silently
   // running with an empty 3rd-party roster.
-  bootSoftWaitMs?: number;
+  snapshotWaitMs?: number;
+}
+
+// Per-tunnel rebind shape. Only the wire-side hooks change between tunnels —
+// `supervisor` is process-wide and supplied at construction.
+export interface McpConfigCoordinatorBind {
+  send: (frame: TunnelFrame) => void;
+  log?: Logger;
 }
 
 interface RosterEntry {
@@ -49,34 +56,82 @@ interface RosterEntry {
   config: McpConfigEntry;
 }
 
+// LIFETIME — read this before changing the construction site.
+//
+// The coordinator is constructed ONCE per connector process and outlives WS
+// reconnects. Its `roster` and `nameToMcpId` maps are the connector's view of
+// "which supervisor entries did I register from controller-config snapshots /
+// deltas". That view tracks the supervisor (which also outlives reconnects)
+// and MUST NOT blink when the WS does.
+//
+// Rebuilding the coordinator per-tunnel was the original shape (matched
+// CredsCoordinator) but produced a real bug observed 2026-06-21: after a WS
+// reconnect, an arriving `gen=N` snapshot containing only a freshly-added
+// row would mis-identify the prior tunnel session's still-running supervisor
+// entry as a yaml-clash (because the new coordinator's nameToMcpId was
+// empty). The "Removed" loop also no-op'd, leaking the prior entry forever.
+//
+// Per-tunnel reset goes through bind() — see below — which only swaps the
+// wire `send` callback and cancels any in-flight snapshot-wait timer. Steady
+// state (the roster + lastAppliedGeneration) survives by design.
+//
+// Why CredsCoordinator's per-tunnel construction is correct and this isn't:
+// CredsCoordinator tracks `pending: Map<requestId, …>` — pending IPC. A reply
+// from a stale tunnel landing on a fresh one would be wrong, so its per-
+// tunnel rebuild is a feature. The roster coordinator's `roster: Map<mcpId,
+// …>` is the opposite — it's steady-state membership, not pending IPC.
 export class McpConfigCoordinator {
   // mcpId → roster entry. Snapshot reconciliation uses this as the prior
-  // state; delta operations mutate it in place.
+  // state; delta operations mutate it in place. Survives WS reconnect.
   private readonly roster = new Map<string, RosterEntry>();
   // name → mcpId. Lets us go from supervisor entry → roster entry on
-  // creds frames.
+  // creds frames. Survives WS reconnect.
   private readonly nameToMcpId = new Map<string, string>();
+  // Monotonic generation high-watermark. Survives WS reconnect.
   private lastAppliedGeneration = -1;
-  private readonly bootSoftWaitMs: number;
-  private bootSoftWaitTimer?: NodeJS.Timeout;
+  // Wire-side hooks. Replaced via bind() on every tunnel reconnect.
+  private send: (frame: TunnelFrame) => void;
+  private log: Logger;
+  // Snapshot-wait timer. Cancelled on bind() so a timer armed for tunnel
+  // N can't fire on tunnel N+1.
+  private readonly snapshotWaitMs: number;
+  private snapshotWaitTimer?: NodeJS.Timeout;
 
   constructor(private readonly opts: McpConfigCoordinatorOpts) {
-    this.bootSoftWaitMs = opts.bootSoftWaitMs ?? 5000;
+    this.snapshotWaitMs = opts.snapshotWaitMs ?? 5000;
+    this.send = opts.send;
+    this.log = opts.log;
   }
 
-  // Called from the boot pipeline right after register-ack. Starts the
-  // soft-wait that triggers a resync request if no snapshot lands.
-  armBootSoftWait(): void {
-    this.cancelBootSoftWait();
-    this.bootSoftWaitTimer = setTimeout(() => {
+  // Per-tunnel rebind. Called from the boot pipeline whenever a fresh tunnel
+  // opens (after `tunnel = pendingTunnel`). Swaps the wire `send` so frames
+  // emitted by an in-flight reconcile reach the new tunnel, NOT the closed
+  // one. Cancels the prior tunnel's snapshot-wait timer for the same reason.
+  // Roster + lastAppliedGeneration are deliberately preserved.
+  bind(b: McpConfigCoordinatorBind): void {
+    this.cancelSnapshotWait();
+    this.send = b.send;
+    if (b.log) this.log = b.log;
+  }
+
+  // Called from the boot pipeline right after register-ack. Arms a timer
+  // that triggers `mcp-config-resync { reason: "boot" }` if no snapshot
+  // lands within the window — guards against an older controller silently
+  // leaving the 3rd-party roster empty.
+  //
+  // Re-armable across reconnects. The "boot" reason is the wire contract;
+  // the timer just means "no snapshot since the last register-ack".
+  armSnapshotWait(): void {
+    this.cancelSnapshotWait();
+    this.snapshotWaitTimer = setTimeout(() => {
       if (this.lastAppliedGeneration === -1) {
-        this.opts.log.warn(
+        this.log.warn(
           {},
           `mcp-config-snapshot soft-wait elapsed — sending mcp-config-resync. older controller? running with empty 3rd-party roster.`,
         );
         this.requestResync("boot");
       }
-    }, this.bootSoftWaitMs);
+    }, this.snapshotWaitMs);
   }
 
   // Lookup the mcpId for a roster-sourced MCP by name. Used when building
@@ -87,15 +142,15 @@ export class McpConfigCoordinator {
   }
 
   async handleSnapshot(frame: McpConfigSnapshotFrame): Promise<void> {
-    this.cancelBootSoftWait();
+    this.cancelSnapshotWait();
     if (frame.generation <= this.lastAppliedGeneration) {
-      this.opts.log.warn(
+      this.log.warn(
         { generation: frame.generation, lastApplied: this.lastAppliedGeneration },
         `mcp-config-snapshot superseded — dropping`,
       );
       return;
     }
-    this.opts.log.info(
+    this.log.info(
       { generation: frame.generation, count: frame.servers.length },
       `applying mcp-config-snapshot`,
     );
@@ -134,14 +189,14 @@ export class McpConfigCoordinator {
 
   async handleDelta(frame: McpConfigDeltaFrame): Promise<void> {
     if (frame.generation <= this.lastAppliedGeneration) {
-      this.opts.log.warn(
+      this.log.warn(
         { generation: frame.generation, lastApplied: this.lastAppliedGeneration },
         `mcp-config-delta out-of-order or duplicate — dropping`,
       );
       return;
     }
     if (frame.generation !== this.lastAppliedGeneration + 1) {
-      this.opts.log.warn(
+      this.log.warn(
         { generation: frame.generation, lastApplied: this.lastAppliedGeneration },
         `mcp-config-delta generation gap — requesting resync`,
       );
@@ -167,14 +222,14 @@ export class McpConfigCoordinator {
     }
     for (const mcpId of frame.removed ?? []) {
       const prior = this.roster.get(mcpId);
-      if (!prior) {
+      if (prior) {
+        const result = await this.removeEntry(prior);
+        perMcp.push({ mcpId, name: prior.name, status: result.status, error: result.error });
+      } else {
         // Removing something we don't have — log + report removed (idempotent).
-        this.opts.log.warn({ mcpId }, `mcp-config-delta remove for unknown mcpId`);
+        this.log.warn({ mcpId }, `mcp-config-delta remove for unknown mcpId`);
         perMcp.push({ mcpId, name: "?", status: "removed" });
-        continue;
       }
-      const result = await this.removeEntry(prior);
-      perMcp.push({ mcpId, name: prior.name, status: result.status, error: result.error });
     }
 
     this.lastAppliedGeneration = frame.generation;
@@ -183,16 +238,16 @@ export class McpConfigCoordinator {
 
   // ─── private ────────────────────────────────────────────────────────────
 
-  private cancelBootSoftWait(): void {
-    if (this.bootSoftWaitTimer) {
-      clearTimeout(this.bootSoftWaitTimer);
-      this.bootSoftWaitTimer = undefined;
+  private cancelSnapshotWait(): void {
+    if (this.snapshotWaitTimer) {
+      clearTimeout(this.snapshotWaitTimer);
+      this.snapshotWaitTimer = undefined;
     }
   }
 
   private requestResync(reason: McpConfigResyncFrame["reason"]): void {
     const frame: McpConfigResyncFrame = { type: "mcp-config-resync", reason };
-    this.opts.send(frame);
+    this.send(frame);
   }
 
   private sendAck(
@@ -200,7 +255,7 @@ export class McpConfigCoordinator {
     perMcp: McpConfigAckFrame["perMcp"],
   ): void {
     const ack: McpConfigAckFrame = { type: "mcp-config-ack", generation, perMcp };
-    this.opts.send(ack);
+    this.send(ack);
   }
 
   private async addEntry(

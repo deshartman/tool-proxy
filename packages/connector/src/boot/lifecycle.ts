@@ -176,6 +176,22 @@ export async function boot(): Promise<void> {
   });
   supervisor.register(allSpecs);
 
+  // Controller-driven 3rd-party MCP roster (W-E2). Constructed ONCE per
+  // connector process — outlives WS reconnects so its in-memory roster
+  // tracks the supervisor's lifetime, not the tunnel's. Per-tunnel rebind
+  // (the wire `send` callback) goes through `mcpConfig.bind()` inside
+  // `connectTunnel`. See the LIFETIME comment on McpConfigCoordinator for
+  // the bug this prevents (2026-06-21 manual repro).
+  //
+  // Initial `send` is a no-op until the first tunnel binds — any frame
+  // emitted before that would be a bug (we never invoke handleSnapshot /
+  // handleDelta before a tunnel exists).
+  const mcpConfig = new McpConfigCoordinator({
+    send: () => log.warn(`mcp-config send before tunnel bind — dropping frame`),
+    supervisor,
+    log,
+  });
+
   log.info(`connecting to ${allSpecs.length} local MCP server(s)`);
   await supervisor.startAll();
   log.info({ servers: [...servers.keys()] }, `connected to local servers`);
@@ -299,13 +315,12 @@ export async function boot(): Promise<void> {
       log,
     });
 
-    // Controller-driven 3rd-party MCP roster (W-E2). Same per-tunnel-instance
-    // lifecycle — a snapshot from a stale tunnel can't mutate a fresh one.
-    const mcpConfig = new McpConfigCoordinator({
-      send: (frame) => pendingTunnel.send(frame),
-      supervisor,
-      log,
-    });
+    // Controller-driven 3rd-party MCP roster (W-E2). The coordinator itself
+    // is process-wide (constructed in outer `boot` scope); per-tunnel rebind
+    // swaps only the wire `send` callback so an in-flight reconcile emits to
+    // the *current* tunnel, NOT a stale one. Roster + lastAppliedGeneration
+    // survive reconnect — see LIFETIME comment on McpConfigCoordinator.
+    mcpConfig.bind({ send: (frame) => pendingTunnel.send(frame) });
 
     const baseRouter = createFrameRouter({
       webhooks,
@@ -328,7 +343,7 @@ export async function boot(): Promise<void> {
         // etc.) keep flowing.
         baseRouter(frame);
         void requestCredsForAllMcps(creds, mcpConfig);
-        mcpConfig.armBootSoftWait();
+        mcpConfig.armSnapshotWait();
         return;
       }
       baseRouter(frame);

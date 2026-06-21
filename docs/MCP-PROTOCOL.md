@@ -678,20 +678,30 @@ For stdio, the connector passes the env vars to the subprocess (existing path); 
 
 ### Yaml ⊕ controller-roster — disjoint sets
 
-There is no name-conflict resolution. The yaml lists bundled + customer-authored MCPs only; controller-supplied 3rd-party MCPs live in a separate in-memory roster keyed by `mcpId`. The yaml does NOT carry `mcpId`; controller-supplied entries do NOT appear in the yaml. If a customer puts a 3rd-party MCP in their yaml *and* configures one in the controller UI with the same `name`, the connector treats them as two separate entries (the yaml entry has no mcpId and is registered first; the controller entry registers separately and the supervisor logs a name collision in the ack as `status: "failed", error: "name conflict with yaml entry"` and skips spawning).
+There is no name-conflict resolution. The yaml lists bundled + customer-authored MCPs only; controller-supplied 3rd-party MCPs live in a separate in-memory roster keyed by `mcpId`. The yaml does NOT carry `mcpId`; controller-supplied entries do NOT appear in the yaml. If a customer puts a 3rd-party MCP in their yaml *and* configures one in the controller UI with the same `name`, the connector treats them as two separate entries: the yaml entry registers first at boot; the controller entry's `addEntry` path sees `supervisor.hasEntry(name) → true` AND its own `nameToMcpId.get(name) → undefined`, distinguishes the clash mode (yaml vs roster-internal — see below), and acks the controller entry as `status: "failed"` with one of:
 
-### Persistence — none
+- `error: "name conflict with yaml entry \"<name>\""` — when the existing supervisor entry was registered by the boot path (yaml).
+- `error: "name conflict with another controller-config entry (mcpId=<otherMcpId>)"` — when the existing supervisor entry came from a prior controller-config delta in this same roster (this is a defensive-only branch — the controller UI should prevent operators from creating two rows with the same name; reach this branch via duplicate delta delivery on reconnect or controller-side bug, not via the happy path).
 
-The 3rd-party roster is **NOT** persisted on the connector. On WS reconnect:
+Either branch leaves the existing entry untouched and skips spawning the new one.
+
+### Persistence — none on disk; memory across WS reconnects
+
+The 3rd-party roster is **NOT** persisted on the connector to disk. It IS held in memory for the lifetime of the connector process — `McpConfigCoordinator` is constructed once per process (alongside the supervisor it tracks), and per-tunnel rebind (`bind({send})`) only swaps the wire callback. Roster + `lastAppliedGeneration` survive WS reconnect by design; they are reset only on full process restart.
+
+On WS reconnect (steady-state — process did not restart):
 
 1. `register` → `register-ack`.
 2. Controller pushes `mcp-config-snapshot` at the current generation.
 3. Connector reconciles the in-memory roster against the snapshot:
-   - Entries in snapshot but not running → `supervisor.startEntry`.
-   - Entries running but not in snapshot → `supervisor.stopEntry`.
-   - Entries in both with changed spec → `supervisor.restart(name, "config-update")`.
+   - Entries in snapshot but not in roster → `supervisor.registerOne` + `startOne`.
+   - Entries in roster but not in snapshot → `supervisor.unregister` (kills child + drops connection).
+   - Entries in both with changed spec → `supervisor.replaceSpec` (restart).
+   - Entries in both with same spec → no-op.
 
-This keeps the connector stateless on roster — the controller is the brain, the connector is the executor.
+On full process restart, `lastAppliedGeneration` resets to `-1` and the next snapshot at any generation re-establishes the roster from scratch — the controller is the brain, the connector is the executor, and the snapshot is always authoritative.
+
+**Why memory-but-not-disk:** the roster needs to be diff'd against incoming snapshots so the "Removed" loop catches entries the operator deleted while the WS was down. A per-tunnel coordinator with empty memory would skip that loop and leak supervisor entries across reconnect (manifested 2026-06-21 as a false "name conflict with yaml entry \"X\"" on re-add of a deleted row). On-disk persistence is the wrong layer — it would require migration on schema change and could go stale relative to controller state during a connector outage. Memory + "snapshot is always authoritative on reconnect" gives the right trade.
 
 ### Audit logging
 
