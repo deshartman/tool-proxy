@@ -9,8 +9,9 @@
 #   - mcp/local/* trees so Type 1 entries in connector.yaml can spawn from
 #     them. tools/*.ts files are read at runtime by tsx (no build per
 #     MCP).
-#   - mcp/external/* + mcp/bundled/* trees for Type 2/3 .env stubs. The
-#     yaml's dir: points here so per-entry .env loading works.
+#   - mcp/bundled/* tree for Type 3 .env stubs. The yaml's dir: points here
+#     so per-entry .env loading works. Type 2 (3rd-party) MCPs come from the
+#     controller UI per docs/MCP-PROTOCOL.md v1.1, not from yaml/disk.
 #   - /opt/bundled-mcps/<name>/.venv/ — one venv per Type 3 bundle
 #     registered in BUNDLED_MCPS (see packages/connector/src/config.ts).
 #     Source lives in-tree at mcp/bundled/<name>/ and is installed by the
@@ -41,10 +42,11 @@ RUN npm run build
 # Strip workspace dev deps for the runtime copy.
 RUN npm prune --omit=dev --workspaces --include-workspace-root
 
-# MCP tree: Type 1 source folders (mcp/local/), Type 2 .env stubs
-# (mcp/external/), Type 3 .env stubs (mcp/bundled/). Per-entry deps install
-# below for any folder that carries its own package.json so deps don't leak
-# across MCPs and the workspace install graph stays clean.
+# MCP tree: Type 1 source folders (mcp/local/) + Type 3 .env stubs
+# (mcp/bundled/). Per-entry deps install below for any folder that carries
+# its own package.json so deps don't leak across MCPs and the workspace
+# install graph stays clean. Type 2 (3rd-party) MCPs come from the controller
+# UI per docs/MCP-PROTOCOL.md v1.1 — they have no on-disk presence.
 COPY mcp mcp
 
 # Type 3 bundle source. Lives outside mcp/ deliberately — bundle source is a
@@ -55,7 +57,7 @@ COPY mcp mcp
 COPY bundles bundles
 
 RUN set -e; \
-    for dir in mcp/local/*/ mcp/external/*/ mcp/bundled/*/; do \
+    for dir in mcp/local/*/ mcp/bundled/*/; do \
       [ -f "$dir/package.json" ] || continue; \
       depcount=$(node -e \
         "console.log(Object.keys(require('./$dir/package.json').dependencies||{}).length)"); \
@@ -115,10 +117,11 @@ COPY --from=node-build /repo/packages/connector/public        ./packages/connect
 COPY --from=node-build /repo/packages/connector/package.json  ./packages/connector/package.json
 COPY --from=node-build /repo/package.json                     ./package.json
 
-# MCP tree: Type 1 source (mcp/local/), Type 2 .env stubs (mcp/external/),
-# Type 3 .env stubs (mcp/bundled/). Required so the customer's yaml can
-# resolve dir: paths to /app/mcp/local/<name>/ for Type 1 spawning and
-# /app/mcp/{external,bundled}/<name>/ for per-entry .env merging.
+# MCP tree: Type 1 source (mcp/local/) + Type 3 .env stubs (mcp/bundled/).
+# Required so the customer's yaml can resolve dir: paths to
+# /app/mcp/local/<name>/ for Type 1 spawning and /app/mcp/bundled/<name>/
+# for per-entry .env merging. Type 2 (3rd-party) MCPs come from the
+# controller UI per docs/MCP-PROTOCOL.md v1.1 — no on-disk presence.
 # Customers extending the image with their own MCPs can drop additional
 # folders under mcp/local/.
 COPY --from=node-build /repo/mcp ./mcp

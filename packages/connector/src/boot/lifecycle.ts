@@ -13,8 +13,7 @@
 // tunnel/frame-router.ts so the register-ack error-code branches are a
 // sub-table rather than nested ifs in a closure.
 
-import { loadConfig, type McpServerSpec } from "../config.js";
-import { connectAll } from "../servers/connect.js";
+import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
 import type { McpServerConnection } from "../servers/index.js";
 import { buildManifest } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
@@ -23,15 +22,19 @@ import { TunnelClient } from "../tunnel/client.js";
 import { Dispatcher } from "../dispatcher.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 import { Inspector, startInspector } from "../inspector/server.js";
-import { spawnType1Children, shutdownChildren, type SpawnedChild } from "../spawner.js";
 import { readState, defaultStatePath, type ConnectorState } from "../state.js";
 import { createLogger } from "../logger.js";
 import { WebhookRegistry } from "../tunnel/webhook-registry.js";
 import { ReconnectController } from "../tunnel/reconnect.js";
 import { createFrameRouter } from "../tunnel/frame-router.js";
+import { CredsCoordinator } from "../tunnel/creds-coordinator.js";
+import { McpConfigCoordinator } from "../tunnel/mcp-config-coordinator.js";
+import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
+import { discoverDropins } from "../dropin.js";
 import { resolveAuth } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { envOptional, envString, envNumber } from "../env.js";
+import { resolve as resolvePath } from "node:path";
 
 const log = createLogger("connector");
 // Adapter for downstream callbacks that take `(msg: string) => void`.
@@ -137,23 +140,66 @@ export async function boot(): Promise<void> {
     startInspector(inspectorPort, inspector);
   }
 
-  // 2a. Spawn Type 1 children (http transport + dir + no endpoint). Mutates
-  // the spec list to fill in `endpoint` so the dispatch path below sees a
-  // uniform shape. Bundled children that immediately call createWebhookEndpoint
-  // succeed because the inspector is already listening above.
-  const spawned: SpawnedChild[] = await spawnType1Children(config.mcp_servers, { log: logLine });
-  if (spawned.length > 0) {
-    const summary = spawned.map((child) => child.name + "=" + child.port).join(", ");
-    log.info({ count: spawned.length, children: summary }, `spawned Type 1 children`);
+  // 2a. Discover MCP_DROPIN_DIR folders that aren't already named in the
+  // yaml. Drop-ins coexist with hand-written Type 1 entries: the yaml
+  // entry wins for the same folder name, and a folder with server.ts
+  // present is treated as today's hand-written Type 1.
+  const yamlNames = new Set(config.mcp_servers.map((s) => s.name));
+  const dropins = discoverDropins({ yamlNames });
+  if (dropins.length > 0) {
+    log.info(
+      { dropins: dropins.map((d) => d.name) },
+      `discovered drop-in MCPs from ${envOptional("MCP_DROPIN_DIR") ?? "default dir"}`,
+    );
   }
+  const allSpecs: SupervisedSpec[] = [...config.mcp_servers, ...dropins];
 
-  // 2b. Connect to all local MCP servers in parallel. Fail fast if any are
-  // unreachable.
-  log.info(`connecting to ${config.mcp_servers.length} local MCP server(s)`);
-  const servers = await connectAll(config.mcp_servers);
+  // 2b. Supervisor owns child lifecycle. The shared `servers` map is
+  // mutated by every spawn / restart so the dispatcher (wired below) and
+  // inspector pick up new connections without re-attach.
+  const servers = new Map<string, McpServerConnection>();
+  const supervisor = new McpSupervisor({
+    log,
+    servers,
+    onSpawn: ({ name, envSources }) => {
+      const dirEnvKeys = Object.entries(envSources).filter(([, src]) => src === "dir/.env").map(([k]) => k);
+      const controllerEnvKeys = Object.entries(envSources).filter(([, src]) => src === "controller").map(([k]) => k);
+      log.info(
+        { name, controller: controllerEnvKeys, dirDotEnv: dirEnvKeys },
+        `mcp spawn env-sources`,
+      );
+    },
+    onRestart: async (name) => {
+      log.info({ name }, `mcp restart complete — refreshing manifest`);
+      await refreshManifestAndPushDelta();
+    },
+  });
+  supervisor.register(allSpecs);
+
+  // Controller-driven 3rd-party MCP roster (W-E2). Constructed ONCE per
+  // connector process — outlives WS reconnects so its in-memory roster
+  // tracks the supervisor's lifetime, not the tunnel's. Per-tunnel rebind
+  // (the wire `send` callback) goes through `mcpConfig.bind()` inside
+  // `connectTunnel`. See the LIFETIME comment on McpConfigCoordinator for
+  // the bug this prevents (2026-06-21 manual repro).
+  //
+  // Initial `send` is a no-op until the first tunnel binds — any frame
+  // emitted before that would be a bug (we never invoke handleSnapshot /
+  // handleDelta before a tunnel exists).
+  const mcpConfig = new McpConfigCoordinator({
+    send: () => log.warn(`mcp-config send before tunnel bind — dropping frame`),
+    supervisor,
+    log,
+  });
+
+  log.info(`connecting to ${allSpecs.length} local MCP server(s)`);
+  await supervisor.startAll();
   log.info({ servers: [...servers.keys()] }, `connected to local servers`);
+  inspector?.setMcpStatuses(supervisor.statusList());
 
   // 3. Build initial manifest and push it into the inspector (already running).
+  // The supervisor list is the source of truth for what's running — it
+  // includes the yaml entries plus any drop-ins discovered above.
   let manifest: ToolManifest = await buildManifest(config, servers, version, configPath);
   // Manifest-time advisory: one log.warn per shipped MCP whose tools lack
   // outputSchema. Tools without a schema are still callable — the controller
@@ -163,7 +209,9 @@ export async function boot(): Promise<void> {
   // See .claude/plans/OUTPUT-SCHEMA.md.
   validateManifestSchemas(manifest, config);
   log.info({ tools: countTools(manifest) }, `built manifest`);
+  for (const server of manifest.servers) supervisor.setToolsCount(server.name, server.tools.length);
   inspector?.setManifest(manifest);
+  inspector?.setMcpStatuses(supervisor.statusList());
 
   // Wire operator-driven tool invocation from the inspector UI into the same
   // servers map the dispatcher uses for controller-driven calls. Same callTool
@@ -184,15 +232,14 @@ export async function boot(): Promise<void> {
   process.on("SIGHUP", () => { void onSighup(); });
 
   // Graceful shutdown.
-  const shutdown = (signal: string) => {
+  const shutdown = (signal: string): void => {
     shuttingDown = true;
     log.info({ signal }, `shutting down`);
     reconnectCtl.cancel();
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (discoveryTimer) clearInterval(discoveryTimer);
     tunnel?.close(`signal:${signal}`);
-    void shutdownChildren(spawned, logLine);
-    void closeServers(servers).then(() => process.exit(0));
+    void supervisor.stopAll().then(() => process.exit(0));
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
@@ -260,7 +307,22 @@ export async function boot(): Promise<void> {
     log.info({ url: tunnelDialUrl }, `tunnel connected`);
     inspector?.setHeader({ tunnelOpenSinceAt: new Date().toISOString() });
 
-    pendingTunnel.onframe = createFrameRouter({
+    // Per-MCP credential coordinator. Re-built per tunnel instance so a
+    // pending request from a closed tunnel can't fire on a fresh one.
+    const creds = new CredsCoordinator({
+      send: (frame) => pendingTunnel.send(frame),
+      supervisor,
+      log,
+    });
+
+    // Controller-driven 3rd-party MCP roster (W-E2). The coordinator itself
+    // is process-wide (constructed in outer `boot` scope); per-tunnel rebind
+    // swaps only the wire `send` callback so an in-flight reconcile emits to
+    // the *current* tunnel, NOT a stale one. Roster + lastAppliedGeneration
+    // survive reconnect — see LIFETIME comment on McpConfigCoordinator.
+    mcpConfig.bind({ send: (frame) => pendingTunnel.send(frame) });
+
+    const baseRouter = createFrameRouter({
       webhooks,
       state,
       statePath,
@@ -269,6 +331,38 @@ export async function boot(): Promise<void> {
       log,
       connectorName: config.tunnel.name,
     });
+    pendingTunnel.onframe = (frame) => {
+      if (frame.type === "creds-response") { creds.handleResponse(frame); return; }
+      if (frame.type === "creds-update") { creds.handleUpdate(frame); return; }
+      if (frame.type === "mcp-config-snapshot") { void mcpConfig.handleSnapshot(frame); return; }
+      if (frame.type === "mcp-config-delta") { void mcpConfig.handleDelta(frame); return; }
+      if (frame.type === "register-ack" && !frame.error) {
+        // After register-ack success, kick off creds-request per MCP and arm
+        // the mcp-config soft-wait. Don't block the router callback — fire-
+        // and-forget so the rest of the frame handlers (webhook reallocate
+        // etc.) keep flowing.
+        baseRouter(frame);
+        void requestCredsForAllMcps(creds, mcpConfig);
+        mcpConfig.armSnapshotWait();
+        return;
+      }
+      baseRouter(frame);
+    };
+
+    // Wire inspector per-MCP actions against the live coordinator + supervisor.
+    if (inspector) {
+      inspector.mcpActions = {
+        reloadCreds: async (name: string) => {
+          const reqInfo = buildCredsRequestForMcp(name, mcpConfig);
+          if (!reqInfo) throw new Error(`unknown MCP "${name}"`);
+          await creds.reload(reqInfo.mcp, reqInfo.author, reqInfo.envKeys, reqInfo.mcpId);
+        },
+        restart: async (name: string) => {
+          const ok = await supervisor.restart(name, "manual");
+          if (!ok) throw new Error(`unknown MCP "${name}"`);
+        },
+      };
+    }
 
     pendingTunnel.send({
       type: "register",
@@ -291,6 +385,43 @@ export async function boot(): Promise<void> {
     }).attach();
 
     startTimers();
+  }
+
+  // Build a creds-request payload for a single MCP. Returns undefined if
+  // the MCP isn't registered with the supervisor (defense; should not
+  // happen for inspector-driven reloads against current manifest).
+  function buildCredsRequestForMcp(
+    name: string,
+    mcpConfig?: McpConfigCoordinator,
+  ): { mcp: string; mcpId?: string; author: string; envKeys: string[] } | undefined {
+    const yamlDir = configPath ? resolvePath(configPath, "..") : process.cwd();
+    const spec = config.mcp_servers.find((s) => s.name === name);
+    const author = spec ? authorOf(spec, yamlDir) : "customer";
+    if (!servers.has(name)) return undefined;
+    const mcpId = mcpConfig?.mcpIdFor(name);
+    return { mcp: name, ...(mcpId ? { mcpId } : {}), author, envKeys: [] };
+  }
+
+  // Fan out creds-request after register-ack. Aggregates envKeys per MCP
+  // by hitting the synthesized /envkeys endpoint when present. mcpConfig
+  // attaches mcpId for controller-roster MCPs; yaml-listed entries omit it.
+  async function requestCredsForAllMcps(
+    creds: CredsCoordinator,
+    mcpConfig: McpConfigCoordinator,
+  ): Promise<void> {
+    const yamlDir = configPath ? resolvePath(configPath, "..") : process.cwd();
+    const requests = await Promise.all(
+      [...servers.keys()].map(async (name) => {
+        const spec = config.mcp_servers.find((s) => s.name === name);
+        const author = spec ? authorOf(spec, yamlDir) : "customer";
+        const envKeys = await supervisor.fetchEnvKeys(name);
+        const mcpId = mcpConfig.mcpIdFor(name);
+        return { mcp: name, ...(mcpId ? { mcpId } : {}), author, envKeys };
+      }),
+    );
+    log.info({ count: requests.length }, `sending creds-request frames`);
+    await creds.requestAllAtBoot(requests);
+    inspector?.setMcpStatuses(supervisor.statusList());
   }
 
   async function reconnect(reason: string, opts?: { manual?: boolean }): Promise<void> {
@@ -369,6 +500,8 @@ export async function boot(): Promise<void> {
       const delta = diffManifest(manifest, nextManifest);
       manifest = nextManifest;
       inspector?.setManifest(nextManifest);
+      for (const server of nextManifest.servers) supervisor.setToolsCount(server.name, server.tools.length);
+      inspector?.setMcpStatuses(supervisor.statusList());
       if (!isEmptyDelta(delta)) {
         tunnel?.send({ type: "manifest-delta", delta });
         log.info(
@@ -450,6 +583,3 @@ function sameStringMap(live?: Record<string, string>, fresh?: Record<string, str
   return liveKeys.every((key) => live?.[key] === fresh?.[key]);
 }
 
-async function closeServers(servers: Map<string, McpServerConnection>): Promise<void> {
-  await Promise.all([...servers.values()].map((server) => server.close().catch(() => undefined)));
-}

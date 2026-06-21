@@ -6,10 +6,10 @@ The controller is **outside this repo**. This repo is the customer side only.
 
 ## Three ways to wire up an MCP
 
-The connector understands three integration patterns. All three go in the same `mcp_servers:` list in `connector.yaml`.
+The connector understands three integration patterns. Type 1 and Type 3 are configured in `connector.yaml`; Type 2 is configured in the **controller UI** and pushed to the connector over the WSS tunnel.
 
 - **Type 1 — customer-authored.** Drop tool files (`tools/*.ts`) plus a tiny `server.ts` into a folder under `mcp/local/`. The connector spawns it as a child via `tsx` and auto-assigns a localhost port. No build step, no port wrangling.
-- **Type 2 — connect to an existing MCP.** Pure config — the entry just declares `transport: http` + `endpoint`, or `transport: stdio` + `command`, and optionally a `dir` (under `mcp/external/`) whose `.env` is loaded into the child's environment. Useful for off-the-shelf servers (e.g. Salesforce, Atlassian, the bundled `aviation-weather-mcp`).
+- **Type 2 — connect to an existing MCP (controller-pushed).** Operator clicks **New 3rd Party MCP** in the controller (Name, Transport, URL or command, Auth shape, optional extra envKeys). The controller persists + pushes the entry to this connector via `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](docs/MCP-PROTOCOL.md) v1.1. No yaml edit, no folder under `mcp/`. Useful for off-the-shelf MCPs (e.g. Salesforce, Atlassian, public npm packages like `aviation-weather-mcp`).
 - **Type 3 — bundled, Twilio-authored Python venv, pre-installed in this image.** The entry just sets `bundled: <name>`; the connector resolves it against a registry of bundles laid down at image-build time. Bundle source lives in-tree at `bundles/<name>/` (deliberately outside `mcp/` so the runtime image carries only the installed venv, not the build inputs). Customer supplies only a per-bundle `.env` under `mcp/bundled/<name>/`.
 
 `mcp/bundled/` carries Twilio-shipped MCPs of *any* type — Type 1 Node MCPs (`mcp/bundled/twilio/`) and Type 3 Python venv MCPs (`mcp/bundled/enterprise-knowledge/`) cohabit. The folder marks "who ships it"; the YAML entry shape decides "how it's wired". The connector adds an `author: "twilio" | "customer"` field to each MCP on the wire, derived from the folder location, so the controller can group Twilio-shipped MCPs separately from customer-authored ones in its UI.
@@ -53,8 +53,6 @@ mcp/
   local/
     sample/                   Type 1 — now, slow_echo, uuid, weather
     crm/                      Type 1 — get_customer / get_recent / issue_refund (thin client over mock/customers/)
-  external/
-    aviation-weather/         Type 2 — pure config; spawns published `aviation-weather-mcp` via stdio
   bundled/
     twilio/                   Type 1 (Node) — Twilio-authored; ships its own twilio SDK locally
     enterprise-knowledge/     Type 3 (Python venv) — .env stub only (source lives at bundles/enterprise-knowledge/)
@@ -80,6 +78,8 @@ Before booting the connector you need a **Tunnel Security row** on the controlle
 - **Twilio credentials** — Account SID + Auth Token, or Account SID + API Key SID + API Key Secret. The controller verifies against Twilio's API at save time.
 
 Click Save. The controller shows the minted credentials once — copy.
+
+> **Note for the bundled Twilio MCP:** the bundle is AuthToken-only — its child env reads `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` (see [`mcp/bundled/twilio/.env.example`](mcp/bundled/twilio/.env.example)). Picking the API Key row type above is fine for the tunnel handshake itself, but if you want the bundled MCP to work you also need an Auth Token — either as a sibling row used by the connector, or pasted into `mcp/bundled/twilio/.env` directly. See [`docs/MCP-PROTOCOL.md`](docs/MCP-PROTOCOL.md) "Twilio-bundled auto-fill" for the full table.
 
 ```bash
 npm install
@@ -121,18 +121,11 @@ mkdir -p mcp/local/my-mcp/tools
 
 Every Type 1 folder carries its own `package.json` (lists name + identity). When you only need `zod` and the SDK, leave `dependencies` empty — both resolve from the repo's root `node_modules` via the workspace hoist. When you need a third-party SDK (e.g. Salesforce, HubSpot, `axios`), add it to the folder's `dependencies` block and `start-connector.sh` will install it on first boot. [`mcp/bundled/twilio/`](mcp/bundled/twilio/) is the live example: a Twilio-authored Type 1 carrying the `twilio` SDK in its own `node_modules`, never hoisted to the workspace.
 
-**Type 2** (you point at an existing MCP):
+**Type 2** (3rd-party MCPs come from the controller, not yaml):
 
-```yaml
-- name: salesforce
-  transport: http
-  endpoint: https://salesforce-mcp.example.com/mcp
-  dir: ../../mcp/external/salesforce     # optional, for the .env
+Add the MCP in the controller UI: **New 3rd Party MCP** → enter Name, Transport (http / streamable-http / sse / websocket / stdio), URL or Command, Auth shape (None / Bearer / Custom Header / OAuth2 client_credentials), and any extra `envKeys`. The controller pushes the entry to this connector over the WSS tunnel via `mcp-config-snapshot` / `mcp-config-delta`. The connector reconciles in-memory and connects through the existing supervisor path. Per-MCP creds flow through the same `creds-request` / `creds-response` / `creds-update` frames as bundled MCPs do today.
 
-- name: filesystem
-  transport: stdio
-  command: [npx, "--yes", "@modelcontextprotocol/server-filesystem", /tmp]
-```
+See [docs/MCP-PROTOCOL.md](docs/MCP-PROTOCOL.md) §"v1.1 — 3rd-party MCP roster (controller-driven)" for the wire format.
 
 **Type 3** (use a bundled, Twilio-authored Python venv MCP):
 

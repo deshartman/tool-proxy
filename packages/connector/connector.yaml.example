@@ -66,13 +66,10 @@ mcp_servers:
     transport: http
     dir: ../../mcp/bundled/twilio
 
-  # ── Type 2 (external MCP, pure config) ───────────────────────────────
-  # No code in the dir — just .env and a README. Connector spawns the
-  # published npm package via stdio.
-  - name: aviation-weather
-    transport: stdio
-    command: [npx, "--yes", aviation-weather-mcp]
-    dir: ../../mcp/external/aviation-weather
+  # Type 2 (3rd-party MCPs) come from the controller UI, not the yaml — see
+  # docs/MCP-PROTOCOL.md §"v1.1 — 3rd-party MCP roster (controller-driven)".
+  # Operator clicks "New 3rd Party MCP" in the controller; entry is pushed
+  # via mcp-config-snapshot / mcp-config-delta and reconciled in connector RAM.
 
   # ── Type 3 (bundled, pre-installed in the image) ─────────────────────
   # Bundle source lives in the sibling repo `mcp-shim-bundled/`; the image

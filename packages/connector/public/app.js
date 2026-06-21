@@ -28,6 +28,8 @@ const elDetailEmpty = document.getElementById('detail-empty');
 const elDetailContent = document.getElementById('detail-content');
 const elWebhooksEmpty = document.getElementById('webhooks-empty');
 const elWebhooksList = document.getElementById('webhooks-list');
+const elMcpStatusEmpty = document.getElementById('mcp-status-empty');
+const elMcpStatusList = document.getElementById('mcp-status-list');
 
 let showHeartbeats = false;
 // selection: null | { kind: 'tool', key, tool, serverName } | { kind: 'frame', tap, frameId }
@@ -40,6 +42,43 @@ elShowHb.addEventListener('change', () => {
   document.querySelectorAll('.frame-item.heartbeat').forEach((el) => {
     el.style.display = showHeartbeats ? '' : 'none';
   });
+});
+
+// Keyboard navigation for the Frames list. ArrowDown/ArrowUp move and select
+// (matching click semantics — detail pane updates live). Enter re-scrolls the
+// current selection into view if frames have streamed past it. Skips hidden
+// heartbeats during navigation. Bails out if the user is typing or has a
+// button/link focused so we don't hijack native handlers.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+  const t = e.target;
+  const tag = t?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'A' || tag === 'SELECT' || t?.isContentEditable) return;
+
+  const visible = [...elFrames.querySelectorAll('.frame-item')].filter((el) => el.style.display !== 'none');
+  if (visible.length === 0) return;
+
+  if (e.key === 'Enter') {
+    const current = visible.find((el) => el.classList.contains('selected'));
+    if (current) current.scrollIntoView({ block: 'nearest' });
+    else visible[0].click();
+    e.preventDefault();
+    return;
+  }
+
+  const currentIdx = visible.findIndex((el) => el.classList.contains('selected'));
+  let nextIdx;
+  if (currentIdx < 0) {
+    nextIdx = 0;
+  } else if (e.key === 'ArrowDown') {
+    nextIdx = Math.min(currentIdx + 1, visible.length - 1);
+  } else {
+    nextIdx = Math.max(currentIdx - 1, 0);
+  }
+  if (nextIdx === currentIdx) { e.preventDefault(); return; }
+  visible[nextIdx].click();
+  visible[nextIdx].scrollIntoView({ block: 'nearest' });
+  e.preventDefault();
 });
 elClear.addEventListener('click', () => {
   elFrames.replaceChildren();
@@ -553,10 +592,28 @@ function renderFrameDetail(tap) {
 
   const pre = document.createElement('pre');
   pre.className = 'detail-json';
-  pre.textContent = JSON.stringify(tap.frame, null, 2);
+  pre.textContent = JSON.stringify(redactFrameForDisplay(tap.frame), null, 2);
   wrap.appendChild(pre);
 
   return wrap;
+}
+
+// Inspector binds to 127.0.0.1, but the rendered JSON ends up on screens,
+// in screen-shares, and in screenshots. Mask credential VALUES in
+// creds-response / creds-update before stringify; keep key names visible
+// because operators need to know which keys are populated. See
+// .claude/plans/CREDS-ENCRYPTION.md for the wire-level encryption work
+// that supersedes this redaction once shipped.
+function redactFrameForDisplay(frame) {
+  if (!frame || typeof frame !== 'object') return frame;
+  if (frame.type !== 'creds-response' && frame.type !== 'creds-update') return frame;
+  if (!frame.env || typeof frame.env !== 'object') return frame;
+  const redactedEnv = {};
+  for (const [key, value] of Object.entries(frame.env)) {
+    const len = typeof value === 'string' ? value.length : 0;
+    redactedEnv[key] = `<redacted, len=${len}>`;
+  }
+  return { ...frame, env: redactedEnv };
 }
 
 // Per-type detail renderer for `rpc` frames. Surfaces the JSON-RPC structure
@@ -630,6 +687,16 @@ function summarizeFrame(frame) {
       return `mcp=${frame.mcp}`;
     case 'webhook-revoke':
       return `mcp=${frame.mcp}`;
+    case 'creds-request':
+      return `mcp=${frame.mcp} keys=${(frame.envKeys ?? []).length}`;
+    case 'creds-response': {
+      const keys = frame.env ? Object.keys(frame.env) : [];
+      return `keys=[${keys.join(',')}] source=${frame.source ?? '?'}`;
+    }
+    case 'creds-update': {
+      const keys = frame.env ? Object.keys(frame.env) : [];
+      return `mcp=${frame.mcp} keys=[${keys.join(',')}] source=${frame.source ?? '?'}`;
+    }
     default:
       return '';
   }
@@ -690,6 +757,7 @@ function applySnapshot(s) {
   setHeader(s.header);
   renderManifest(s.manifest);
   renderWebhooks(s.webhooks);
+  renderMcpStatuses(s.mcpStatuses);
   elFrames.replaceChildren();
   elFrames.classList.add('empty');
   if (s.frames && s.frames.length > 0) {
@@ -703,6 +771,98 @@ function applySnapshot(s) {
   }
   // SSE reconnect: any selected frame is from a prior snapshot — drop it.
   if (selection?.kind === 'frame') setSelection(null);
+}
+
+function renderMcpStatuses(list) {
+  if (!list || list.length === 0) {
+    elMcpStatusList.hidden = true;
+    elMcpStatusList.replaceChildren();
+    elMcpStatusEmpty.hidden = false;
+    return;
+  }
+  elMcpStatusEmpty.hidden = true;
+  elMcpStatusList.hidden = false;
+  elMcpStatusList.replaceChildren();
+  for (const status of list) {
+    elMcpStatusList.appendChild(buildMcpStatusRow(status));
+  }
+}
+
+function buildMcpStatusRow(s) {
+  const li = document.createElement('li');
+  li.className = `mcp-status-row mcp-status-${s.process}`;
+  const credsLine = s.credsLastUpdated
+    ? `${s.credsSource} · ${fmtAgo(s.credsLastUpdated)}`
+    : s.credsSource;
+  const restartLine = s.restartCount === 0
+    ? 'no restarts'
+    : `${s.restartCount} restart${s.restartCount === 1 ? '' : 's'}` + (s.lastRestartReason ? ` (${s.lastRestartReason})` : '');
+  // W-E6: source badge — distinguishes yaml-listed entries (bundled +
+  // customer-authored) from controller-pushed 3rd-party MCPs. mcpId is the
+  // controller-minted opaque key, surfaced for operator-side correlation
+  // with the controller's row.
+  const sourceLabel = s.source === 'controller-config' ? 'controller' : 'yaml';
+  const sourceBadge = `<span class="mcp-source-badge mcp-source-${s.source || 'yaml'}">${escapeHtml(sourceLabel)}</span>`;
+  const mcpIdLine = s.mcpId
+    ? `<div><span class="muted">mcpId:</span> <code>${escapeHtml(s.mcpId)}</code></div>`
+    : '';
+  li.innerHTML = `
+    <div class="mcp-status-head">
+      <span class="mcp-status-name">${escapeHtml(s.name)}</span>
+      ${sourceBadge}
+      <span class="mcp-status-state">${escapeHtml(s.process)}</span>
+    </div>
+    <div class="mcp-status-meta">
+      <div><span class="muted">creds:</span> ${escapeHtml(credsLine)}</div>
+      <div><span class="muted">tools:</span> ${s.toolsCount}</div>
+      <div><span class="muted">restarts:</span> ${escapeHtml(restartLine)}</div>
+      ${mcpIdLine}
+    </div>
+    <div class="mcp-status-actions">
+      <button type="button" class="mcp-action-reload" data-mcp="${escapeHtml(s.name)}">Reload creds</button>
+      <button type="button" class="mcp-action-restart" data-mcp="${escapeHtml(s.name)}">Restart</button>
+      <span class="mcp-action-status"></span>
+    </div>
+  `;
+  const reload = li.querySelector('.mcp-action-reload');
+  const restart = li.querySelector('.mcp-action-restart');
+  const status = li.querySelector('.mcp-action-status');
+  reload.addEventListener('click', () => void invokeMcpAction('/mcp/reload-creds', s.name, status));
+  restart.addEventListener('click', () => void invokeMcpAction('/mcp/restart', s.name, status));
+  return li;
+}
+
+async function invokeMcpAction(path, mcp, status) {
+  status.textContent = 'working…';
+  status.className = 'mcp-action-status pending';
+  try {
+    const resp = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mcp }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      status.textContent = body.error || `HTTP ${resp.status}`;
+      status.className = 'mcp-action-status err';
+      return;
+    }
+    status.textContent = 'sent';
+    status.className = 'mcp-action-status ok';
+  } catch (e) {
+    status.textContent = String(e.message || e);
+    status.className = 'mcp-action-status err';
+  }
+}
+
+function fmtAgo(ts) {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) {
+    const seconds = Math.max(0, Math.round(diff / 1000));
+    return `${seconds}s ago`;
+  }
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  return `${Math.round(diff / 3_600_000)}h ago`;
 }
 
 function renderWebhooks(list) {
@@ -757,6 +917,7 @@ function connectSse() {
       case 'manifest': renderManifest(ev.manifest); break;
       case 'frame':    appendFrame(ev.tap); break;
       case 'webhooks': renderWebhooks(ev.webhooks); break;
+      case 'mcpStatuses': renderMcpStatuses(ev.mcpStatuses); break;
     }
   };
   es.onerror = () => { /* EventSource auto-retries */ };

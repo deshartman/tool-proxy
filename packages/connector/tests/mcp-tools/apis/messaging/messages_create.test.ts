@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { messagesCreate } from "@mcp/bundled/twilio/tools/messaging/messages_create.js";
 import type { TwilioClient } from "@mcp/bundled/twilio/twilio-client.js";
@@ -17,9 +17,6 @@ function fakeClient(message: { sid: string; status: string }): TwilioClient {
 }
 
 describe("apis.messages_create handler", () => {
-  beforeEach(() => {
-    vi.stubEnv("TWILIO_FROM_NUMBER", "+15550009999");
-  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -28,7 +25,12 @@ describe("apis.messages_create handler", () => {
     const tool = messagesCreate(fakeClient({ sid: "SMxyz", status: "queued" }));
     const reg = captureRegistration(tool);
     const result = asToolResult(
-      await reg.handler({ channel: "sms", to: "+15550001111", body: "hello" }),
+      await reg.handler({
+        channel: "sms",
+        to: "+15550001111",
+        from: "+15550009999",
+        body: "hello",
+      }),
     );
     const parsed = asZodObject(reg.outputSchema).parse(result.structuredContent) as {
       sid: string;
@@ -39,5 +41,13 @@ describe("apis.messages_create handler", () => {
     expect(parsed.status).toBe("queued");
     expect(parsed.channel).toBe("sms");
     expect(result.content[0].text).toContain("SMxyz");
+  });
+
+  it("throws when neither from nor messagingServiceSid is provided", async () => {
+    const tool = messagesCreate(fakeClient({ sid: "SMxyz", status: "queued" }));
+    const reg = captureRegistration(tool);
+    await expect(
+      reg.handler({ channel: "sms", to: "+15550001111", body: "hello" }),
+    ).rejects.toThrow(/from or messagingServiceSid/);
   });
 });

@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool } from "./tool.js";
 import { createLogger } from "../logger.js";
 import { envNumber } from "../env.js";
@@ -13,6 +14,14 @@ export interface CreateMcpHttpServerOptions {
   // If omitted, falls back to PORT env var, then to 0 (kernel-assigned).
   // The connector's spawner sets PORT explicitly when auto-allocating.
   port?: number;
+  // Server-level envKeys hint. When set, it replaces the per-tool
+  // aggregation as the authoritative list surfaced on /envkeys. Use this
+  // when tools register conditionally on creds presence — the server still
+  // needs to advertise *which* keys the controller should populate, even
+  // before any tool has registered to declare them itself. The connector
+  // hands this list to the controller via creds-request so the operator
+  // never wonders "what envKeys does this MCP need."
+  envKeys?: string[];
 }
 
 export interface McpHttpServerHandle {
@@ -35,10 +44,37 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
   );
   for (const tool of opts.tools) tool.register(server);
 
+  // McpServer wires its tools/list handler lazily — only when the first
+  // registerTool() runs. A creds-gated MCP that registers zero tools
+  // (e.g. mcp/bundled/twilio/ awaiting TWILIO_AUTH_TOKEN over the wire)
+  // would otherwise return -32601 "Method not found" to tools/list,
+  // killing the connector's buildManifest at boot. Install an empty-list
+  // handler ourselves for that case so the wire response is the normal
+  // MCP semantics: "server up, 0 tools right now." The supervisor's
+  // creds-update restart re-spawns this process with non-empty tools,
+  // and the SDK's own handler takes over from there.
+  if (opts.tools.length === 0) {
+    server.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [] }));
+  }
+
   await server.connect(transport);
+
+  // Resolve the envKeys list surfaced on /envkeys. Server-level opts.envKeys
+  // wins when provided (use when tools register conditionally and the
+  // per-tool aggregate would be empty until creds arrive). Otherwise fall
+  // back to aggregating envKeys across the registered tools (de-duped,
+  // stable order). Out-of-band of the MCP protocol itself — keeps the wire
+  // format unchanged; consumed by the connector's creds-request frame.
+  const envKeys = opts.envKeys ? dedupe(opts.envKeys) : aggregateEnvKeys(opts.tools);
 
   return new Promise<McpHttpServerHandle>((resolveListen, rejectListen) => {
     const http = createServer((req, res) => {
+      if (req.url === "/envkeys") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ envKeys }));
+        return;
+      }
       if (req.url !== "/mcp") {
         res.statusCode = 404;
         res.end("not found");
@@ -73,4 +109,29 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
       });
     });
   });
+}
+
+function aggregateEnvKeys(tools: Tool[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tool of tools) {
+    if (!tool.envKeys) continue;
+    for (const key of tool.envKeys) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+function dedupe(keys: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const key of keys) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
 }

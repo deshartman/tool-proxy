@@ -19,13 +19,16 @@ The connector holds no LLM, runs no agent loop, and reads no documents. It is a 
 
 ## Wire protocol (frames)
 
-Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts):
+Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts); the contract for the controller team is **[`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md)**:
 
 - `register { manifest }` — first frame after connect
 - `manifest-delta { delta }` — diff of `added`/`removed`/`changed` tools
 - `rpc { payload }` — opaque MCP JSON-RPC, both directions
 - `heartbeat { ts }` — every `policy.heartbeat_interval_ms`
 - `goodbye { reason? }` — graceful shutdown signal
+- `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke` — webhook ingress, see [`.claude/plans/STATUS-CALLBACK-MCP.md`](../../.claude/plans/STATUS-CALLBACK-MCP.md)
+- `creds-request` (out) / `creds-response` (in) / `creds-update` (in) — per-MCP creds protocol. The connector asks the controller for env values for each MCP after `register-ack`; the controller stores them in its existing UI/DB and pushes updates when an operator edits them. See [`.claude/plans/MCP-LOADING.md`](../../.claude/plans/MCP-LOADING.md).
+- `mcp-config-snapshot` (in) / `mcp-config-delta` (in) / `mcp-config-ack` (out) / `mcp-config-resync` (out) — v1.1 controller-driven 3rd-party MCP roster. Operators manage 3rd-party MCPs through the controller UI; the controller pushes the roster to the connector over the existing tunnel. The connector reconciles in-memory (no yaml rewrite); auth shapes (`none` / `bearer` / `header` / `oauth2-client-credentials`) and HTTP-family transports (http / streamable-http / sse / websocket) are resolved at spawn time. WebSocket auth must be embedded in the URL — the SDK's WS transport accepts no headers. See [`.claude/plans/MCP-LOADING.md`](../../.claude/plans/MCP-LOADING.md) Workstream E and `docs/MCP-PROTOCOL.md` v1.1.
 
 Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector splits on the first `.`.
 
@@ -35,6 +38,8 @@ The WS handshake is gated by per-tunnel auth that the controller mints. Before b
 
 - **Twilio Auth Token** or **Twilio API Key** → controller mints a long-lived `ts_<...>` bearer, shown once. Paste it into `TUNNEL_AUTH_TOKEN`.
 - **OAuth 2.0 (client_credentials)** → controller mints a `client_id` + `client_secret`. Paste them into `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`, and set `OAUTH_TOKEN_URL` to the URL the UI shows. The connector mints a fresh 1h JWT against that endpoint on each reconnect (and refreshes <60s before expiry mid-session).
+
+> The bundled Twilio MCP under [`mcp/bundled/twilio/`](../../mcp/bundled/twilio/) is AuthToken-only at the bundle-env layer. If you pick the **Twilio API Key** row type above for the tunnel handshake, the bundled MCP still needs `TWILIO_AUTH_TOKEN` — either via the controller's auto-fill (mint an Auth Token row alongside it) or pasted directly into `mcp/bundled/twilio/.env`.
 
 ```bash
 # from repo root
@@ -68,7 +73,8 @@ Rotate via the row's **Rotate Secret** (long-lived bearer) or by issuing a new c
 The connector serves an **inspector UI at http://localhost:9090/** showing:
 - live WS state (connecting / open / closed)
 - the current `ToolManifest` and an "Available Tools" list (every discovered tool is Ready)
-- every frame in/out (register, register-ack, rpc, heartbeat, manifest-delta)
+- per-MCP **MCP Status** — process state, creds source (`controller (operator-entered)` / `controller (twilio-tunnel-row)` / `dir/.env` / `none`), restart count + last reason, tools count. Two per-MCP buttons: **Reload creds** (force a `creds-request` for that MCP and restart on response) and **Restart**.
+- every frame in/out (register, register-ack, rpc, heartbeat, manifest-delta, webhook-*, creds-*)
 - a **reconnect** button that re-reads YAML + redials (use after editing `policy`)
 
 To pick up `mcp_servers` changes, restart the connector — those connections are made at process boot. `policy` changes pick up via Reconnect.
@@ -122,6 +128,57 @@ await createMcpHttpServer({ name: "my-mcp", tools: [echo] });
 
 No `package.json`, no build step, no port to pick. The connector spawns `tsx server.ts` for you.
 
+#### Drop-in shape — skip the `server.ts`
+
+Even simpler: drop a folder under `${MCP_DROPIN_DIR}/<name>/tools/*.ts` with no `server.ts` and no yaml entry. The connector auto-discovers the folder at boot and synthesizes the boilerplate via [`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts). Each `tools/*.ts` should default-export a `Tool` (named exports work as a fallback).
+
+`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` (the example above) or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative.
+
+```ts
+// /var/lib/mcp-connector/customer-mcps/my-mcp/tools/echo.ts
+import { z } from "zod";
+import type { Tool } from "@mcp-shim/connector/sdk";
+
+const echo: Tool = {
+  name: "echo",
+  envKeys: ["ECHO_PREFIX"],   // optional — controller UI uses this hint to surface required keys
+  register(server) {
+    server.registerTool(
+      "echo",
+      { description: "Echo a string back.", inputSchema: { text: z.string() } },
+      async ({ text }) => ({ content: [{ type: "text", text: `${process.env.ECHO_PREFIX ?? ""}${text}` }] }),
+    );
+  },
+};
+export default echo;
+```
+
+#### Per-MCP creds from the controller
+
+If your tool needs env values (API keys, DB URLs, anything secret), declare them via `envKeys: string[]` on each `Tool` and let the controller push them down at runtime. After `register-ack`, the connector sends a `creds-request` per MCP with the de-duped union of every tool's `envKeys`; the controller stores the values in its existing UI / DB and replies with a `creds-response`. Operator edits trigger a `creds-update` push and the supervisor restarts the child with the new env. Today's `mcp/<type>/<name>/.env` files keep working as a fallback (controller-supplied env wins on conflict).
+
+**Conditional tool registration** — when an MCP has hard creds requirements (e.g. `mcp/bundled/twilio/`), gate `tool` registration on env presence at the **server level**, NOT inside individual tools:
+
+```ts
+// mcp/bundled/<name>/server.ts (sketch)
+const REQUIRED = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"] as const;
+const missing = REQUIRED.filter((k) => !process.env[k]);
+const tools: Tool[] = [];
+if (missing.length === 0) {
+  const client = createClient();
+  tools.push(toolA(client), toolB(client), /* ... */);
+} else {
+  log.warn({ missing, required: [...REQUIRED] }, "tools deferred — awaiting creds-update");
+}
+await createMcpHttpServer({ name: "<name>", tools, envKeys: REQUIRED });
+```
+
+Two things make this work:
+- **`envKeys` declared at the server level** (not the per-tool `Tool.envKeys` field). The factory's `/envkeys` endpoint surfaces this list verbatim, so the connector's `creds-request` advertises the right keys even when zero tools have registered yet.
+- **`tools: []` is a valid resting state.** The factory installs an explicit `tools/list` handler returning `{tools: []}` so the connector can build a manifest, register the MCP at the controller, and wait for `creds-update`. When creds arrive, the supervisor restarts the child; the new instance registers tools normally and a `manifest-delta` ships the tool list to the controller.
+
+Keep individual tool files **unaware** of creds gating — register them or don't, but don't make each tool re-check `process.env`. That keeps tools clean and the gating concentrated in `server.ts`.
+
 #### `outputSchema` + `structuredContent` — five rules
 
 Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 / Type 3 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker. (See [.claude/plans/OUTPUT-SCHEMA.md](../../.claude/plans/OUTPUT-SCHEMA.md).)
@@ -166,7 +223,6 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 | `package.json` | metadata + the `bin` entry |
 | `node_modules/` (production only) | `npm prune --omit=dev` in the build stage; includes `tsx` (used by the spawner) |
 | `/app/mcp/local/` | Type 1 source folders; the spawner runs `tsx /app/mcp/local/<name>/server.ts` for entries with `dir:` set |
-| `/app/mcp/external/` | Type 2 stubs (per-MCP `.env.example`); customer mounts a `.env` next to it for credentials |
 | `/app/mcp/bundled/` | Type 3 stubs (per-bundle `.env.example`); customer mounts a `.env` next to it for credentials |
 | `/opt/bundled-mcps/<name>/.venv/` | Pre-installed Python venv per Type 3 bundle; the connector spawns `<entrypoint>` from `BUNDLED_MCPS` |
 
