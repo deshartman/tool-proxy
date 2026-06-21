@@ -888,6 +888,44 @@ Controller MUST scope creds lookups by `(connectorId, mcpId)` when `mcpId` is pr
 // connector reconciles to snapshot; emits ack with generation=15.
 ```
 
+## Implementation notes for the controller team
+
+The connector treats the wire format above as ground truth. A few choices it leaves open to the controller — calling them out so the controller-side implementation is predictable.
+
+### `mcpId` format
+
+Opaque to the connector. Pick whatever the controller already uses for stable database ids — UUID v4, ULID, prefixed nanoid (`mcp_<26-char>`), or the row's PK. Length, character set, human-readability are all controller-side decisions. Required: stable across the row's lifetime (do NOT re-mint on rename); unique within `(connectorId, mcpId)`.
+
+### `generation` format and persistence
+
+Monotonic per-connector across snapshots and deltas. The connector treats lower-than-last-applied generations as superseded and drops them. **The controller MUST persist this counter** — if it resets on controller restart, the connector will silently drop everything until a generation > the prior persisted value arrives. A Postgres `bigserial` column on the connector row is the simplest correct shape.
+
+### `name` uniqueness — controller-side enforcement
+
+The connector enforces "one entry per name" via the supervisor's primary key. A second entry with the same name silently does not spawn — the connector reports it via `mcp-config-ack` as `status: "failed", error: "..."`, but the user-visible failure mode is "I added an MCP and it isn't working."
+
+The controller UI SHOULD enforce uniqueness within the controller's own roster for a given connector at save time so this never reaches the wire. Yaml-side collisions (a 3rd-party MCP entered in the controller UI with the same name as a bundled or customer-authored MCP in `connector.yaml`) cannot be detected controller-side — they show up only via the ack frame. Surface the `error` string from the ack verbatim in the controller UI's row status so the operator can correct the right side.
+
+### `envKey` naming — operator-entered vs auto-mint
+
+The connector reads `controllerEnv[auth.envKey]` to resolve `auth.kind: "bearer"` and `auth.kind: "header"`, and reads the three OAuth2 envKeys for the JWT mint flow. For `kind: "header"`, the `headerName` is upstream's choice; the `envKey` is internal. For stdio MCPs, the env var is read by the upstream subprocess so the name MUST match the subprocess's expectation.
+
+A practical rule for the controller UI:
+
+| Auth shape | envKey naming on the form |
+|---|---|
+| stdio (any auth) | operator-entered (mandatory) — child reads env directly |
+| HTTP-family + `bearer` | auto-mint OK (e.g. `${NAME_UPPER}_BEARER`) — invisible to upstream |
+| HTTP-family + `header` | operator-entered (paired with `headerName`) — UX coherence with the header field |
+| HTTP-family + `oauth2-client-credentials` | auto-mint OK for all three — invisible to upstream |
+| `envKeys[]` extras row | operator-entered — these ARE the upstream's required env vars |
+
+**Collision warning.** If the auto-minted name AND an operator-entered `envKeys[]` extra collide on the same MCP, the connector receives one value for both. Validate at save time.
+
+### `mcp-config-snapshot` is required at register-ack — even when empty
+
+The connector's boot soft-wait expects a snapshot to arrive within ~5s of register-ack. If the controller has zero 3rd-party MCPs for this connector, send `{ generation: <persisted>, servers: [] }` rather than withholding the frame — the connector logs a `boot` resync request after the soft-wait elapses, which is noise the operator doesn't need to see.
+
 ## Versioning
 
 This document is v1.1. Future revisions:

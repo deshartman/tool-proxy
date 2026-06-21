@@ -206,10 +206,19 @@ export class McpConfigCoordinator {
   private async addEntry(
     entry: McpConfigEntry,
   ): Promise<{ status: "started" | "failed" | "skipped"; error?: string }> {
-    // Yaml conflict: a yaml entry registered first owns this name. We don't
-    // shadow it — surface as failed so the operator sees the conflict.
+    // Name collision. Two sources can clash here:
+    //   1. A yaml entry registered first at boot (bundled / customer-authored).
+    //   2. A different controller-config entry already in this roster (the
+    //      controller UI should prevent this, but be defensive — duplicate
+    //      delivery on reconnect or a controller-side bug shouldn't crash us).
+    // Either way: don't shadow the first registration. Report failed with a
+    // specific reason so the operator can fix the right side.
     if (this.opts.supervisor.hasEntry(entry.name)) {
-      return { status: "failed", error: `name conflict with yaml entry "${entry.name}"` };
+      const otherMcpId = this.nameToMcpId.get(entry.name);
+      const error = otherMcpId
+        ? `name conflict with another controller-config entry (mcpId=${otherMcpId})`
+        : `name conflict with yaml entry "${entry.name}"`;
+      return { status: "failed", error };
     }
     const specOrError = this.toSpec(entry);
     if ("error" in specOrError) {
