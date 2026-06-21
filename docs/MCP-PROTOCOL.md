@@ -503,10 +503,396 @@ The frames below are unchanged by this revision. See [packages/connector/src/tun
 - `goodbye` — connector → controller before SIGTERM-driven WS close
 - `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke` — webhook ingress (see [.claude/plans/STATUS-CALLBACK-MCP.md](../.claude/plans/STATUS-CALLBACK-MCP.md))
 
+## v1.1 — 3rd-party MCP roster (controller-driven)
+
+> **Audience.** Controller team building the "New 3rd Party MCP" UI; connector team wiring it up.
+>
+> **Status.** Additive over v1. Existing v1 frames unchanged. Older controllers that don't implement v1.1 simply never push roster frames — connector keeps running its yaml-listed MCPs as today. Older connectors that don't implement v1.1 ignore the new frames per the §"Frame envelope" unknown-frame rule.
+
+### Why
+
+The connector's `connector.yaml` is the source of truth for **bundled** (Twilio-shipped) and **customer-authored** (Type 1 / Type 1 drop-in) MCPs. For **3rd-party MCPs** (everything else — public npm packages, customer-deployed HTTP endpoints, stdio binaries) the customer wants a UI experience: pick a transport, enter the URL or command, declare auth shape, save. The controller already has that UI surface; the connector should not duplicate it.
+
+v1.1 adds frames the controller uses to push the **3rd-party MCP roster** down to the connector. The connector reconciles via the existing `mcp-supervisor.ts` and emits `creds-request` for each entry through the unchanged v1 path. The yaml is **not rewritten**. 3rd-party entries live in memory only; on every reconnect the controller re-pushes a snapshot.
+
+### Identity — `mcpId` is the routing handle
+
+Each 3rd-party MCP entry carries an `mcpId: string` minted by the **controller** when the operator clicks **Save** in the UI. This id is opaque to the connector — the connector never parses, generates, or validates it; it only echoes it back on `creds-request` frames and `mcp-config-ack` rows so the controller can correlate inbound traffic to a specific row.
+
+**Why an id and not the name.** The controller is the source of truth — it CRUDs MCP rows, writes audit events, scopes creds lookups, and surfaces per-MCP status in its UI. `name` is human-editable (an operator can rename an MCP in the form), display-oriented (`name.toolName`), and routing-oriented on the connector side. None of those make `name` a stable database handle. The controller needs to be *explicit* about which row it is referring to — across rename, across `(name)` collisions if a future feature ever allowed them, and across audit log replay. `mcpId` gives every controller-initiated frame an unambiguous answer to "which row is this about?" without depending on `name` matching.
+
+**Concrete consequences:**
+
+- **Renames don't lose history.** Operator changes a row's name from `acme-search` to `acme-search-v2`. The controller pushes `mcp-config-delta { updated: [{mcpId: <same>, name: "acme-search-v2", ...}] }`. The connector sees the same `mcpId`, re-registers under the new name; the controller's row id (and audit history) survives unchanged. Without `mcpId`, the controller would have to track "old name → new name" out of band.
+- **Creds scoping is unambiguous.** When the connector sends `creds-request { mcp: "acme-search", mcpId: "mcp_acme_01HK..." }`, the controller does `SELECT env FROM mcp_credentials WHERE connector_id = $auth AND mcp_id = $framePayload.mcpId` — no fuzzy matching. See §"`creds-request` / `creds-update` — additive `mcpId` field".
+- **Ack rows map back 1:1.** Every entry in `mcp-config-ack.perMcp[]` carries `mcpId` so the controller's UI can update the exact row's status badge ("started 4s ago" / "failed: …") without having to find it by name.
+- **Bundled / customer-authored MCPs DON'T get an `mcpId`.** They originate from yaml on the connector — the controller has no row to mint an id against. `creds-request` / `creds-update` for those MCPs omit the optional `mcpId` field; the controller falls back to `(connectorId, mcp)` scoping. See §"Per-MCP scoping (CRITICAL — security-relevant)" and §"`creds-request` / `creds-update` — additive `mcpId` field".
+
+`name` remains the routing key for tool calls (`name.toolName`) and the display label. The pair `(connectorId, mcpId)` is globally unique on the controller; `(connectorId, name)` is unique on the connector but display-only on the wire.
+
+**Format.** The connector treats `mcpId` as an opaque string. Pick whatever the controller already uses for stable ids — UUID v4, ULID, a prefixed nanoid (e.g. `mcp_<26-char>`), or the row's database primary key — and keep it consistent. Length, character set, and human-readability are all controller-side decisions.
+
+### Boot timing
+
+1. `register` → `register-ack` (v1 unchanged).
+2. **Controller sends ONE `mcp-config-snapshot`** with the full current 3rd-party MCP roster for this connector. Empty `servers: []` is valid — it means "this connector has no 3rd-party MCPs configured."
+3. Connector reconciles each entry through the supervisor; emits `mcp-config-ack` with per-MCP status.
+4. Connector sends `creds-request` per 3rd-party MCP whose `envKeys.length > 0`. Same v1 path; the request carries `mcpId` in addition to `mcp`.
+5. Controller replies `creds-response` per entry; connector merges env via supervisor.
+
+### Steady-state push (delta semantics)
+
+After the boot snapshot, every operator CRUD action in the controller UI emits ONE delta frame:
+
+| Operator action | Frame | Connector reaction |
+|---|---|---|
+| Save new MCP | `mcp-config-delta { added: [entry] }` | `supervisor.startEntry(spec)` |
+| Edit existing MCP | `mcp-config-delta { updated: [entry] }` | `supervisor.restart(name, "config-update")` with new spec |
+| Delete MCP | `mcp-config-delta { removed: [mcpId] }` | `supervisor.stopEntry(name)` |
+
+Every delta carries a monotonically-increasing `generation: number`. The connector tracks `lastAppliedGeneration` and:
+
+- If `delta.generation === lastAppliedGeneration + 1` — apply.
+- If `delta.generation > lastAppliedGeneration + 1` — gap; send `mcp-config-resync { reason: "gap" }`. Controller MUST reply with a fresh `mcp-config-snapshot` at the latest generation.
+- If `delta.generation <= lastAppliedGeneration` — duplicate / out-of-order; log + drop.
+
+Snapshots also carry `generation`. A snapshot supersedes any pending state and resets `lastAppliedGeneration`.
+
+### Frames
+
+#### `mcp-config-snapshot` (controller → connector)
+
+```ts
+interface McpConfigSnapshotFrame {
+  type: "mcp-config-snapshot";
+  generation: number;            // monotonic per-connector across snapshots AND deltas
+  servers: McpConfigEntry[];     // FULL roster of 3rd-party MCPs (may be empty)
+}
+```
+
+Sent on `register-ack` (always — even if empty), and as the reply to a connector-initiated `mcp-config-resync`.
+
+#### `mcp-config-delta` (controller → connector)
+
+```ts
+interface McpConfigDeltaFrame {
+  type: "mcp-config-delta";
+  generation: number;
+  added?:    McpConfigEntry[];
+  updated?:  McpConfigEntry[];   // full new spec replaces prior by mcpId
+  removed?:  string[];           // mcpIds to remove
+}
+```
+
+Sent during steady state on every operator CRUD action. The arrays are exclusive — a single frame typically carries exactly one of `added` / `updated` / `removed` populated, but the connector MUST handle multiple in one frame (controller may batch).
+
+#### `mcp-config-ack` (connector → controller)
+
+```ts
+interface McpConfigAckFrame {
+  type: "mcp-config-ack";
+  generation: number;            // generation that was applied
+  perMcp: Array<{
+    mcpId: string;
+    name: string;
+    status: "started" | "failed" | "skipped" | "removed";
+    error?: string;              // human-readable, surfaced in the controller row
+  }>;
+}
+```
+
+Sent after applying a snapshot or delta. `status: "skipped"` is reserved for entries the connector cannot run (e.g. `transport: "websocket"` not yet implemented in this connector version) — the controller surfaces this in the row's status badge.
+
+#### `mcp-config-resync` (connector → controller)
+
+```ts
+interface McpConfigResyncFrame {
+  type: "mcp-config-resync";
+  reason: "gap" | "boot" | "manual";
+}
+```
+
+Sent when the connector detects a generation gap (`reason: "gap"`), at boot if no snapshot has arrived after a soft-wait (`reason: "boot"` — sent at the 5s mark, alongside the existing creds-request soft-wait), or on operator action (`reason: "manual"` — triggered from the inspector "Resync MCPs" button, future work). Controller MUST reply with `mcp-config-snapshot`.
+
+### `McpConfigEntry` schema
+
+```ts
+interface McpConfigEntry {
+  mcpId: string;                 // controller-minted; stable across this MCP's lifetime
+  name: string;                  // routing key + display label; unique per connector
+  description?: string;
+  transport: "http" | "streamable-http" | "sse" | "websocket" | "stdio";
+  // Transport-specific:
+  url?: string;                  // http | streamable-http | sse | websocket
+  command?: string[];            // stdio (e.g. ["npx", "--yes", "aviation-weather-mcp"])
+  // Auth shape — VALUES never appear here; only the env-key NAMES the connector
+  // should attach values to. Values arrive via creds-response per the v1 path.
+  auth: McpAuthSpec;
+  // Names of env vars the upstream MCP needs at the wire boundary (forwarded
+  // to creds-request.envKeys). Independent of auth.envKey, which is also
+  // automatically merged in by the connector.
+  envKeys?: string[];
+}
+
+type McpAuthSpec =
+  | { kind: "none" }
+  | { kind: "bearer"; envKey: string }
+      // Connector attaches `Authorization: Bearer ${env[envKey]}` on outbound MCP calls.
+  | { kind: "header"; headerName: string; envKey: string }
+      // Connector attaches `${headerName}: ${env[envKey]}` on outbound MCP calls.
+  | { kind: "oauth2-client-credentials";
+      tokenUrlEnvKey: string;
+      clientIdEnvKey: string;
+      clientSecretEnvKey: string;
+      scopes?: string[] };
+      // Connector mints + caches a JWT via client_credentials grant against
+      // env[tokenUrlEnvKey] and attaches `Authorization: Bearer <jwt>`.
+      // Reuses packages/connector/src/auth/oauth-provider.ts.
+```
+
+**Auth shape is on the wire; values are not.** The controller stores creds in its existing per-org credential surface. When the connector asks for them via `creds-request` (v1), the response fills the env keys this entry declared. The same `creds-update` push path applies to rotations.
+
+### Transport ↔ connector spec mapping
+
+| Frame `transport` | Connector internal spec |
+|---|---|
+| `stdio` + `command` | Type 2 stdio (`transport: "stdio"`, `command: [...]`) — same as today's `aviation-weather` |
+| `http` + `url` | Type 2 http (`transport: "http"`, `endpoint: <url>`, `headers: {...}` synthesized from auth) |
+| `streamable-http` + `url` | Same as `http` (the SDK transport choice; connector treats them identically on the spec layer) |
+| `sse` + `url` | New connector-side transport handler — separate from the connector ↔ controller `/mcp-tunnel` WS |
+| `websocket` + `url` | New connector-side transport handler — separate from the connector ↔ controller `/mcp-tunnel` WS |
+
+> **WebSocket clarification (CRITICAL).** A `transport: "websocket"` 3rd-party MCP means the **connector dials a separate WS** out to the upstream MCP server's URL to talk JSON-RPC. This is **completely independent** from the connector ↔ controller `/mcp-tunnel` WS that this entire protocol rides on. They share no auth, no socket, no lifecycle.
+
+### Auth attachment — connector side
+
+For HTTP-family transports, the connector resolves the `auth` shape into outbound HTTP headers at connect time:
+
+- `kind: "bearer"` → `Authorization: Bearer ${env[envKey]}`
+- `kind: "header"` → `${headerName}: ${env[envKey]}`
+- `kind: "oauth2-client-credentials"` → connector mints a JWT via the `client_credentials` grant against `env[tokenUrlEnvKey]`, caches with <60s pre-expiry refresh (reuses [packages/connector/src/auth/oauth-provider.ts](../packages/connector/src/auth/oauth-provider.ts)), attaches `Authorization: Bearer <jwt>`.
+
+For stdio, the connector passes the env vars to the subprocess (existing path); auth is the upstream subprocess's responsibility (e.g. aviation-weather-mcp reads its own API keys from env).
+
+### Yaml ⊕ controller-roster — disjoint sets
+
+There is no name-conflict resolution. The yaml lists bundled + customer-authored MCPs only; controller-supplied 3rd-party MCPs live in a separate in-memory roster keyed by `mcpId`. The yaml does NOT carry `mcpId`; controller-supplied entries do NOT appear in the yaml. If a customer puts a 3rd-party MCP in their yaml *and* configures one in the controller UI with the same `name`, the connector treats them as two separate entries (the yaml entry has no mcpId and is registered first; the controller entry registers separately and the supervisor logs a name collision in the ack as `status: "failed", error: "name conflict with yaml entry"` and skips spawning).
+
+### Persistence — none
+
+The 3rd-party roster is **NOT** persisted on the connector. On WS reconnect:
+
+1. `register` → `register-ack`.
+2. Controller pushes `mcp-config-snapshot` at the current generation.
+3. Connector reconciles the in-memory roster against the snapshot:
+   - Entries in snapshot but not running → `supervisor.startEntry`.
+   - Entries running but not in snapshot → `supervisor.stopEntry`.
+   - Entries in both with changed spec → `supervisor.restart(name, "config-update")`.
+
+This keeps the connector stateless on roster — the controller is the brain, the connector is the executor.
+
+### Audit logging
+
+Every operator action in the controller UI MUST write an audit row before sending the resulting frame. Connector-side: every `mcp-config-snapshot` / `mcp-config-delta` applied logs `mcp_config_applied generation=N added=[...] updated=[...] removed=[...]` at info level. Same shape as the existing `creds_version_changed` line.
+
+### Backwards compat
+
+| Side | Older counterpart | Behavior |
+|---|---|---|
+| Controller v1.1, connector v1 | Connector ignores `mcp-config-*` frames per the unknown-frame rule. Controller sees no `mcp-config-ack`. Controller SHOULD surface this in the connector row as "connector version too old for 3rd-party MCPs." |
+| Controller v1, connector v1.1 | Connector sends `mcp-config-resync { reason: "boot" }` after 5s soft-wait. v1 controller ignores it. Connector continues with empty 3rd-party roster; logs `warn`. WS stays open. |
+
+Same `5s soft-wait + log warn` shape as the `creds-request` backwards-compat path. Symmetric and predictable.
+
+### `creds-request` / `creds-update` — additive `mcpId` field
+
+Existing v1 creds frames gain an optional `mcpId?: string` field for entries originating from `mcp-config-snapshot` / `mcp-config-delta`. Bundled and customer-authored MCPs (yaml-listed) omit it.
+
+```ts
+// Connector → controller. Now carries optional mcpId for controller-config-sourced MCPs.
+interface CredsRequestFrame {
+  type: "creds-request";
+  requestId: string;
+  mcp: string;
+  mcpId?: string;       // NEW v1.1 — set when source is controller config
+  author: "twilio" | "customer";
+  envKeys: string[];
+}
+
+// Controller → connector. Unchanged shape; optional mcpId for symmetric routing.
+interface CredsUpdateFrame {
+  type: "creds-update";
+  mcp: string;
+  mcpId?: string;       // NEW v1.1
+  env: Record<string, string>;
+  source: CredsSource;
+  reason?: string;
+}
+```
+
+Controller MUST scope creds lookups by `(connectorId, mcpId)` when `mcpId` is present, falling back to `(connectorId, mcp)` for v1 (yaml-listed) entries. NEVER scope by `mcp` alone — that's the cross-connector creds-leak path.
+
+### Examples
+
+#### Boot — empty roster
+
+```jsonc
+// connector → controller (v1, unchanged)
+{ "type": "register", "name": "prod-east", ... }
+
+// controller → connector (v1, unchanged)
+{ "type": "register-ack", "connectorId": "conn_abc123" }
+
+// controller → connector (v1.1)
+{ "type": "mcp-config-snapshot", "generation": 7, "servers": [] }
+
+// connector → controller (v1.1)
+{
+  "type": "mcp-config-ack",
+  "generation": 7,
+  "perMcp": []
+}
+```
+
+#### Boot — one stdio MCP (aviation-weather, no auth)
+
+```jsonc
+// controller → connector
+{
+  "type": "mcp-config-snapshot",
+  "generation": 12,
+  "servers": [
+    {
+      "mcpId": "mcp_aw_01HK...",
+      "name": "aviation-weather",
+      "description": "FAA / NOAA aviation weather data",
+      "transport": "stdio",
+      "command": ["npx", "--yes", "aviation-weather-mcp"],
+      "auth": { "kind": "none" },
+      "envKeys": []
+    }
+  ]
+}
+
+// connector → controller (creds-request still fires for v1 symmetry, even though envKeys is empty)
+{
+  "type": "creds-request",
+  "requestId": "11111111-...",
+  "mcp": "aviation-weather",
+  "mcpId": "mcp_aw_01HK...",
+  "author": "customer",
+  "envKeys": []
+}
+
+// controller → connector
+{
+  "type": "creds-response",
+  "requestId": "11111111-...",
+  "env": {},
+  "source": "none"
+}
+
+// connector spawns child via supervisor; tools register; manifest-delta to controller; ack:
+{
+  "type": "mcp-config-ack",
+  "generation": 12,
+  "perMcp": [
+    { "mcpId": "mcp_aw_01HK...", "name": "aviation-weather", "status": "started" }
+  ]
+}
+```
+
+#### Boot — one HTTP MCP with Bearer auth
+
+```jsonc
+// controller → connector
+{
+  "type": "mcp-config-snapshot",
+  "generation": 13,
+  "servers": [
+    {
+      "mcpId": "mcp_acme_01HK...",
+      "name": "acme-search",
+      "transport": "http",
+      "url": "https://api.acme.example.com/mcp",
+      "auth": { "kind": "bearer", "envKey": "ACME_BEARER" },
+      "envKeys": ["ACME_REGION"]
+    }
+  ]
+}
+
+// connector → controller — envKeys union of auth.envKey + entry.envKeys
+{
+  "type": "creds-request",
+  "requestId": "22222222-...",
+  "mcp": "acme-search",
+  "mcpId": "mcp_acme_01HK...",
+  "author": "customer",
+  "envKeys": ["ACME_BEARER", "ACME_REGION"]
+}
+
+// controller → connector
+{
+  "type": "creds-response",
+  "requestId": "22222222-...",
+  "env": { "ACME_BEARER": "tk_live_...", "ACME_REGION": "us-east" },
+  "source": "operator-entered"
+}
+
+// connector connects the HTTP MCP with header `Authorization: Bearer tk_live_...`
+// (and forwards ACME_REGION as a connector-side env var available to the HTTP transport
+// if/when a future change wires per-server env into outbound calls).
+
+// ack:
+{
+  "type": "mcp-config-ack",
+  "generation": 13,
+  "perMcp": [
+    { "mcpId": "mcp_acme_01HK...", "name": "acme-search", "status": "started" }
+  ]
+}
+```
+
+#### Steady state — operator deletes the MCP
+
+```jsonc
+// controller → connector
+{
+  "type": "mcp-config-delta",
+  "generation": 14,
+  "removed": ["mcp_acme_01HK..."]
+}
+
+// connector stops the child; manifest-delta removes its tools; ack:
+{
+  "type": "mcp-config-ack",
+  "generation": 14,
+  "perMcp": [
+    { "mcpId": "mcp_acme_01HK...", "name": "acme-search", "status": "removed" }
+  ]
+}
+```
+
+#### Generation gap — connector requests resync
+
+```jsonc
+// connector last applied generation 12, then receives:
+{ "type": "mcp-config-delta", "generation": 15, "added": [...] }
+
+// connector detects gap (15 > 12 + 1):
+{ "type": "mcp-config-resync", "reason": "gap" }
+
+// controller replies with current snapshot:
+{ "type": "mcp-config-snapshot", "generation": 15, "servers": [...] }
+
+// connector reconciles to snapshot; emits ack with generation=15.
+```
+
 ## Versioning
 
-This document is v1. Future revisions:
-- v1.1 / v1.2 — add fields to existing frames (additive, backwards-compatible).
+This document is v1.1. Future revisions:
+- v1.1 (this revision) — adds `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; adds optional `mcpId` to existing creds frames. Backwards-compatible per §"Backwards compat".
+- v1.2 — add fields to existing frames (additive, backwards-compatible).
 - v2 — add new frame types (additive, controller MUST log+ignore unknown frames per §"Frame envelope").
 - v3 — breaking change (rare). Would require a `protocol-capabilities` handshake at register time. **Not in scope today.**
 

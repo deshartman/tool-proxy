@@ -13,6 +13,12 @@ const HttpServer = z.object({
   endpoint: z.string().url().optional(),
   dir: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),
+  // Optional outbound headers attached to every JSON-RPC POST to `endpoint`.
+  // Set by the controller-config coordinator (W-E3) when a 3rd-party MCP
+  // entry declares an auth shape (Bearer / custom-header / OAuth2) — not
+  // configurable from yaml today. Passed through to StreamableHTTPClientTransport
+  // via requestInit.headers in src/servers/http.ts.
+  headers: z.record(z.string(), z.string()).optional(),
   timeout_ms: z.number().int().positive().default(5000),
 });
 

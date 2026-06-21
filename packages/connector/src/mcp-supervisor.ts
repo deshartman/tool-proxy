@@ -167,6 +167,63 @@ export class McpSupervisor {
     return true;
   }
 
+  // Controller-config (W-E2) hooks. The roster coordinator needs to add a
+  // single entry, start it, replace its spec, and remove it — operations
+  // that the boot path (register + startAll) doesn't expose individually.
+
+  hasEntry(name: string): boolean {
+    return this.entries.has(name);
+  }
+
+  // Add ONE spec post-boot. Idempotent: a duplicate name is silently skipped
+  // (matches register()'s behavior). Caller must call startOne() to spawn.
+  registerOne(spec: SupervisedSpec): void {
+    if (this.entries.has(spec.name)) return;
+    this.entries.set(spec.name, {
+      spec,
+      controllerEnv: {},
+      status: {
+        name: spec.name,
+        process: "stopped",
+        credsSource: spec.env ? "dir/.env" : "none",
+        restartCount: 0,
+        toolsCount: 0,
+      },
+    });
+  }
+
+  // Start a single registered entry. Used by the roster coordinator after
+  // registerOne() — startAll() is for the boot pass.
+  async startOne(name: string, reason = "controller-config"): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (!entry) return false;
+    await this.startEntry(entry, reason);
+    return true;
+  }
+
+  // Replace a registered spec in place. Triggers a restart if the entry was
+  // running. Used by the roster coordinator on a config-update delta where
+  // the upstream URL / command / auth shape changed.
+  async replaceSpec(name: string, spec: SupervisedSpec, reason = "config-update"): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (!entry) return false;
+    entry.spec = spec;
+    if (entry.connection || entry.child) {
+      await this.restartEntry(entry, reason);
+    }
+    return true;
+  }
+
+  // Stop and forget a registered entry. Used by the roster coordinator on a
+  // config-remove delta. Returns false if no entry by that name.
+  async unregister(name: string): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (!entry) return false;
+    await this.stopEntry(entry);
+    this.entries.delete(name);
+    return true;
+  }
+
   // Iterate the live status records. Snapshot — caller must not mutate.
   statusList(): McpStatus[] {
     return [...this.entries.values()].map((entry) => ({ ...entry.status }));

@@ -28,6 +28,7 @@ import { WebhookRegistry } from "../tunnel/webhook-registry.js";
 import { ReconnectController } from "../tunnel/reconnect.js";
 import { createFrameRouter } from "../tunnel/frame-router.js";
 import { CredsCoordinator } from "../tunnel/creds-coordinator.js";
+import { McpConfigCoordinator } from "../tunnel/mcp-config-coordinator.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins } from "../dropin.js";
 import { resolveAuth } from "./auth.js";
@@ -298,6 +299,14 @@ export async function boot(): Promise<void> {
       log,
     });
 
+    // Controller-driven 3rd-party MCP roster (W-E2). Same per-tunnel-instance
+    // lifecycle — a snapshot from a stale tunnel can't mutate a fresh one.
+    const mcpConfig = new McpConfigCoordinator({
+      send: (frame) => pendingTunnel.send(frame),
+      supervisor,
+      log,
+    });
+
     const baseRouter = createFrameRouter({
       webhooks,
       state,
@@ -310,12 +319,16 @@ export async function boot(): Promise<void> {
     pendingTunnel.onframe = (frame) => {
       if (frame.type === "creds-response") { creds.handleResponse(frame); return; }
       if (frame.type === "creds-update") { creds.handleUpdate(frame); return; }
+      if (frame.type === "mcp-config-snapshot") { void mcpConfig.handleSnapshot(frame); return; }
+      if (frame.type === "mcp-config-delta") { void mcpConfig.handleDelta(frame); return; }
       if (frame.type === "register-ack" && !frame.error) {
-        // After register-ack success, kick off creds-request per MCP. Don't
-        // block the router callback — fire-and-forget so the rest of the
-        // frame handlers (webhook reallocate etc.) keep flowing.
+        // After register-ack success, kick off creds-request per MCP and arm
+        // the mcp-config soft-wait. Don't block the router callback — fire-
+        // and-forget so the rest of the frame handlers (webhook reallocate
+        // etc.) keep flowing.
         baseRouter(frame);
         void requestCredsForAllMcps(creds);
+        mcpConfig.armBootSoftWait();
         return;
       }
       baseRouter(frame);
