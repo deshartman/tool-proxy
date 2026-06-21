@@ -387,7 +387,7 @@ describe("McpConfigCoordinator — name collisions", () => {
 });
 
 describe("McpConfigCoordinator — unsupported transports report 'skipped'", () => {
-  it("sse and websocket are honestly reported as skipped (W-E5 deferred), not silently dropped", async () => {
+  it("sse and websocket transports register + start (W-E5) with __transportKind stamped on the spec", async () => {
     const { coordinator, sent, fake } = buildCoordinator();
     const sse: McpConfigEntry = {
       mcpId: "mcp_sse_001",
@@ -410,14 +410,57 @@ describe("McpConfigCoordinator — unsupported transports report 'skipped'", () 
       servers: [sse, ws],
     });
 
-    expect(fake.registered.size).toBe(0);
-    expect(fake.started).toEqual([]);
+    expect(fake.registered.size).toBe(2);
+    expect(fake.started).toEqual(["remote-sse", "remote-ws"]);
+
+    // The supervisor-side spec models only `http` / `stdio` transports.
+    // SSE / WebSocket route through the http spec with __transportKind
+    // stamped so servers/connect.ts can dispatch to the correct SDK
+    // transport class.
+    const sseSpec = fake.registered.get("remote-sse") as SupervisedSpec & { __transportKind?: string };
+    expect(sseSpec.transport).toBe("http");
+    expect(sseSpec.__transportKind).toBe("sse");
+
+    const wsSpec = fake.registered.get("remote-ws") as SupervisedSpec & { __transportKind?: string };
+    expect(wsSpec.transport).toBe("http");
+    expect(wsSpec.__transportKind).toBe("websocket");
+
+    // streamable-http / http stay undefined — those go through the
+    // existing connectHttp default (no kind stamp needed).
     const ack = findAck(sent);
     expect(ack!.perMcp).toHaveLength(2);
     for (const row of ack!.perMcp) {
-      expect(row.status).toBe("skipped");
-      expect(row.error).toMatch(/not yet supported/);
+      expect(row.status).toBe("started");
     }
+  });
+
+  it("streamable-http / http roster entries leave __transportKind undefined (default to connectHttp)", async () => {
+    const { coordinator, fake } = buildCoordinator();
+    const httpEntry: McpConfigEntry = {
+      mcpId: "mcp_http_001",
+      name: "remote-http",
+      transport: "http",
+      url: "https://example.com/mcp",
+      auth: { kind: "none" },
+    };
+    const streamableEntry: McpConfigEntry = {
+      mcpId: "mcp_streamable_001",
+      name: "remote-streamable",
+      transport: "streamable-http",
+      url: "https://example.com/mcp/v2",
+      auth: { kind: "none" },
+    };
+
+    await coordinator.handleSnapshot({
+      type: "mcp-config-snapshot",
+      generation: 1,
+      servers: [httpEntry, streamableEntry],
+    });
+
+    const httpSpec = fake.registered.get("remote-http") as SupervisedSpec & { __transportKind?: string };
+    expect(httpSpec.__transportKind).toBeUndefined();
+    const streamableSpec = fake.registered.get("remote-streamable") as SupervisedSpec & { __transportKind?: string };
+    expect(streamableSpec.__transportKind).toBeUndefined();
   });
 
   it("stdio missing command and http missing url are skipped with a specific error", async () => {

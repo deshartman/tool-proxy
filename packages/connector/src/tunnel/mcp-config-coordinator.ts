@@ -342,13 +342,14 @@ export class McpConfigCoordinator {
   //        the entry. Env values arrive via creds-response and merge in the
   //        supervisor's mergeEnv (existing path).
   //
-  // http / streamable-http: McpServerSpec http shape with endpoint = entry.url.
-  //        Auth shape is stamped on the spec verbatim; the supervisor's
-  //        resolveSpecHeaders (W-E3 / W-E4) translates it to spec.headers at
-  //        every spawn / restart so a creds-update naturally re-resolves.
-  //
-  // sse / websocket: not yet implemented in the connector's outbound transport
-  //        layer. Reported as status:"skipped" until W-E5 lands.
+  // http / streamable-http / sse / websocket: McpServerSpec http shape with
+  //        endpoint = entry.url. Auth shape is stamped on the spec verbatim;
+  //        the supervisor's resolveSpecHeaders (W-E3 / W-E4) translates it to
+  //        spec.headers at every spawn / restart so a creds-update naturally
+  //        re-resolves. The wire-side `transport` collapses to the supervisor's
+  //        `http` McpServerSpec; the SUB-transport (streamable-http / sse /
+  //        websocket) rides on `__transportKind` so servers/connect.ts can
+  //        dispatch to the correct SDK client transport (W-E5).
   private toSpec(
     entry: McpConfigEntry,
   ): { spec: SupervisedSpec } | { error: string } {
@@ -364,16 +365,30 @@ export class McpConfigCoordinator {
       };
       return { spec };
     }
-    if (entry.transport === "http" || entry.transport === "streamable-http") {
+    if (
+      entry.transport === "http" ||
+      entry.transport === "streamable-http" ||
+      entry.transport === "sse" ||
+      entry.transport === "websocket"
+    ) {
       if (!entry.url) {
         return { error: `${entry.transport} entry "${entry.name}" missing url` };
       }
-      const spec: McpServerSpec = {
+      // streamable-http (and the legacy "http" alias) → undefined kind →
+      // servers/connect.ts dispatches to connectHttp (today's default).
+      // sse / websocket get the kind stamped so dispatch routes to the
+      // correct transport class.
+      const kind: "sse" | "websocket" | undefined =
+        entry.transport === "sse" ? "sse" :
+        entry.transport === "websocket" ? "websocket" :
+        undefined;
+      const spec: McpServerSpec & { __transportKind?: "sse" | "websocket" } = {
         name: entry.name,
         transport: "http",
         endpoint: entry.url,
         auth: entry.auth,
         timeout_ms: 5000,
+        ...(kind ? { __transportKind: kind } : {}),
       };
       return { spec };
     }

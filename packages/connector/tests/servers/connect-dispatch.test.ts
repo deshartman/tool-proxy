@@ -1,0 +1,169 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Pin the W-E5 transport-dispatch branch in src/servers/connect.ts.
+//
+// Manual scenarios surfaced by the controller-driven roster: an operator
+// can pick Transport=sse / streamable-http / websocket / stdio in the
+// "New 3rd Party MCP" UI. The connector translates each to McpServerSpec
+// shape — which has only `http` / `stdio` transports — and routes the
+// HTTP-family variants through `__transportKind`. If dispatch picks the
+// wrong transport class, the upstream connection silently uses the wrong
+// protocol (e.g. SSE entry tries to streamable-POST and the server 405s).
+//
+// We mock the SDK transport constructors and the Client.connect so this
+// test exercises ONLY the dispatch decision — not real network I/O.
+
+import type { McpServerSpec } from "../../src/config.js";
+
+// Capture which transport class was instantiated.
+const constructed: Array<{ kind: string; url: string; opts?: unknown }> = [];
+
+vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
+  return {
+    Client: class MockClient {
+      async connect() { /* noop */ }
+      async close() { /* noop */ }
+      async listTools() { return { tools: [] }; }
+      async callTool() { return {}; }
+    },
+  };
+});
+
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+  StreamableHTTPClientTransport: class {
+    constructor(url: URL, opts?: unknown) {
+      constructed.push({ kind: "streamable-http", url: url.toString(), opts });
+    }
+  },
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
+  SSEClientTransport: class {
+    constructor(url: URL, opts?: unknown) {
+      constructed.push({ kind: "sse", url: url.toString(), opts });
+    }
+  },
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/websocket.js", () => ({
+  WebSocketClientTransport: class {
+    constructor(url: URL) {
+      constructed.push({ kind: "websocket", url: url.toString() });
+    }
+  },
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+  StdioClientTransport: class {
+    constructor(opts: unknown) {
+      constructed.push({ kind: "stdio", url: "(stdio)", opts });
+    }
+  },
+}));
+
+// Import AFTER the mocks so the SDK references are wired through.
+const { connectServer } = await import("../../src/servers/connect.js");
+
+describe("connectServer dispatch", () => {
+  beforeEach(() => {
+    constructed.length = 0;
+  });
+
+  it("http spec without __transportKind → StreamableHTTPClientTransport (yaml + roster default)", async () => {
+    const spec: McpServerSpec = {
+      name: "x",
+      transport: "http",
+      endpoint: "https://example.com/mcp",
+      timeout_ms: 5000,
+    };
+    await connectServer(spec);
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0]).toMatchObject({ kind: "streamable-http", url: "https://example.com/mcp" });
+  });
+
+  it("http spec with __transportKind: 'sse' → SSEClientTransport", async () => {
+    const spec: McpServerSpec & { __transportKind?: string } = {
+      name: "x",
+      transport: "http",
+      endpoint: "https://example.com/mcp/sse",
+      __transportKind: "sse",
+      timeout_ms: 5000,
+    };
+    await connectServer(spec);
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0]).toMatchObject({ kind: "sse", url: "https://example.com/mcp/sse" });
+  });
+
+  it("http spec with __transportKind: 'websocket' → WebSocketClientTransport", async () => {
+    const spec: McpServerSpec & { __transportKind?: string } = {
+      name: "x",
+      transport: "http",
+      endpoint: "wss://example.com/mcp",
+      __transportKind: "websocket",
+      timeout_ms: 5000,
+    };
+    await connectServer(spec);
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0]).toMatchObject({ kind: "websocket", url: "wss://example.com/mcp" });
+  });
+
+  it("stdio spec → StdioClientTransport (kind never consulted)", async () => {
+    const spec: McpServerSpec = {
+      name: "x",
+      transport: "stdio",
+      command: ["echo", "hello"],
+      timeout_ms: 5000,
+    };
+    await connectServer(spec);
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0].kind).toBe("stdio");
+  });
+
+  it("http spec with __transportKind: 'streamable-http' (explicit) → StreamableHTTPClientTransport", async () => {
+    // The coordinator only stamps __transportKind for sse / websocket and
+    // leaves streamable-http / http as undefined. But pin the behavior
+    // when the kind is explicitly set, so a future change (e.g. always
+    // stamp it for completeness) keeps the dispatch correct.
+    const spec: McpServerSpec & { __transportKind?: string } = {
+      name: "x",
+      transport: "http",
+      endpoint: "https://example.com/mcp",
+      __transportKind: "streamable-http",
+      timeout_ms: 5000,
+    };
+    await connectServer(spec);
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0].kind).toBe("streamable-http");
+  });
+
+  it("passes spec.headers through requestInit.headers for http and sse", async () => {
+    // W-E3 wire-through is the load-bearing piece for the Authorization
+    // header. Pin that connectHttp and connectSse both forward it; the
+    // WebSocket transport drops it (with a warn — separate test).
+    const httpSpec: McpServerSpec = {
+      name: "x",
+      transport: "http",
+      endpoint: "https://example.com/mcp",
+      headers: { Authorization: "Bearer t1" },
+      timeout_ms: 5000,
+    };
+    await connectServer(httpSpec);
+    expect((constructed[0].opts as { requestInit?: { headers?: Record<string, string> } }).requestInit?.headers).toEqual({
+      Authorization: "Bearer t1",
+    });
+
+    constructed.length = 0;
+    const sseSpec: McpServerSpec & { __transportKind?: string } = {
+      name: "x",
+      transport: "http",
+      endpoint: "https://example.com/mcp/sse",
+      headers: { "X-API-Key": "k1" },
+      __transportKind: "sse",
+      timeout_ms: 5000,
+    };
+    await connectServer(sseSpec);
+    expect((constructed[0].opts as { requestInit?: { headers?: Record<string, string> } }).requestInit?.headers).toEqual({
+      "X-API-Key": "k1",
+    });
+  });
+});
