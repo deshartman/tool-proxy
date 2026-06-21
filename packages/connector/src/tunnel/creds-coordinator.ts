@@ -46,7 +46,7 @@ export class CredsCoordinator {
   // the soft-wait elapses (whichever first). The returned map covers every
   // mcp passed in — entries that timed out have an empty env.
   async requestAllAtBoot(
-    requests: Array<{ mcp: string; author: string; envKeys: string[] }>,
+    requests: Array<{ mcp: string; mcpId?: string; author: string; envKeys: string[] }>,
   ): Promise<void> {
     const promises = requests.map((req) => this.sendRequest(req));
     const timeout = new Promise<void>((res) => setTimeout(res, this.softWaitMs));
@@ -67,8 +67,8 @@ export class CredsCoordinator {
 
   // Fire a single creds-request for an MCP that's already running (e.g. the
   // inspector "Reload creds" affordance). Resolves when the response lands.
-  async reload(name: string, author: string, envKeys: string[]): Promise<void> {
-    await this.sendRequest({ mcp: name, author, envKeys });
+  async reload(name: string, author: string, envKeys: string[], mcpId?: string): Promise<void> {
+    await this.sendRequest({ mcp: name, mcpId, author, envKeys });
   }
 
   handleResponse(frame: CredsResponseFrame): void {
@@ -137,12 +137,13 @@ export class CredsCoordinator {
     }
   }
 
-  private sendRequest(req: { mcp: string; author: string; envKeys: string[] }): Promise<void> {
+  private sendRequest(req: { mcp: string; mcpId?: string; author: string; envKeys: string[] }): Promise<void> {
     const requestId = randomUUID();
     const frame: CredsRequestFrame = {
       type: "creds-request",
       requestId,
       mcp: req.mcp,
+      ...(req.mcpId ? { mcpId: req.mcpId } : {}),
       author: req.author,
       envKeys: req.envKeys,
     };

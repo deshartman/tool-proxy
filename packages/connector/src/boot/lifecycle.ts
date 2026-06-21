@@ -327,7 +327,7 @@ export async function boot(): Promise<void> {
         // and-forget so the rest of the frame handlers (webhook reallocate
         // etc.) keep flowing.
         baseRouter(frame);
-        void requestCredsForAllMcps(creds);
+        void requestCredsForAllMcps(creds, mcpConfig);
         mcpConfig.armBootSoftWait();
         return;
       }
@@ -338,9 +338,9 @@ export async function boot(): Promise<void> {
     if (inspector) {
       inspector.mcpActions = {
         reloadCreds: async (name: string) => {
-          const reqInfo = buildCredsRequestForMcp(name);
+          const reqInfo = buildCredsRequestForMcp(name, mcpConfig);
           if (!reqInfo) throw new Error(`unknown MCP "${name}"`);
-          await creds.reload(reqInfo.mcp, reqInfo.author, reqInfo.envKeys);
+          await creds.reload(reqInfo.mcp, reqInfo.author, reqInfo.envKeys, reqInfo.mcpId);
         },
         restart: async (name: string) => {
           const ok = await supervisor.restart(name, "manual");
@@ -375,24 +375,33 @@ export async function boot(): Promise<void> {
   // Build a creds-request payload for a single MCP. Returns undefined if
   // the MCP isn't registered with the supervisor (defense; should not
   // happen for inspector-driven reloads against current manifest).
-  function buildCredsRequestForMcp(name: string): { mcp: string; author: string; envKeys: string[] } | undefined {
+  function buildCredsRequestForMcp(
+    name: string,
+    mcpConfig?: McpConfigCoordinator,
+  ): { mcp: string; mcpId?: string; author: string; envKeys: string[] } | undefined {
     const yamlDir = configPath ? resolvePath(configPath, "..") : process.cwd();
     const spec = config.mcp_servers.find((s) => s.name === name);
     const author = spec ? authorOf(spec, yamlDir) : "customer";
     if (!servers.has(name)) return undefined;
-    return { mcp: name, author, envKeys: [] };
+    const mcpId = mcpConfig?.mcpIdFor(name);
+    return { mcp: name, ...(mcpId ? { mcpId } : {}), author, envKeys: [] };
   }
 
   // Fan out creds-request after register-ack. Aggregates envKeys per MCP
-  // by hitting the synthesized /envkeys endpoint when present.
-  async function requestCredsForAllMcps(creds: CredsCoordinator): Promise<void> {
+  // by hitting the synthesized /envkeys endpoint when present. mcpConfig
+  // attaches mcpId for controller-roster MCPs; yaml-listed entries omit it.
+  async function requestCredsForAllMcps(
+    creds: CredsCoordinator,
+    mcpConfig: McpConfigCoordinator,
+  ): Promise<void> {
     const yamlDir = configPath ? resolvePath(configPath, "..") : process.cwd();
     const requests = await Promise.all(
       [...servers.keys()].map(async (name) => {
         const spec = config.mcp_servers.find((s) => s.name === name);
         const author = spec ? authorOf(spec, yamlDir) : "customer";
         const envKeys = await supervisor.fetchEnvKeys(name);
-        return { mcp: name, author, envKeys };
+        const mcpId = mcpConfig.mcpIdFor(name);
+        return { mcp: name, ...(mcpId ? { mcpId } : {}), author, envKeys };
       }),
     );
     log.info({ count: requests.length }, `sending creds-request frames`);
