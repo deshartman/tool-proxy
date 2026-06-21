@@ -35,6 +35,7 @@ import { connectServer } from "./servers/connect.js";
 import type { McpServerConnection } from "./servers/index.js";
 import type { Logger } from "./logger.js";
 import { resolveAuthHeaders, isSyncResolvable } from "./auth/resolve-mcp-auth.js";
+import { resolveOAuthBearer, type OAuthProviderCache } from "./auth/resolve-mcp-auth-async.js";
 
 // Resolve tsx's bin from the connector package's own node_modules — same
 // approach as the original spawner. Going via package.json sidesteps tsx's
@@ -88,6 +89,13 @@ export class McpSupervisor {
   private readonly entries = new Map<string, Entry>();
   private readonly reservedPorts = new Set<number>();
   private readonly opts: Required<Pick<SupervisorOpts, "basePort" | "readyTimeoutMs">> & SupervisorOpts;
+  // W-E4: per-supervisor OAuth2 client_credentials provider cache, shared
+  // across MCPs. Key = `${tokenUrl} ${clientId} ${clientSecret}`. Two MCPs
+  // with identical OAuth2 creds reuse the same cached JWT — deliberate,
+  // since the controller-side row mints the same secret pair for both.
+  // Any change to one of the three keys invalidates the cache slot.
+  private readonly oauthCache: OAuthProviderCache = new Map();
+
   constructor(opts: SupervisorOpts) {
     this.opts = {
       basePort: opts.basePort ?? envNumber("MCP_BASE_PORT", 7100),
@@ -298,11 +306,9 @@ export class McpSupervisor {
 
   // Translate the entry's auth shape + controllerEnv into spec.headers,
   // which servers/http.ts passes through StreamableHTTPClientTransport's
-  // requestInit.headers. Logs but does NOT throw on missing-key — the
-  // upstream's 401 is the operator-facing signal that creds need attention,
-  // faster than a connect-time abort. OAuth2 (kind: "oauth2-client-credentials")
-  // is handled by W-E4's async helper in a follow-up commit; this path
-  // covers none / bearer / header.
+  // requestInit.headers. Logs but does NOT throw on missing-key / mint-fail
+  // — the upstream's 401 is the operator-facing signal that creds need
+  // attention, faster than a connect-time abort.
   private async resolveSpecHeaders(entry: Entry): Promise<void> {
     const spec = entry.spec as { auth?: unknown; headers?: Record<string, string> };
     const auth = spec.auth as import("./tunnel/frames.js").McpAuthSpec | undefined;
@@ -318,13 +324,28 @@ export class McpSupervisor {
       }
       return;
     }
-    // OAuth2 lands in W-E4 — for now, log and connect unauthenticated so the
-    // entry still surfaces in the inspector and the operator gets a 401
-    // signal rather than a silent skip.
-    this.opts.log.warn(
-      { name: entry.spec.name, authKind: auth.kind },
-      `3rd-party MCP auth kind not yet supported — connecting without auth`,
-    );
+    if (auth.kind === "oauth2-client-credentials") {
+      // W-E4: mint a JWT against the controller-supplied tokenUrl /
+      // clientId / clientSecret and stamp Authorization: Bearer onto the
+      // spec. The provider does <60s pre-expiry refresh on every
+      // accessToken() call, so a reconnect-driven re-resolve picks up a
+      // fresh JWT for free. Mid-session 401s recover via supervisor.restart
+      // (mint-at-connect, restart-on-401 — chosen over a fetch-override
+      // wrapper to avoid coupling to SDK transport internals).
+      const result = await resolveOAuthBearer(auth, entry.controllerEnv, this.oauthCache);
+      this.applyResolvedHeaders(entry, result.headers);
+      if (result.missingEnvKeys.length > 0) {
+        this.opts.log.warn(
+          { name: entry.spec.name, missingEnvKeys: result.missingEnvKeys, authKind: auth.kind },
+          `3rd-party MCP OAuth2 missing creds — connecting without auth, expect 401 from upstream`,
+        );
+      } else if (result.error) {
+        this.opts.log.warn(
+          { name: entry.spec.name, err: result.error, authKind: auth.kind },
+          `3rd-party MCP OAuth2 token mint failed — connecting without auth, expect 401 from upstream`,
+        );
+      }
+    }
   }
 
   // Replace the resolver's prior output on every call. A creds-update that
