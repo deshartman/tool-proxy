@@ -601,7 +601,7 @@ interface McpConfigAckFrame {
 }
 ```
 
-Sent after applying a snapshot or delta. `status: "skipped"` is reserved for entries the connector cannot run (e.g. `transport: "websocket"` not yet implemented in this connector version) — the controller surfaces this in the row's status badge.
+Sent after applying a snapshot or delta. `status: "skipped"` is reserved for entries the connector cannot run today — for example, an entry missing a required field (`http` without `url`, `stdio` without `command`) or, on a future connector version, an unrecognised transport. The controller surfaces this in the row's status badge. As of 2026-06-21 (v1.1) all five wire transports — `stdio` / `http` / `streamable-http` / `sse` / `websocket` — are supported by the connector; field-validation skips remain.
 
 **`status: "removed"` arrives after the row is already gone.** The controller deletes its row before sending `mcp-config-delta { removed: [mcpId] }`, so by the time the matching `removed` ack lands the row is no longer in the DB. The handler MUST tolerate the row being absent — log + drop, don't upsert. A naive "always upsert by mcpId" handler would FK-error here.
 
@@ -661,8 +661,8 @@ type McpAuthSpec =
 | `stdio` + `command` | Type 2 stdio (`transport: "stdio"`, `command: [...]`) — same as today's `aviation-weather` |
 | `http` + `url` | Type 2 http (`transport: "http"`, `endpoint: <url>`, `headers: {...}` synthesized from auth) |
 | `streamable-http` + `url` | Same as `http` (the SDK transport choice; connector treats them identically on the spec layer) |
-| `sse` + `url` | New connector-side transport handler — separate from the connector ↔ controller `/mcp-tunnel` WS |
-| `websocket` + `url` | New connector-side transport handler — separate from the connector ↔ controller `/mcp-tunnel` WS |
+| `sse` + `url` | Type 2 sse — supervisor `transport: "http"` spec with internal `__transportKind: "sse"` marker; routed to `connectSse` in [`servers/connect.ts`](../packages/connector/src/servers/connect.ts). Auth headers flow through `requestInit.headers` on the recurring POST requests. |
+| `websocket` + `url` | Type 2 websocket — supervisor `transport: "http"` spec with internal `__transportKind: "websocket"` marker; routed to `connectWebSocket`. Separate from the connector ↔ controller `/mcp-tunnel` WS. **Auth must be embedded in the URL** (token query param, basic-auth in URL userinfo, etc.) — the SDK's WebSocket transport accepts no headers; resolved auth headers are dropped with a warn. |
 
 > **WebSocket clarification (CRITICAL).** A `transport: "websocket"` 3rd-party MCP means the **connector dials a separate WS** out to the upstream MCP server's URL to talk JSON-RPC. This is **completely independent** from the connector ↔ controller `/mcp-tunnel` WS that this entire protocol rides on. They share no auth, no socket, no lifecycle.
 
