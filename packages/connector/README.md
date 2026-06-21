@@ -222,7 +222,7 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 | `package.json` | metadata + the `bin` entry |
 | `node_modules/` (production only) | `npm prune --omit=dev` in the build stage; includes `tsx` (used by the spawner) |
 | `/app/mcp/local/` | Type 1 source folders; the spawner runs `tsx /app/mcp/local/<name>/server.ts` for entries with `dir:` set |
-| `/app/mcp/external/` | Type 2 stubs (per-MCP `.env.example`); customer mounts a `.env` next to it for credentials |
+| `/app/mcp/external/` | (transitional — removed once controller-driven Type 2 ships) per-MCP `.env.example` stubs that the customer overlays with a `.env` for legacy yaml-listed Type 2 entries. New Type 2 MCPs come from the controller UI; their creds arrive via `creds-response` over the tunnel and never touch this directory. |
 | `/app/mcp/bundled/` | Type 3 stubs (per-bundle `.env.example`); customer mounts a `.env` next to it for credentials |
 | `/opt/bundled-mcps/<name>/.venv/` | Pre-installed Python venv per Type 3 bundle; the connector spawns `<entrypoint>` from `BUNDLED_MCPS` |
 
