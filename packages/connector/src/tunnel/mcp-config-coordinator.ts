@@ -281,7 +281,10 @@ export class McpConfigCoordinator {
     }
     this.roster.set(entry.mcpId, { mcpId: entry.mcpId, name: entry.name, config: entry });
     this.nameToMcpId.set(entry.name, entry.mcpId);
-    this.opts.supervisor.registerOne(specOrError.spec);
+    // W-E6: mark the supervisor entry as "controller-config" + carry the
+    // mcpId so the inspector renders the right source badge + correlation
+    // id. Yaml entries never come through this path.
+    this.opts.supervisor.registerOne(specOrError.spec, { source: "controller-config", mcpId: entry.mcpId });
     try {
       await this.opts.supervisor.startOne(entry.name, "controller-config-add");
       return { status: "started" };
@@ -302,7 +305,7 @@ export class McpConfigCoordinator {
     if (prior.name !== next.name) {
       await this.opts.supervisor.unregister(prior.name);
       this.nameToMcpId.delete(prior.name);
-      this.opts.supervisor.registerOne(specOrError.spec);
+      this.opts.supervisor.registerOne(specOrError.spec, { source: "controller-config", mcpId: next.mcpId });
       this.nameToMcpId.set(next.name, next.mcpId);
       try {
         await this.opts.supervisor.startOne(next.name, "controller-config-rename");

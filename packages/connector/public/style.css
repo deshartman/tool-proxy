@@ -369,6 +369,24 @@ h2 {
 .mcp-status-row.mcp-status-running .mcp-status-state { background: rgba(63, 185, 80, 0.15); color: var(--green); }
 .mcp-status-row.mcp-status-restarting .mcp-status-state { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
 .mcp-status-row.mcp-status-permanently-failed .mcp-status-state { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+/* W-E6 — source badge: distinguishes yaml-listed entries from controller-pushed 3rd-party MCPs. */
+.mcp-source-badge {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: auto;
+  margin-right: 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.mcp-source-badge.mcp-source-controller-config {
+  border-color: rgba(88, 166, 255, 0.4);
+  color: var(--accent);
+  background: rgba(88, 166, 255, 0.08);
+}
 .mcp-status-meta { font-size: 0.72rem; color: var(--text); display: flex; flex-wrap: wrap; gap: 12px; }
 .mcp-status-meta .muted { color: var(--muted); }
 .mcp-status-actions { display: flex; gap: 6px; align-items: center; margin-top: 4px; }

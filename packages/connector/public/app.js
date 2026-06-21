@@ -797,15 +797,26 @@ function buildMcpStatusRow(s) {
   const restartLine = s.restartCount === 0
     ? 'no restarts'
     : `${s.restartCount} restart${s.restartCount === 1 ? '' : 's'}` + (s.lastRestartReason ? ` (${s.lastRestartReason})` : '');
+  // W-E6: source badge — distinguishes yaml-listed entries (bundled +
+  // customer-authored) from controller-pushed 3rd-party MCPs. mcpId is the
+  // controller-minted opaque key, surfaced for operator-side correlation
+  // with the controller's row.
+  const sourceLabel = s.source === 'controller-config' ? 'controller' : 'yaml';
+  const sourceBadge = `<span class="mcp-source-badge mcp-source-${s.source || 'yaml'}">${escapeHtml(sourceLabel)}</span>`;
+  const mcpIdLine = s.mcpId
+    ? `<div><span class="muted">mcpId:</span> <code>${escapeHtml(s.mcpId)}</code></div>`
+    : '';
   li.innerHTML = `
     <div class="mcp-status-head">
       <span class="mcp-status-name">${escapeHtml(s.name)}</span>
+      ${sourceBadge}
       <span class="mcp-status-state">${escapeHtml(s.process)}</span>
     </div>
     <div class="mcp-status-meta">
       <div><span class="muted">creds:</span> ${escapeHtml(credsLine)}</div>
       <div><span class="muted">tools:</span> ${s.toolsCount}</div>
       <div><span class="muted">restarts:</span> ${escapeHtml(restartLine)}</div>
+      ${mcpIdLine}
     </div>
     <div class="mcp-status-actions">
       <button type="button" class="mcp-action-reload" data-mcp="${escapeHtml(s.name)}">Reload creds</button>

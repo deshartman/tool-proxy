@@ -55,6 +55,16 @@ export interface McpStatus {
   restartCount: number;
   lastRestartReason?: string;
   toolsCount: number;
+  // W-E6: where this MCP came from. "yaml" = bundled / customer-authored
+  // entry from connector.yaml. "controller-config" = controller-driven
+  // 3rd-party MCP (W-E2, mcp-config-snapshot/delta). The inspector renders
+  // the source as a small badge so operators can tell yaml-listed entries
+  // apart from controller-pushed ones.
+  source: "yaml" | "controller-config";
+  // mcpId is the controller-minted opaque routing key for controller-config
+  // entries (always undefined for yaml entries). Surfaced in the inspector
+  // for operator-side correlation with the controller's row.
+  mcpId?: string;
 }
 
 interface Entry {
@@ -105,7 +115,9 @@ export class McpSupervisor {
   }
 
   // Register specs without spawning. Use this when the boot flow wants to
-  // collect creds before the first spawn.
+  // collect creds before the first spawn. Yaml-listed entries default
+  // status.source to "yaml" — the controller-config coordinator uses
+  // registerOne() with metadata to mark "controller-config" entries.
   register(specs: SupervisedSpec[]): void {
     for (const spec of specs) {
       if (this.entries.has(spec.name)) continue;
@@ -118,6 +130,7 @@ export class McpSupervisor {
           credsSource: spec.env ? "dir/.env" : "none",
           restartCount: 0,
           toolsCount: 0,
+          source: "yaml",
         },
       });
     }
@@ -185,7 +198,10 @@ export class McpSupervisor {
 
   // Add ONE spec post-boot. Idempotent: a duplicate name is silently skipped
   // (matches register()'s behavior). Caller must call startOne() to spawn.
-  registerOne(spec: SupervisedSpec): void {
+  // Optional `meta` lets the controller-config coordinator mark the entry
+  // as "controller-config" with the controller-minted mcpId; absent meta
+  // defaults to yaml-listed.
+  registerOne(spec: SupervisedSpec, meta?: { source?: "yaml" | "controller-config"; mcpId?: string }): void {
     if (this.entries.has(spec.name)) return;
     this.entries.set(spec.name, {
       spec,
@@ -196,6 +212,8 @@ export class McpSupervisor {
         credsSource: spec.env ? "dir/.env" : "none",
         restartCount: 0,
         toolsCount: 0,
+        source: meta?.source ?? "yaml",
+        ...(meta?.mcpId ? { mcpId: meta.mcpId } : {}),
       },
     });
   }
