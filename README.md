@@ -12,8 +12,6 @@ The connector understands three integration patterns. Type 1 and Type 3 are conf
 - **Type 2 — connect to an existing MCP (controller-pushed).** Operator clicks **New 3rd Party MCP** in the controller (Name, Transport, URL or command, Auth shape, optional extra envKeys). The controller persists + pushes the entry to this connector via `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](docs/MCP-PROTOCOL.md) v1.1. No yaml edit, no folder under `mcp/`. Useful for off-the-shelf MCPs (e.g. Salesforce, Atlassian, public npm packages like `aviation-weather-mcp`).
 - **Type 3 — bundled, Twilio-authored Python venv, pre-installed in this image.** The entry just sets `bundled: <name>`; the connector resolves it against a registry of bundles laid down at image-build time. Bundle source lives in-tree at `bundles/<name>/` (deliberately outside `mcp/` so the runtime image carries only the installed venv, not the build inputs). Customer supplies only a per-bundle `.env` under `mcp/bundled/<name>/`.
 
-> **Transitional note.** During the v1.1 roll-out the `mcp/external/` folder + an `aviation-weather` yaml entry remain in place so today's demo keeps working until the controller-side push lands. They will be removed once the controller-driven flow is verified end-to-end. New Type 2 MCPs MUST be added via the controller UI; do not extend `mcp/external/` further.
-
 `mcp/bundled/` carries Twilio-shipped MCPs of *any* type — Type 1 Node MCPs (`mcp/bundled/twilio/`) and Type 3 Python venv MCPs (`mcp/bundled/enterprise-knowledge/`) cohabit. The folder marks "who ships it"; the YAML entry shape decides "how it's wired". The connector adds an `author: "twilio" | "customer"` field to each MCP on the wire, derived from the folder location, so the controller can group Twilio-shipped MCPs separately from customer-authored ones in its UI.
 
 ### Receiving webhooks
@@ -55,8 +53,6 @@ mcp/
   local/
     sample/                   Type 1 — now, slow_echo, uuid, weather
     crm/                      Type 1 — get_customer / get_recent / issue_refund (thin client over mock/customers/)
-  external/                   (transitional — see "Transitional note" above; removed once controller-driven flow ships)
-    aviation-weather/         Type 2 demo — pure config; spawns published `aviation-weather-mcp` via stdio
   bundled/
     twilio/                   Type 1 (Node) — Twilio-authored; ships its own twilio SDK locally
     enterprise-knowledge/     Type 3 (Python venv) — .env stub only (source lives at bundles/enterprise-knowledge/)

@@ -65,7 +65,7 @@ fi
 # Note: if you bump a dep version in package.json but node_modules
 # already exists, this loop won't notice — run `npm install` in that
 # folder yourself to pick up the new version.
-for dir in "$ROOT"/mcp/local/*/ "$ROOT"/mcp/external/*/ "$ROOT"/mcp/bundled/*/; do
+for dir in "$ROOT"/mcp/local/*/ "$ROOT"/mcp/bundled/*/; do
   [ -f "$dir/package.json" ] || continue
   depcount=$(node -e "console.log(Object.keys(require('$dir/package.json').dependencies||{}).length)" 2>/dev/null || echo 0)
   [ "$depcount" = "0" ] && continue
