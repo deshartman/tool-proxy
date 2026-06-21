@@ -28,6 +28,7 @@ Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts); the contract for the 
 - `goodbye { reason? }` — graceful shutdown signal
 - `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke` — webhook ingress, see [`.claude/plans/STATUS-CALLBACK-MCP.md`](../../.claude/plans/STATUS-CALLBACK-MCP.md)
 - `creds-request` (out) / `creds-response` (in) / `creds-update` (in) — per-MCP creds protocol. The connector asks the controller for env values for each MCP after `register-ack`; the controller stores them in its existing UI/DB and pushes updates when an operator edits them. See [`.claude/plans/MCP-LOADING.md`](../../.claude/plans/MCP-LOADING.md).
+- `mcp-config-snapshot` (in) / `mcp-config-delta` (in) / `mcp-config-ack` (out) / `mcp-config-resync` (out) — v1.1 controller-driven 3rd-party MCP roster. Operators manage 3rd-party MCPs through the controller UI; the controller pushes the roster to the connector over the existing tunnel. The connector reconciles in-memory (no yaml rewrite); auth shapes (`none` / `bearer` / `header` / `oauth2-client-credentials`) and HTTP-family transports (http / streamable-http / sse / websocket) are resolved at spawn time. WebSocket auth must be embedded in the URL — the SDK's WS transport accepts no headers. See [`.claude/plans/MCP-LOADING.md`](../../.claude/plans/MCP-LOADING.md) Workstream E and `docs/MCP-PROTOCOL.md` v1.1.
 
 Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector splits on the first `.`.
 
