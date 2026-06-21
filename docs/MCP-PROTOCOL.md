@@ -603,6 +603,8 @@ interface McpConfigAckFrame {
 
 Sent after applying a snapshot or delta. `status: "skipped"` is reserved for entries the connector cannot run (e.g. `transport: "websocket"` not yet implemented in this connector version) — the controller surfaces this in the row's status badge.
 
+**`status: "removed"` arrives after the row is already gone.** The controller deletes its row before sending `mcp-config-delta { removed: [mcpId] }`, so by the time the matching `removed` ack lands the row is no longer in the DB. The handler MUST tolerate the row being absent — log + drop, don't upsert. A naive "always upsert by mcpId" handler would FK-error here.
+
 #### `mcp-config-resync` (connector → controller)
 
 ```ts
