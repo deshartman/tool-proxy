@@ -43,6 +43,43 @@ elShowHb.addEventListener('change', () => {
     el.style.display = showHeartbeats ? '' : 'none';
   });
 });
+
+// Keyboard navigation for the Frames list. ArrowDown/ArrowUp move and select
+// (matching click semantics — detail pane updates live). Enter re-scrolls the
+// current selection into view if frames have streamed past it. Skips hidden
+// heartbeats during navigation. Bails out if the user is typing or has a
+// button/link focused so we don't hijack native handlers.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+  const t = e.target;
+  const tag = t?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'A' || tag === 'SELECT' || t?.isContentEditable) return;
+
+  const visible = [...elFrames.querySelectorAll('.frame-item')].filter((el) => el.style.display !== 'none');
+  if (visible.length === 0) return;
+
+  if (e.key === 'Enter') {
+    const current = visible.find((el) => el.classList.contains('selected'));
+    if (current) current.scrollIntoView({ block: 'nearest' });
+    else visible[0].click();
+    e.preventDefault();
+    return;
+  }
+
+  const currentIdx = visible.findIndex((el) => el.classList.contains('selected'));
+  let nextIdx;
+  if (currentIdx < 0) {
+    nextIdx = 0;
+  } else if (e.key === 'ArrowDown') {
+    nextIdx = Math.min(currentIdx + 1, visible.length - 1);
+  } else {
+    nextIdx = Math.max(currentIdx - 1, 0);
+  }
+  if (nextIdx === currentIdx) { e.preventDefault(); return; }
+  visible[nextIdx].click();
+  visible[nextIdx].scrollIntoView({ block: 'nearest' });
+  e.preventDefault();
+});
 elClear.addEventListener('click', () => {
   elFrames.replaceChildren();
   elFrames.classList.add('empty');
@@ -555,10 +592,28 @@ function renderFrameDetail(tap) {
 
   const pre = document.createElement('pre');
   pre.className = 'detail-json';
-  pre.textContent = JSON.stringify(tap.frame, null, 2);
+  pre.textContent = JSON.stringify(redactFrameForDisplay(tap.frame), null, 2);
   wrap.appendChild(pre);
 
   return wrap;
+}
+
+// Inspector binds to 127.0.0.1, but the rendered JSON ends up on screens,
+// in screen-shares, and in screenshots. Mask credential VALUES in
+// creds-response / creds-update before stringify; keep key names visible
+// because operators need to know which keys are populated. See
+// .claude/plans/CREDS-ENCRYPTION.md for the wire-level encryption work
+// that supersedes this redaction once shipped.
+function redactFrameForDisplay(frame) {
+  if (!frame || typeof frame !== 'object') return frame;
+  if (frame.type !== 'creds-response' && frame.type !== 'creds-update') return frame;
+  if (!frame.env || typeof frame.env !== 'object') return frame;
+  const redactedEnv = {};
+  for (const [key, value] of Object.entries(frame.env)) {
+    const len = typeof value === 'string' ? value.length : 0;
+    redactedEnv[key] = `<redacted, len=${len}>`;
+  }
+  return { ...frame, env: redactedEnv };
 }
 
 // Per-type detail renderer for `rpc` frames. Surfaces the JSON-RPC structure
@@ -632,6 +687,16 @@ function summarizeFrame(frame) {
       return `mcp=${frame.mcp}`;
     case 'webhook-revoke':
       return `mcp=${frame.mcp}`;
+    case 'creds-request':
+      return `mcp=${frame.mcp} keys=${(frame.envKeys ?? []).length}`;
+    case 'creds-response': {
+      const keys = frame.env ? Object.keys(frame.env) : [];
+      return `keys=[${keys.join(',')}] source=${frame.source ?? '?'}`;
+    }
+    case 'creds-update': {
+      const keys = frame.env ? Object.keys(frame.env) : [];
+      return `mcp=${frame.mcp} keys=[${keys.join(',')}] source=${frame.source ?? '?'}`;
+    }
     default:
       return '';
   }
