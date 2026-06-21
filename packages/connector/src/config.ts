@@ -3,6 +3,7 @@ import { dirname, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { parse as parseDotenv } from "dotenv";
+import type { McpAuthSpec } from "./tunnel/frames.js";
 
 const HttpServer = z.object({
   name: z.string().min(1),
@@ -14,11 +15,18 @@ const HttpServer = z.object({
   dir: z.string().optional(),
   env: z.record(z.string(), z.string()).optional(),
   // Optional outbound headers attached to every JSON-RPC POST to `endpoint`.
-  // Set by the controller-config coordinator (W-E3) when a 3rd-party MCP
-  // entry declares an auth shape (Bearer / custom-header / OAuth2) — not
-  // configurable from yaml today. Passed through to StreamableHTTPClientTransport
-  // via requestInit.headers in src/servers/http.ts.
+  // Set by the supervisor (W-E3) on every spawn when a 3rd-party MCP entry
+  // carries an `auth` shape — the supervisor calls resolveAuthHeaders() with
+  // controller-supplied env values and stamps the result here. Not yaml-
+  // configurable today. Passed through to StreamableHTTPClientTransport via
+  // requestInit.headers in src/servers/http.ts.
   headers: z.record(z.string(), z.string()).optional(),
+  // Auth shape for HTTP-family 3rd-party MCPs (W-E3). Carried opaquely on the
+  // spec by the controller-config coordinator; the supervisor resolves it to
+  // `headers` at spawn time. Yaml entries leave this undefined (yaml has no
+  // surface for it; auth on Type 1 / Type 2 yaml entries comes from per-spec
+  // env or upstream URL embedding).
+  auth: z.custom<McpAuthSpec>().optional(),
   timeout_ms: z.number().int().positive().default(5000),
 });
 

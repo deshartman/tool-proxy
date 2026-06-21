@@ -343,9 +343,9 @@ export class McpConfigCoordinator {
   //        supervisor's mergeEnv (existing path).
   //
   // http / streamable-http: McpServerSpec http shape with endpoint = entry.url.
-  //        Auth headers are NOT attached here — they're resolved at spawn time
-  //        from the supervisor's controllerEnv (which lands via creds-response)
-  //        and merged into spec.headers in W-E3's auth-resolution helper.
+  //        Auth shape is stamped on the spec verbatim; the supervisor's
+  //        resolveSpecHeaders (W-E3 / W-E4) translates it to spec.headers at
+  //        every spawn / restart so a creds-update naturally re-resolves.
   //
   // sse / websocket: not yet implemented in the connector's outbound transport
   //        layer. Reported as status:"skipped" until W-E5 lands.
@@ -372,6 +372,7 @@ export class McpConfigCoordinator {
         name: entry.name,
         transport: "http",
         endpoint: entry.url,
+        auth: entry.auth,
         timeout_ms: 5000,
       };
       return { spec };

@@ -34,6 +34,7 @@ import { envNumber } from "./env.js";
 import { connectServer } from "./servers/connect.js";
 import type { McpServerConnection } from "./servers/index.js";
 import type { Logger } from "./logger.js";
+import { resolveAuthHeaders, isSyncResolvable } from "./auth/resolve-mcp-auth.js";
 
 // Resolve tsx's bin from the connector package's own node_modules — same
 // approach as the original spawner. Going via package.json sidesteps tsx's
@@ -87,7 +88,6 @@ export class McpSupervisor {
   private readonly entries = new Map<string, Entry>();
   private readonly reservedPorts = new Set<number>();
   private readonly opts: Required<Pick<SupervisorOpts, "basePort" | "readyTimeoutMs">> & SupervisorOpts;
-
   constructor(opts: SupervisorOpts) {
     this.opts = {
       basePort: opts.basePort ?? envNumber("MCP_BASE_PORT", 7100),
@@ -277,6 +277,13 @@ export class McpSupervisor {
     if (isSpawn) {
       await this.spawnChild(entry);
     }
+    // W-E3 / W-E4: resolve 3rd-party MCP auth shape into outbound headers.
+    // Only HTTP-family transports — stdio entries pass env to the child
+    // process via the existing per-spec env path. yaml entries leave
+    // spec.auth undefined and the helper is skipped.
+    if (spec.transport === "http" && (spec as { auth?: unknown }).auth !== undefined) {
+      await this.resolveSpecHeaders(entry);
+    }
     try {
       entry.connection = await connectServer(entry.spec);
       this.opts.servers.set(spec.name, entry.connection);
@@ -287,6 +294,49 @@ export class McpSupervisor {
       this.opts.log.error({ name: spec.name, err: err as Error }, `failed to connect to MCP child`);
       throw err;
     }
+  }
+
+  // Translate the entry's auth shape + controllerEnv into spec.headers,
+  // which servers/http.ts passes through StreamableHTTPClientTransport's
+  // requestInit.headers. Logs but does NOT throw on missing-key — the
+  // upstream's 401 is the operator-facing signal that creds need attention,
+  // faster than a connect-time abort. OAuth2 (kind: "oauth2-client-credentials")
+  // is handled by W-E4's async helper in a follow-up commit; this path
+  // covers none / bearer / header.
+  private async resolveSpecHeaders(entry: Entry): Promise<void> {
+    const spec = entry.spec as { auth?: unknown; headers?: Record<string, string> };
+    const auth = spec.auth as import("./tunnel/frames.js").McpAuthSpec | undefined;
+    if (!auth) return;
+    if (isSyncResolvable(auth)) {
+      const result = resolveAuthHeaders(auth, entry.controllerEnv);
+      this.applyResolvedHeaders(entry, result.headers);
+      if (result.missingEnvKeys.length > 0) {
+        this.opts.log.warn(
+          { name: entry.spec.name, missingEnvKeys: result.missingEnvKeys, authKind: auth.kind },
+          `3rd-party MCP missing creds — connecting without auth, expect 401 from upstream`,
+        );
+      }
+      return;
+    }
+    // OAuth2 lands in W-E4 — for now, log and connect unauthenticated so the
+    // entry still surfaces in the inspector and the operator gets a 401
+    // signal rather than a silent skip.
+    this.opts.log.warn(
+      { name: entry.spec.name, authKind: auth.kind },
+      `3rd-party MCP auth kind not yet supported — connecting without auth`,
+    );
+  }
+
+  // Replace the resolver's prior output on every call. A creds-update that
+  // shrinks the auth (e.g. operator clears the bearer envKey) MUST clear
+  // the previously-set Authorization header, not merge over it.
+  private applyResolvedHeaders(entry: Entry, headers: Record<string, string>): void {
+    const spec = entry.spec as { headers?: Record<string, string> };
+    if (Object.keys(headers).length === 0) {
+      delete spec.headers;
+      return;
+    }
+    spec.headers = headers;
   }
 
   private async restartEntry(entry: Entry, reason: string): Promise<void> {
