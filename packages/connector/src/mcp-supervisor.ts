@@ -20,6 +20,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, createConnection } from "node:net";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import {
   isType1Spawn,
@@ -39,8 +40,10 @@ import { resolveOAuthBearer, type OAuthProviderCache } from "./auth/resolve-mcp-
 
 // Resolve tsx's bin from the connector package's own node_modules — same
 // approach as the original spawner. Going via package.json sidesteps tsx's
-// `exports` map blocking subpath access to ./dist/cli.mjs.
-const TSX_BIN = join(dirname(require.resolve("tsx/package.json")), "dist/cli.mjs");
+// `exports` map blocking subpath access to ./dist/cli.mjs. ESM has no
+// `require` global, so synthesize one anchored at this module's URL.
+const requireFromHere = createRequire(import.meta.url);
+const TSX_BIN = join(dirname(requireFromHere.resolve("tsx/package.json")), "dist/cli.mjs");
 
 // Spec union the supervisor accepts. Dropin specs are an internal extension
 // of Type 1 (transport: http + dir) carrying a marker; the rest is plain

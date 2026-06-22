@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { resolve as resolvePath } from "node:path";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FrameTap, WsState } from "../tunnel/client.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 import type { WebhookRegistry, WebhookEvent } from "../tunnel/webhook-registry.js";
@@ -219,8 +220,9 @@ const STATIC_TYPES: Record<string, string> = {
   ".css":  "text/css; charset=utf-8",
 };
 
-// __dirname is dist/inspector/ at runtime; static UI is at ../../public/.
-const publicDir = resolvePath(__dirname, "../../public");
+// At runtime this resolves to dist/inspector/; static UI is at ../../public/.
+const here = dirname(fileURLToPath(import.meta.url));
+const publicDir = resolvePath(here, "../../public");
 
 async function serveStatic(res: ServerResponse, name: string): Promise<void> {
   const ext = name.slice(name.lastIndexOf("."));
