@@ -1,18 +1,26 @@
 // Synthesized server runtime for drop-in MCP folders. The connector spawns
-// this when a customer drops a folder at MCP_DROPIN_DIR/<name>/tools/*.ts
-// without authoring a server.ts of their own. The folder name is the MCP
-// name; every default-exported (or named) `Tool` in tools/*.ts is auto-
-// registered.
+// this when a customer drops a folder at MCP_DROPIN_DIR/<name>/{tools,prompts,
+// resources}/*.ts without authoring a server.ts of their own. The folder name
+// is the MCP name; every default-exported (or named) Tool / Prompt / Resource
+// in the matching subdirectory is auto-registered.
 //
 // One process per dropin folder so a misbehaving tool can't crash the
 // connector — same crash-isolation property as today's hand-written Type 1
-// children. See .claude/plans/MCP-LOADING.md (W-A2).
+// children. See .claude/plans/MCP-LOADING.md (W-A2) and the v1.2
+// prompts/resources extension in .claude/plans/MCP-CLIENT-USE.md. The
+// scanning logic itself lives in dropin-discovery.ts so it can be tested
+// without spawning a real child process.
 
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createMcpHttpServer } from "./http-server.js";
+import {
+  loadCategory,
+  isToolShape,
+  isPromptShape,
+  isResourceShape,
+} from "./dropin-discovery.js";
 import type { Tool } from "./tool.js";
+import type { Prompt } from "./prompt.js";
+import type { Resource } from "./resource.js";
 import { createLogger } from "../logger.js";
 
 async function main(): Promise<void> {
@@ -23,46 +31,16 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   const log = createLogger(`dropin:${name}`);
-  const toolsDir = resolvePath(dir, "tools");
-  if (!existsSync(toolsDir) || !statSync(toolsDir).isDirectory()) {
-    log.error({ toolsDir }, `dropin folder has no tools/ subdirectory — nothing to register`);
+
+  const tools     = await loadCategory<Tool>(dir,     "tools",     "tool",     isToolShape,     log);
+  const prompts   = await loadCategory<Prompt>(dir,   "prompts",   "prompt",   isPromptShape,   log);
+  const resources = await loadCategory<Resource>(dir, "resources", "resource", isResourceShape, log);
+
+  if (tools.length === 0 && prompts.length === 0 && resources.length === 0) {
+    log.error({ dir }, `no tools / prompts / resources registered — exiting`);
     process.exit(2);
   }
-  const tools: Tool[] = [];
-  const entries = readdirSync(toolsDir).filter((f) => f.endsWith(".ts") || f.endsWith(".js"));
-  for (const entry of entries) {
-    const full = resolvePath(toolsDir, entry);
-    try {
-      const mod = (await import(pathToFileURL(full).href)) as Record<string, unknown>;
-      const tool = pickTool(mod);
-      if (tool && !tools.some((t) => t.name === tool.name)) tools.push(tool);
-      else if (!tool) log.warn({ file: entry }, `no Tool default-export found — skipping`);
-    } catch (err) {
-      log.error({ file: entry, err: err as Error }, `failed to import tool file`);
-    }
-  }
-  if (tools.length === 0) {
-    log.error(`no tools registered from ${toolsDir} — exiting`);
-    process.exit(2);
-  }
-  await createMcpHttpServer({ name, tools });
-}
-
-// Prefer the default export; fall back to the first named export that has
-// the Tool shape. Matches the authoring convention of one Tool per file.
-function pickTool(mod: Record<string, unknown>): Tool | undefined {
-  if (isToolShape(mod.default)) return mod.default;
-  for (const value of Object.values(mod)) {
-    if (isToolShape(value)) return value;
-  }
-  return undefined;
-}
-
-function isToolShape(value: unknown): value is Tool {
-  return typeof value === "object"
-    && value !== null
-    && typeof (value as Tool).name === "string"
-    && typeof (value as Tool).register === "function";
+  await createMcpHttpServer({ name, tools, prompts, resources });
 }
 
 void main().catch((err) => {
