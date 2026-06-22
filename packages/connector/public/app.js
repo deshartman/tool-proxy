@@ -335,15 +335,22 @@ function buildServerCard(s) {
   if (resourcesCount > 0) meta.push(pluralLabel(resourcesCount, 'resource'));
   const collapsed = isServerCollapsed(s.name);
   if (collapsed) card.classList.add('collapsed');
+  // W-S5: the grey "MCP Server" label still toggles expand/collapse;
+  // clicking the purple <name> selects the right-pane MCP creds view
+  // (peer to selecting a tool — no close button, just switch by clicking
+  // any tool). Two click targets, two distinct behaviours, the inner
+  // <button> stops propagation so a name-click never collapses.
   card.innerHTML = `
-    <button type="button" class="server-header" aria-expanded="${!collapsed}">
-      <span class="server-toggle" aria-hidden="true">▾</span>
-      <span class="server-header-text">
+    <div class="server-header-row">
+      <button type="button" class="server-header" aria-expanded="${!collapsed}">
+        <span class="server-toggle" aria-hidden="true">▾</span>
         <span class="server-label">MCP Server</span>
+      </button>
+      <button type="button" class="server-name-btn" data-mcp="${escapeHtml(s.name)}">
         <span class="server-name">${escapeHtml(s.name)}</span>
-        <span class="server-meta">${escapeHtml(s.transport)} · ${meta.join(' · ')}</span>
-      </span>
-    </button>
+      </button>
+      <span class="server-meta">${escapeHtml(s.transport)} · ${meta.join(' · ')}</span>
+    </div>
     <div class="tools-section">
       <div class="tools-section-label">Available Tools</div>
     </div>
@@ -374,6 +381,17 @@ function buildServerCard(s) {
     card.querySelector('.server-header').setAttribute('aria-expanded', String(!nowCollapsed));
     setServerCollapsed(s.name, nowCollapsed);
   });
+  // W-S5: clicking the purple <name> selects the MCP creds view in the
+  // right pane — peer to selecting a tool. Switching to any tool
+  // restores the tool-shape view automatically (selection is
+  // single-valued).
+  const nameBtn = card.querySelector('.server-name-btn');
+  if (nameBtn) {
+    nameBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      setSelection({ kind: 'mcp', key: `mcp:${s.name}`, serverName: s.name });
+    });
+  }
   return card;
 }
 
@@ -439,9 +457,18 @@ function buildToolRow(serverName, t) {
   const row = document.createElement('div');
   row.className = 'tool-row';
   row.dataset.key = `${serverName}.${t.name}`;
+  // W-S8: per-tool verdict downgrade. If the MCP declared envKeys
+  // (ServerDescriptor.envKeys non-empty) AND credsSource is "none",
+  // every tool in that MCP is "Awaiting config" rather than "Ready".
+  // A creds-eager MCP whose tools register at boot regardless still
+  // shows up — but the verdict tells the dev "you can't smoke-test
+  // me yet".
+  const awaiting = isMcpAwaitingConfig(serverName);
+  const verdictClass = awaiting ? 'awaiting' : 'ready';
+  const verdictLabel = awaiting ? 'Awaiting config' : 'Ready';
   row.innerHTML = `
     <span>${escapeHtml(t.name)}</span>
-    <span class="verdict ready">Ready</span>
+    <span class="verdict ${verdictClass}">${verdictLabel}</span>
   `;
   row.addEventListener('click', () => {
     setSelection({ kind: 'tool', key: row.dataset.key, tool: t, serverName });
@@ -634,6 +661,11 @@ function applySelectionHighlight() {
   document.querySelectorAll('.frame-item').forEach((el) => {
     el.classList.toggle('selected', Number(el.dataset.frameId) === frameId);
   });
+  // W-S5: highlight the purple <name> button when its MCP is selected.
+  const mcpName = selection?.kind === 'mcp' ? selection.serverName : null;
+  document.querySelectorAll('.server-name-btn').forEach((el) => {
+    el.classList.toggle('selected', el.dataset.mcp === mcpName);
+  });
 }
 
 function renderDetail() {
@@ -652,10 +684,14 @@ function renderDetail() {
     elDetailTitle.textContent = `${selection.serverName}.${selection.tool.name}`;
     const card = document.createElement('div');
     card.className = 'tool-card selected';
+    // W-S8: mirror the verdict downgrade in the right-pane card head.
+    const awaiting = isMcpAwaitingConfig(selection.serverName);
+    const verdictClass = awaiting ? 'awaiting' : 'ready';
+    const verdictLabel = awaiting ? 'Awaiting config' : 'Ready';
     card.innerHTML = `
       <div class="tool-card-head">
         <span class="name">${escapeHtml(selection.serverName)}.${escapeHtml(selection.tool.name)}</span>
-        <span class="verdict ready">Ready</span>
+        <span class="verdict ${verdictClass}">${verdictLabel}</span>
       </div>
       <pre>${renderToolShape(selection.tool)}</pre>
     `;
@@ -707,7 +743,182 @@ function renderDetail() {
     const tap = selection.tap;
     elDetailTitle.textContent = `${tap.direction === 'out' ? '→' : '←'} ${tap.frame.type}`;
     elDetailContent.appendChild(renderFrameDetail(tap));
+    return;
   }
+
+  if (selection.kind === 'mcp') {
+    elDetailTitle.textContent = selection.serverName;
+    elDetailContent.appendChild(buildMcpCredsView(selection.serverName));
+  }
+}
+
+// W-S5: right-pane creds view. Renders:
+//   - credsSource pill (controller / controller+session / session /
+//     dir/.env / none) sourced from McpStatus
+//   - countdown when sessionCredsExpiresAt is set
+//   - declared envKeys form (masked inputs, never pre-filled)
+//   - Apply / Clear buttons + status line
+// Cred-leak guards: form values are only sent on Apply submit; the form
+// re-renders empty after Apply (W-S9 L9 — UI never echoes a session-set
+// value back); fetching envKeys hits a write-only-no-readback route.
+function buildMcpCredsView(name) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mcp-creds-view';
+  const status = mcpStatusByName(name);
+
+  const head = document.createElement('div');
+  head.className = 'mcp-creds-head';
+  const credsLabel = status?.credsSource || 'unknown';
+  const expiresAt = status?.sessionCredsExpiresAt;
+  head.innerHTML = `
+    <div class="mcp-creds-pill mcp-creds-${escapeHtml(credsLabel)}">${escapeHtml(credsLabel)}</div>
+    ${expiresAt ? `<div class="mcp-creds-expiry" data-expires-at="${expiresAt}">session expires in ${escapeHtml(fmtCountdown(expiresAt))}</div>` : ''}
+  `;
+  wrap.appendChild(head);
+
+  // Note: controller-set creds NEVER appear in the form. The pill above
+  // tells the operator what's already in play; the form is for *adding*
+  // a session layer (or overriding gaps the controller hasn't filled).
+  const note = document.createElement('div');
+  note.className = 'mcp-creds-note muted';
+  if (credsLabel === 'controller' || credsLabel === 'controller+session') {
+    note.textContent = 'Controller-set creds are active and always win per-key. Paste session creds below to fill any gaps for local smoke-testing.';
+  } else if (credsLabel === 'session') {
+    note.textContent = 'Session creds active. Re-paste to extend the 12h TTL, or click Clear to drop them now.';
+  } else {
+    note.textContent = 'No creds configured. Paste developer creds below to smoke-test locally — they live in memory only and expire after 12 hours.';
+  }
+  wrap.appendChild(note);
+
+  const form = document.createElement('form');
+  form.className = 'mcp-creds-form';
+  const envBody = document.createElement('div');
+  envBody.className = 'mcp-creds-fields';
+  envBody.innerHTML = `<div class="muted">Loading declared env keys…</div>`;
+  form.appendChild(envBody);
+
+  const actions = document.createElement('div');
+  actions.className = 'mcp-creds-actions';
+  actions.innerHTML = `
+    <button type="submit" class="mcp-creds-apply">Apply (session only)</button>
+    <button type="button" class="mcp-creds-clear">Clear session creds</button>
+    <span class="mcp-creds-status"></span>
+  `;
+  form.appendChild(actions);
+  wrap.appendChild(form);
+
+  const statusEl = actions.querySelector('.mcp-creds-status');
+
+  // Fetch envKeys async; populate form when ready.
+  void (async () => {
+    try {
+      const resp = await fetch(`/mcp/env-keys?mcp=${encodeURIComponent(name)}`);
+      const body = await resp.json().catch(() => ({}));
+      const keys = (body.ok && Array.isArray(body.envKeys)) ? body.envKeys : [];
+      if (keys.length === 0) {
+        envBody.innerHTML = `<div class="muted">No declared envKeys for this MCP. (Type 2 / stdio MCPs don't expose them — set creds in the controller UI.)</div>`;
+        return;
+      }
+      envBody.replaceChildren();
+      // sessionEnvKeys is the names-only list of keys the supervisor
+      // currently has session values for. Use it to render a redacted
+      // "•••• (set)" placeholder so the developer sees that the key is
+      // already populated without the connector echoing the value back
+      // through the loopback UI. Cred-leak contract (W-S9 L9) holds —
+      // the placeholder is a literal string, not a re-rendered secret.
+      const sessionKeysSet = new Set(mcpStatusByName(name)?.sessionEnvKeys || []);
+      for (const k of keys) {
+        const row = document.createElement('label');
+        row.className = 'mcp-creds-field';
+        const isSet = sessionKeysSet.has(k);
+        const placeholder = isSet ? '•••••••• (set — leave blank to keep)' : '';
+        const setBadge = isSet ? `<span class="mcp-creds-set-badge">set</span>` : '';
+        row.innerHTML = `
+          <span class="mcp-creds-key">${escapeHtml(k)}${setBadge}</span>
+          <input type="password" name="${escapeHtml(k)}" autocomplete="off" data-1p-ignore placeholder="${escapeHtml(placeholder)}">
+        `;
+        envBody.appendChild(row);
+      }
+    } catch (e) {
+      envBody.innerHTML = `<div class="err">Failed to load envKeys: ${escapeHtml(String(e.message || e))}</div>`;
+    }
+  })();
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const env = {};
+    for (const input of form.querySelectorAll('input[type="password"]')) {
+      if (input.value) env[input.name] = input.value;
+    }
+    if (Object.keys(env).length === 0) {
+      // No new values typed in. If at least one key is already set, this
+      // is a no-op submit (re-paste extends the TTL only when fresh
+      // values arrive — leaving everything blank means "I'm done").
+      // Surface the no-op so the dev knows nothing happened.
+      const haveAny = (mcpStatusByName(name)?.sessionEnvKeys?.length || 0) > 0;
+      statusEl.textContent = haveAny ? 'nothing changed' : 'no values entered';
+      statusEl.className = haveAny ? 'mcp-creds-status' : 'mcp-creds-status err';
+      return;
+    }
+    statusEl.textContent = 'applying…';
+    statusEl.className = 'mcp-creds-status pending';
+    try {
+      const resp = await fetch('/mcp/session-creds-apply', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mcp: name, env }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (resp.status >= 400 || body.ok === false) {
+        statusEl.textContent = body.error || `HTTP ${resp.status}`;
+        statusEl.className = 'mcp-creds-status err';
+        return;
+      }
+      // CRED-LEAK GUARD (W-S9 L9): clear input values after apply so the
+      // pasted secret doesn't sit in DOM memory longer than necessary
+      // and the next render is empty.
+      for (const input of form.querySelectorAll('input[type="password"]')) input.value = '';
+      statusEl.textContent = 'applied';
+      statusEl.className = 'mcp-creds-status ok';
+    } catch (e) {
+      statusEl.textContent = String(e.message || e);
+      statusEl.className = 'mcp-creds-status err';
+    }
+  });
+
+  actions.querySelector('.mcp-creds-clear').addEventListener('click', async () => {
+    statusEl.textContent = 'clearing…';
+    statusEl.className = 'mcp-creds-status pending';
+    try {
+      const resp = await fetch('/mcp/session-creds-clear', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mcp: name }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (resp.status >= 400 || body.ok === false) {
+        statusEl.textContent = body.error || `HTTP ${resp.status}`;
+        statusEl.className = 'mcp-creds-status err';
+        return;
+      }
+      statusEl.textContent = 'cleared';
+      statusEl.className = 'mcp-creds-status ok';
+    } catch (e) {
+      statusEl.textContent = String(e.message || e);
+      statusEl.className = 'mcp-creds-status err';
+    }
+  });
+
+  return wrap;
+}
+
+function fmtCountdown(epochMs) {
+  const remaining = Math.max(0, epochMs - Date.now());
+  const hours = Math.floor(remaining / 3_600_000);
+  const minutes = Math.floor((remaining % 3_600_000) / 60_000);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  const seconds = Math.floor((remaining % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
 }
 
 function renderFrameDetail(tap) {
@@ -926,7 +1137,35 @@ function applySnapshot(s) {
   if (selection?.kind === 'frame') setSelection(null);
 }
 
+// W-S5: keep the latest mcpStatuses snapshot for the right-pane creds
+// view. Indexed by name for O(1) lookup when rendering. Refreshed on every
+// `mcpStatuses` SSE event AND on the initial snapshot.
+let lastMcpStatuses = null;
+function mcpStatusByName(name) {
+  if (!lastMcpStatuses) return undefined;
+  return lastMcpStatuses.find((s) => s.name === name);
+}
+
+// W-S7/W-S8: an MCP is "awaiting config" when it declared envKeys (so it
+// expects creds at runtime) AND no creds source is active. Drives both
+// the MCP Status panel badge AND the per-tool verdict downgrade.
+// MCPs that declare no envKeys (e.g. mcp/local/sample/{now,uuid}) are
+// never marked awaiting — they don't need creds.
+function isMcpAwaitingConfig(name) {
+  const status = mcpStatusByName(name);
+  if (!status) return false;
+  if (status.credsSource && status.credsSource !== 'none') return false;
+  const server = (lastManifest?.servers || []).find((s) => s.name === name);
+  const declared = (server?.envKeys || []).length;
+  return declared > 0;
+}
+
 function renderMcpStatuses(list) {
+  lastMcpStatuses = list || null;
+  // W-S5: if the right-pane creds view is open and the underlying status
+  // changed (creds applied / cleared / TTL expired), re-render so the
+  // expiry countdown and credsSource pill stay live.
+  if (selection?.kind === 'mcp') renderDetail();
   if (!list || list.length === 0) {
     elMcpStatusList.hidden = true;
     elMcpStatusList.replaceChildren();
@@ -963,10 +1202,16 @@ function buildMcpStatusRow(s) {
   const mcpIdLine = s.mcpId
     ? `<div><span class="muted">mcpId:</span> <code>${escapeHtml(s.mcpId)}</code></div>`
     : '';
+  // W-S7: "Awaiting config" pill when the MCP declared envKeys but no
+  // creds are active. Same predicate as the per-tool verdict downgrade.
+  const awaitingBadge = isMcpAwaitingConfig(s.name)
+    ? `<span class="mcp-awaiting-badge">Awaiting config</span>`
+    : '';
   li.innerHTML = `
     <div class="mcp-status-head">
       <span class="mcp-status-name">${escapeHtml(s.name)}</span>
       ${sourceBadge}
+      ${awaitingBadge}
       <span class="mcp-status-state">${escapeHtml(s.process)}</span>
     </div>
     <div class="mcp-status-meta">

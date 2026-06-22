@@ -65,6 +65,14 @@ export interface ServerDescriptor {
   // `string` rather than a union so the controller forward-compats new
   // values added later (e.g. partner-authored MCPs).
   author: string;
+  // INSPECTOR-CREDS-VISIBILITY (W-S7/W-S8): aggregate envKeys union for
+  // this MCP — same value the connector sends in `creds-request`.
+  // Optional + advisory: the inspector uses it to decide when to render
+  // an "Awaiting config" badge (non-empty AND credsSource === "none"),
+  // and the controller can optionally surface it to the operator UI as
+  // a "this MCP expects these env vars" hint. Older controllers ignore
+  // it per the §"Frame envelope" unknown-fields rule.
+  envKeys?: string[];
   tools: ToolDescriptor[];
   // v1.2 additive — older controllers ignore these and the connector still
   // works as a tools-only dispatcher.

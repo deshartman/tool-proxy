@@ -26,12 +26,18 @@ export async function buildManifest(
   servers: Map<string, McpServerConnection>,
   version: string,
   configPath: string,
+  // INSPECTOR-CREDS-VISIBILITY (W-S7): optional async hook for resolving
+  // an MCP's aggregate envKeys union. Wired by lifecycle.ts to the
+  // supervisor's `fetchEnvKeys`. Optional so tests / older boot paths
+  // can omit it; absent → ServerDescriptor.envKeys is undefined and the
+  // inspector falls back to "no badge".
+  envKeysFor?: (name: string) => Promise<string[]>,
 ): Promise<ToolManifest> {
   const yamlDir = dirname(resolve(configPath));
   const specByName = new Map(config.mcp_servers.map((server) => [server.name, server]));
 
   const serverEntries: ServerDescriptor[] = await Promise.all(
-    [...servers.values()].map((server) => buildServerDescriptor(server, specByName, yamlDir)),
+    [...servers.values()].map((server) => buildServerDescriptor(server, specByName, yamlDir, envKeysFor)),
   );
 
   // Stable ordering: keep server order from YAML so diffs are deterministic.
@@ -53,6 +59,7 @@ async function buildServerDescriptor(
   server: McpServerConnection,
   specByName: Map<string, import("../config.js").McpServerSpec>,
   yamlDir: string,
+  envKeysFor?: (name: string) => Promise<string[]>,
 ): Promise<ServerDescriptor> {
   const tools = await server.listTools();
   const spec = specByName.get(server.name);
@@ -84,6 +91,20 @@ async function buildServerDescriptor(
   if (resources.length > 0) descriptor.resources = resources;
   if (resourceTemplates.length > 0) descriptor.resourceTemplates = resourceTemplates;
   if (caps && Object.keys(caps).length > 0) descriptor.capabilities = caps;
+  // INSPECTOR-CREDS-VISIBILITY (W-S7): aggregate envKeys union for the
+  // MCP, surfaced so the inspector can render an "Awaiting config" badge
+  // when the MCP declared keys but no creds are set. Best-effort: a
+  // fetch failure (Type 2 stdio, child not yet ready) yields [] and we
+  // simply omit the field — the badge logic treats that as "no
+  // expectations", same as a tool with empty envKeys today.
+  if (envKeysFor) {
+    try {
+      const keys = await envKeysFor(server.name);
+      if (keys.length > 0) descriptor.envKeys = keys;
+    } catch {
+      // best-effort; manifest still ships without the field.
+    }
+  }
 
   return descriptor;
 }
