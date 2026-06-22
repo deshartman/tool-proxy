@@ -29,6 +29,7 @@ import { ReconnectController } from "../tunnel/reconnect.js";
 import { createFrameRouter } from "../tunnel/frame-router.js";
 import { CredsCoordinator } from "../tunnel/creds-coordinator.js";
 import { McpConfigCoordinator } from "../tunnel/mcp-config-coordinator.js";
+import { LocalMcpsCoordinator } from "../tunnel/local-mcps-coordinator.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins } from "../dropin.js";
 import { resolveAuth } from "./auth.js";
@@ -192,6 +193,36 @@ export async function boot(): Promise<void> {
     log,
   });
 
+  // Controller-triggered local-MCP rescan (W-L2 of MCP-LOADING-LOCAL).
+  // Same lifetime story as McpConfigCoordinator — constructed ONCE per
+  // process, rebound per-tunnel via bind() so its single-flight guard
+  // survives WS reconnect. The onApplied hook refreshes the manifest +
+  // pushes a delta so the controller sees the new tools without waiting
+  // for the next discovery interval; onMcpAdded fans out a creds-request
+  // for the freshly-spawned MCP (rescan-added MCPs miss the boot-time
+  // creds fan-out).
+  const localMcps = new LocalMcpsCoordinator({
+    send: () => log.warn(`local-mcps send before tunnel bind — dropping frame`),
+    supervisor,
+    log,
+    yamlNames,
+    onApplied: () => refreshManifestAndPushDelta(),
+    onMcpAdded: async (name) => {
+      // Latest creds coordinator binds per-tunnel inside connectTunnel.
+      // We capture the live one via the closure when reload() is needed.
+      // boot's `creds` reference doesn't outlive connectTunnel, so we
+      // route through the inspector's mcpActions (which always points at
+      // the live creds coord). Falls back to a no-op when the inspector
+      // is disabled — the next register-ack triggers a full creds fan-out
+      // anyway.
+      try {
+        await inspector?.mcpActions?.reloadCreds(name);
+      } catch (err) {
+        log.warn({ name, err: err as Error }, `creds-request for newly-added drop-in failed — will retry on next reconnect`);
+      }
+    },
+  });
+
   log.info(`connecting to ${allSpecs.length} local MCP server(s)`);
   await supervisor.startAll();
   log.info({ servers: [...servers.keys()] }, `connected to local servers`);
@@ -322,6 +353,10 @@ export async function boot(): Promise<void> {
     // survive reconnect — see LIFETIME comment on McpConfigCoordinator.
     mcpConfig.bind({ send: (frame) => pendingTunnel.send(frame) });
 
+    // Local-MCP rescan coordinator — same per-tunnel rebind shape as
+    // mcpConfig. Single-flight state survives reconnect by design.
+    localMcps.bind({ send: (frame) => pendingTunnel.send(frame) });
+
     const baseRouter = createFrameRouter({
       webhooks,
       state,
@@ -336,6 +371,7 @@ export async function boot(): Promise<void> {
       if (frame.type === "creds-update") { creds.handleUpdate(frame); return; }
       if (frame.type === "mcp-config-snapshot") { void mcpConfig.handleSnapshot(frame); return; }
       if (frame.type === "mcp-config-delta") { void mcpConfig.handleDelta(frame); return; }
+      if (frame.type === "local-mcps-rescan") { void localMcps.rescanFromController(); return; }
       if (frame.type === "register-ack" && !frame.error) {
         // After register-ack success, kick off creds-request per MCP and arm
         // the mcp-config soft-wait. Don't block the router callback — fire-
@@ -360,6 +396,17 @@ export async function boot(): Promise<void> {
         restart: async (name: string) => {
           const ok = await supervisor.restart(name, "manual");
           if (!ok) throw new Error(`unknown MCP "${name}"`);
+        },
+        rescanLocal: async () => {
+          // W-L2: same coordinator method as the controller-triggered path,
+          // minus the wire ack. Returns the summary for the inspector UI.
+          const ack = await localMcps.rescan();
+          return {
+            added: ack.added,
+            removed: ack.removed,
+            unchanged: ack.unchanged,
+            errors: ack.errors,
+          };
         },
       };
     }

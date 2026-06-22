@@ -387,6 +387,11 @@ h2 {
   color: var(--accent);
   background: rgba(88, 166, 255, 0.08);
 }
+.mcp-source-badge.mcp-source-local {
+  border-color: rgba(63, 185, 80, 0.4);
+  color: var(--green);
+  background: rgba(63, 185, 80, 0.08);
+}
 .mcp-status-meta { font-size: 0.72rem; color: var(--text); display: flex; flex-wrap: wrap; gap: 12px; }
 .mcp-status-meta .muted { color: var(--muted); }
 .mcp-status-actions { display: flex; gap: 6px; align-items: center; margin-top: 4px; }

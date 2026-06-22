@@ -4,7 +4,7 @@
 >
 > **Authority.** This is the authoritative wire-format spec. Plans (e.g. [.claude/plans/MCP-LOADING.md](../.claude/plans/MCP-LOADING.md)) describe *intent*; this document is what each side actually implements. If a frame is described here, it MUST be implemented per the schema below; if it is not described here, it MUST NOT be sent without first updating this doc.
 >
-> **Version.** v1 — additions covered by this revision: `creds-request`, `creds-response`, `creds-update`. Pre-existing frames (`register`, `register-ack`, `manifest-delta`, `rpc`, `heartbeat`, `goodbye`, `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`) are documented in [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) and [CLAUDE.md](../CLAUDE.md). This document focuses on the new frames; older frames are linked in §"Pre-existing frames" for orientation only.
+> **Version.** v1.2 — current additions: `local-mcps-rescan`, `local-mcps-rescan-ack` (this revision); v1.1 added the controller-driven 3rd-party MCP roster (`mcp-config-snapshot` / `mcp-config-delta` / `mcp-config-ack` / `mcp-config-resync`) plus optional `mcpId` on `creds-request` / `creds-update`; v1 added `creds-request`, `creds-response`, `creds-update`. Pre-existing frames (`register`, `register-ack`, `manifest-delta`, `rpc`, `heartbeat`, `goodbye`, `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`) are documented in [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) and [CLAUDE.md](../CLAUDE.md). This document focuses on the new frames; older frames are linked in §"Pre-existing frames" for orientation only.
 
 ## Transport
 
@@ -938,11 +938,58 @@ A practical rule for the controller UI:
 
 The connector's boot soft-wait expects a snapshot to arrive within ~5s of register-ack. If the controller has zero 3rd-party MCPs for this connector, send `{ generation: <persisted>, servers: [] }` rather than withholding the frame — the connector logs a `boot` resync request after the soft-wait elapses, which is noise the operator doesn't need to see.
 
+## v1.2 — Local MCP rescan (controller-triggered)
+
+W-L2 of [.claude/plans/Done/MCP-LOADING-LOCAL.md](../.claude/plans/Done/MCP-LOADING-LOCAL.md). The customer-authored "local" MCP shape is folders under `${MCP_DROPIN_DIR}/<name>/tools/*.ts` discovered by the connector at boot (see [src/dropin.ts](../packages/connector/src/dropin.ts)). Without an explicit refresh frame, dropping a new folder into a running connector requires a process restart for the controller to see it. v1.2 closes that gap with a single round-trip on the existing tunnel.
+
+Two frames, both opaque to the customer:
+
+### `local-mcps-rescan` (controller → connector)
+
+```json
+{ "type": "local-mcps-rescan" }
+```
+
+No payload. The connector decides what's there; the controller just triggers. Sent when the operator clicks **Refresh local MCPs** in the controller UI (Connector detail → MCPs tab). The connector re-runs `discoverDropins({yamlNames})` against `MCP_DROPIN_DIR`, diffs against the running supervisor entries, then:
+
+- For added entries: `supervisor.registerOne(spec, { source: "local" }) → startOne(name)` and fan out a `creds-request` for that MCP.
+- For removed entries: `supervisor.unregister(name)`.
+- For changed entries (e.g. `dir/.env` edited or tools added): `supervisor.replaceSpec(name, newSpec)`.
+
+Manifest changes ride the existing `manifest-delta` path. The dedicated `local-mcps-rescan-ack` carries only the diff summary so the controller's UI can show "Done — N added, M removed."
+
+### `local-mcps-rescan-ack` (connector → controller)
+
+```json
+{
+  "type": "local-mcps-rescan-ack",
+  "added": [{ "name": "orders", "toolsCount": 3 }],
+  "removed": ["legacy-billing"],
+  "unchanged": ["sample", "crm"],
+  "errors": []
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `added` | `{name, toolsCount}[]` | New folders accepted. `toolsCount` is the post-spawn `tools/list` size. |
+| `removed` | `string[]` | Folders no longer present. Names — drop-ins don't have `mcpId`. |
+| `unchanged` | `string[]` | Folders that scanned identically to the prior pass. |
+| `errors` | `{name, error}[]` | Folders the connector tried to add but couldn't (spawn failed, port exhausted, etc). Per-folder isolation: one bad drop-in does not abort the rescan. |
+
+The ack is fire-and-forget — there's no second round-trip from the controller. If the WS drops mid-rescan, the controller's UI shows a stale state until the next register-ack triggers a fresh manifest push.
+
+**Inspector parity.** The connector also exposes the same operation via a loopback-only POST at `/mcp/rescan-local` on the inspector port — for local-dev iteration that doesn't need the controller round-trip. Same coordinator method on both paths.
+
+**No fs-watcher.** Operator-driven only. An auto-watcher on `${MCP_DROPIN_DIR}` was considered and rejected — see [.claude/plans/Done/MCP-LOADING-LOCAL.md](../.claude/plans/Done/MCP-LOADING-LOCAL.md) DL4 for the rationale.
+
+**Backwards compat.** A v1.1 controller never sends this frame, so the connector's behaviour is unchanged. A v1.1 connector ignores the frame per the unknown-frame rule and the controller's UI surfaces "rescan unsupported by this connector version."
+
 ## Versioning
 
-This document is v1.1. Future revisions:
-- v1.1 (this revision) — adds `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; adds optional `mcpId` to existing creds frames. Backwards-compatible per §"Backwards compat".
-- v1.2 — add fields to existing frames (additive, backwards-compatible).
+This document is v1.2. Future revisions:
+- v1.1 — adds `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; adds optional `mcpId` to existing creds frames. Backwards-compatible per §"Backwards compat".
+- v1.2 (this revision) — adds `local-mcps-rescan` + `local-mcps-rescan-ack` for the controller-triggered local-MCP refresh. Backwards-compatible (additive only).
 - v2 — add new frame types (additive, controller MUST log+ignore unknown frames per §"Frame envelope").
 - v3 — breaking change (rare). Would require a `protocol-capabilities` handshake at register time. **Not in scope today.**
 
