@@ -1,6 +1,8 @@
-# crm-mcp-server
+# crm
 
 Demo MCP server backing the **Refund Eligibility** procedure. Thin client over the mock customer service at [mock/customers/](../../../mock/customers/).
+
+Authoring shape: **drop-in**. The folder ships only `tools/*.ts` (and this README). The connector's drop-in scanner ([packages/connector/src/dropin.ts](../../../packages/connector/src/dropin.ts)) discovers it at boot and the synthesized child runtime ([packages/connector/src/sdk/dropin-runner.ts](../../../packages/connector/src/sdk/dropin-runner.ts)) wires the tools — no `server.ts`, no `package.json`, no yaml entry. The folder name (`crm`) becomes the MCP name.
 
 | Tool | Role | Purpose |
 |------|------|---------|
@@ -12,20 +14,11 @@ Demo MCP server backing the **Refund Eligibility** procedure. Thin client over t
 | `update_appointment`  | side-effect     | Reschedules an appointment to a new start. Returns the updated appointment, or `{ error }` for `slot_taken` / `outside_working_hours` / `in_the_past` / `not_found`. |
 | `notify_agent`        | side-effect     | Sends an internal-channel notification to the technician. The customer-facing SMS confirmation is composed separately by the procedure via the bundled twilio MCP's `messages_create`. |
 
-Wire-format tool names through the controller are `customer.crm.get_customer`, `customer.crm.get_recent`, and `customer.crm.issue_refund` — the `crm` segment comes from this entry's `name:` in `packages/connector/connector.yaml`. Don't rename it without also updating the controller's `EXPECTED_CUSTOMER_TOOLS`.
+Wire-format tool names through the controller are `customer.crm.get_customer`, `customer.crm.get_recent`, and `customer.crm.issue_refund` — the `crm` segment comes from the folder name. Don't rename the folder without also updating the controller's `EXPECTED_CUSTOMER_TOOLS`.
 
 ## Setup
 
-This is a Type 1 example — no per-folder `package.json` deps to install. The
-entry already exists in `packages/connector/connector.yaml.example`:
-
-```yaml
-- name: crm
-  transport: http
-  dir: ../../mcp/local/crm
-```
-
-Start the mock customer service first (terminal 1):
+Drop-in: nothing to install, no yaml edit. Start the mock customer service first (terminal 1):
 
 ```bash
 ./scripts/start-mock-server.sh
@@ -39,6 +32,8 @@ cp packages/connector/connector.yaml.example packages/connector/connector.yaml
 cp packages/connector/.env.example packages/connector/.env
 ./scripts/start-connector.sh
 ```
+
+`MOCK_CUSTOMERS_URL` defaults to `http://localhost:7400`. Override by entering it in the controller UI under Connector → MCPs → crm, or — for offline dev — by copying `mcp/local/crm/.env.example` to `.env` (gitignored). The controller-supplied value wins on conflict.
 
 Inspector UI: <http://localhost:9090/>.
 
