@@ -79,63 +79,12 @@ The connector serves an **inspector UI at http://localhost:9090/** showing:
 
 To pick up `mcp_servers` changes, restart the connector — those connections are made at process boot. `policy` changes pick up via Reconnect.
 
-### Author a Type 1 MCP
+### Author a local MCP (drop-in)
 
-Drop a folder under `mcp/local/<name>/`:
+Drop a folder under `mcp/local/<name>/tools/` with one or more tool files. That's it — no `server.ts`, no `package.json`, no `.env`, no yaml entry. The connector's drop-in scanner ([`src/dropin.ts`](src/dropin.ts)) discovers the folder at boot; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) wires every tool into a per-folder subprocess. Folder name = MCP name.
 
 ```ts
 // mcp/local/my-mcp/tools/echo.ts
-import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
-
-const OutputSchema = {
-  echoed: z.string().describe("The text we echoed back."),
-};
-
-export const echo: Tool = {
-  name: "echo",
-  register(server) {
-    server.registerTool(
-      "echo",
-      {
-        description: "Echo a string back.",
-        inputSchema: { text: z.string() },
-        outputSchema: OutputSchema,
-      },
-      async ({ text }) => ({
-        structuredContent: { echoed: text },
-        content: [{ type: "text", text }],
-      }),
-    );
-  },
-};
-```
-
-```ts
-// mcp/local/my-mcp/server.ts
-import { createMcpHttpServer } from "@mcp-shim/connector/sdk";
-import { echo } from "./tools/echo.js";
-
-await createMcpHttpServer({ name: "my-mcp", tools: [echo] });
-```
-
-```yaml
-# packages/connector/connector.yaml
-- name: my-mcp
-  transport: http
-  dir: ../../mcp/local/my-mcp
-```
-
-No `package.json`, no build step, no port to pick. The connector spawns `tsx server.ts` for you.
-
-#### Drop-in shape — skip the `server.ts`
-
-Even simpler: drop a folder under `${MCP_DROPIN_DIR}/<name>/tools/*.ts` with no `server.ts` and no yaml entry. The connector auto-discovers the folder at boot and synthesizes the boilerplate via [`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts). Each `tools/*.ts` should default-export a `Tool` (named exports work as a fallback).
-
-`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` (the example above) or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative.
-
-```ts
-// /var/lib/mcp-connector/customer-mcps/my-mcp/tools/echo.ts
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
@@ -145,13 +94,36 @@ const echo: Tool = {
   register(server) {
     server.registerTool(
       "echo",
-      { description: "Echo a string back.", inputSchema: { text: z.string() } },
-      async ({ text }) => ({ content: [{ type: "text", text: `${process.env.ECHO_PREFIX ?? ""}${text}` }] }),
+      {
+        description: "Echo a string back.",
+        inputSchema: { text: z.string() },
+        outputSchema: { echoed: z.string().describe("The text we echoed back.") },
+      },
+      async ({ text }) => {
+        const echoed = `${process.env.ECHO_PREFIX ?? ""}${text}`;
+        return {
+          structuredContent: { echoed },
+          content: [{ type: "text", text: echoed }],
+        };
+      },
     );
   },
 };
 export default echo;
 ```
+
+For more depth — env precedence, `Refresh local MCPs`, the third-party-SDK case — see [docs/AUTHOR-LOCAL-MCP.md](../../docs/AUTHOR-LOCAL-MCP.md).
+
+`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative (legacy escape hatch; new MCPs should use the drop-in shape).
+
+#### Refresh without a restart
+
+Picking up a freshly-dropped folder doesn't need a process restart. Two paths:
+
+- **Controller UI** — Connector detail → MCPs tab → **Refresh local MCPs**. Emits a `local-mcps-rescan` frame down the WSS tunnel; the connector re-runs its drop-in scanner and reconciles new / removed folders against the running supervisor entries. Manifest changes ride the existing `manifest-delta` path. See [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
+- **Inspector** — <http://localhost:9090/> → **MCP Status** panel → **Refresh local MCPs**. Loopback-only POST against the connector's inspector port; same coordinator method, no controller round-trip. Useful when iterating locally.
+
+Operator-driven only — there's no fs-watcher. See DL4 in [.claude/plans/Done/MCP-LOADING-LOCAL.md](../../.claude/plans/Done/MCP-LOADING-LOCAL.md) for the rationale.
 
 #### Per-MCP creds from the controller
 
