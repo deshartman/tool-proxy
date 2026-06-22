@@ -29,6 +29,7 @@ import { ReconnectController } from "../tunnel/reconnect.js";
 import { createFrameRouter } from "../tunnel/frame-router.js";
 import { CredsCoordinator } from "../tunnel/creds-coordinator.js";
 import { McpConfigCoordinator } from "../tunnel/mcp-config-coordinator.js";
+import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins } from "../dropin.js";
 import { resolveAuth } from "./auth.js";
@@ -158,6 +159,15 @@ export async function boot(): Promise<void> {
   // mutated by every spawn / restart so the dispatcher (wired below) and
   // inspector pick up new connections without re-attach.
   const servers = new Map<string, McpServerConnection>();
+
+  // v1.2 (Workstream D) — server→client notification forwarder. Constructed
+  // ONCE per connector process; the supervisor's `onConnect` hook attaches
+  // a listener to every freshly-established MCP connection. Per-tunnel
+  // rebind (the wire `send` callback) goes through `bind()` inside
+  // `connectTunnel`. Notifications fired during a brief tunnel-down period
+  // are dropped — they're advisory by spec.
+  const notifications = new NotificationForwarder(log);
+
   const supervisor = new McpSupervisor({
     log,
     servers,
@@ -172,6 +182,9 @@ export async function boot(): Promise<void> {
     onRestart: async (name) => {
       log.info({ name }, `mcp restart complete — refreshing manifest`);
       await refreshManifestAndPushDelta();
+    },
+    onConnect: (name, connection) => {
+      notifications.attachToConnection(name, connection);
     },
   });
   supervisor.register(allSpecs);
@@ -257,6 +270,10 @@ export async function boot(): Promise<void> {
     pendingTunnel.onclose = () => {
       log.info(`tunnel closed`);
       webhooks.onTunnelClose();
+      // v1.2 (Workstream D) — drop the wire callback so notifications
+      // fired during the WS gap are dropped rather than crashing on a
+      // closed socket. Re-bound on the next connectTunnel.
+      notifications.unbind();
       stopTimers();
       // SIGTERM/SIGINT closes the tunnel intentionally — that path sets
       // shuttingDown so we bail. The manual /reconnect path also closes
@@ -321,6 +338,13 @@ export async function boot(): Promise<void> {
     // the *current* tunnel, NOT a stale one. Roster + lastAppliedGeneration
     // survive reconnect — see LIFETIME comment on McpConfigCoordinator.
     mcpConfig.bind({ send: (frame) => pendingTunnel.send(frame) });
+
+    // v1.2 (Workstream D) — bind the notification forwarder to the live
+    // tunnel. Same pattern as mcpConfig.bind: process-wide listeners,
+    // per-tunnel send callback. Notifications fired between unbind and
+    // the next bind() are dropped (advisory frames; consumer state will
+    // recover on next list call).
+    notifications.bind({ send: (frame) => pendingTunnel.send(frame) });
 
     const baseRouter = createFrameRouter({
       webhooks,
