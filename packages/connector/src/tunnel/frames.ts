@@ -246,6 +246,36 @@ export interface McpConfigResyncFrame {
   reason: "gap" | "boot" | "manual";
 }
 
+// ── v1.2 — Local MCP rescan (controller-triggered) ────────────────────────
+//
+// W-L2 of MCP-LOADING-LOCAL.md. The controller's "Refresh local MCPs" button
+// emits this frame; the connector re-runs its drop-in scanner against
+// MCP_DROPIN_DIR and reconciles new / removed folders against the running
+// supervisor entries. No payload — the connector decides what's there; the
+// controller just triggers. The inspector exposes the same operation via a
+// loopback POST at /mcp/rescan-local for the local-dev path.
+//
+// Backwards compat: a v1.1 controller never sends this frame so the
+// connector's behaviour is unchanged. A v1.1 connector ignores the frame
+// per the unknown-frame rule.
+
+// Controller → connector. Trigger a re-scan of MCP_DROPIN_DIR.
+export interface LocalMcpsRescanFrame {
+  type: "local-mcps-rescan";
+}
+
+// Connector → controller. Reply to local-mcps-rescan summarising the diff
+// against running supervisor entries. The controller's UI uses this to render
+// "Done — N added, M removed". Manifest changes ride the existing
+// manifest-delta path; this ack is small-and-static (no tool-level detail).
+export interface LocalMcpsRescanAckFrame {
+  type: "local-mcps-rescan-ack";
+  added: { name: string; toolsCount: number }[];
+  removed: string[];
+  unchanged: string[];
+  errors: { name: string; error: string }[];
+}
+
 // Frames the connector originates.
 export type TunnelFrame =
   | RegisterFrame
@@ -257,7 +287,8 @@ export type TunnelFrame =
   | WebhookRevokeFrame
   | CredsRequestFrame
   | McpConfigAckFrame
-  | McpConfigResyncFrame;
+  | McpConfigResyncFrame
+  | LocalMcpsRescanAckFrame;
 
 // Frames the connector receives (inbound). Register-ack is a non-spec but
 // useful response from the controller — see RegisterAckFrame above.
@@ -269,4 +300,5 @@ export type InboundTunnelFrame =
   | CredsResponseFrame
   | CredsUpdateFrame
   | McpConfigSnapshotFrame
-  | McpConfigDeltaFrame;
+  | McpConfigDeltaFrame
+  | LocalMcpsRescanFrame;
