@@ -94,6 +94,13 @@ export interface SupervisorOpts {
   // Called after a restart completes successfully. The boot wiring uses this
   // to push a manifest-delta if the new child advertises a different toolset.
   onRestart?: (name: string) => void | Promise<void>;
+  // v1.2 (Workstream D): called for every freshly-established connection
+  // (boot + restart + controller-config add). The hook attaches a
+  // notification listener to the connection so server-initiated
+  // notifications get forwarded as `mcp-notification` frames. The
+  // listener is owned by the connection — no explicit deregister on
+  // close. Stays optional so tests / older boot paths can omit it.
+  onConnect?: (name: string, connection: McpServerConnection) => void;
 }
 
 export type EnvSource = "controller" | "dir/.env" | "yaml" | "process.env";
@@ -321,6 +328,10 @@ export class McpSupervisor {
     try {
       entry.connection = await connectServer(entry.spec);
       this.opts.servers.set(spec.name, entry.connection);
+      // v1.2 (Workstream D): attach the notification forwarder once per
+      // connection. The forwarder is process-wide; per-tunnel send is
+      // bound separately, so attaching here is independent of WS state.
+      this.opts.onConnect?.(spec.name, entry.connection);
       entry.status.process = "running";
       entry.status.lastRestartReason = reason;
     } catch (err) {

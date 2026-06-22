@@ -163,6 +163,28 @@ Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side proce
 
 Type 2 tools (external `endpoint:` / `command:` MCPs) advertise whatever their upstream `tools/list` returns. The connector forwards that verbatim — schema or not — and the controller handles the missing-schema case gracefully.
 
+#### Prompts and resources (v1.2)
+
+The factory accepts `prompts: Prompt[]` and `resources: Resource[]` alongside `tools`. Both follow the same author shape — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. Worked examples in [`mcp/local/sample/prompts/weather-briefing.ts`](../../mcp/local/sample/prompts/weather-briefing.ts) and [`mcp/local/sample/resources/uuids-recent.ts`](../../mcp/local/sample/resources/uuids-recent.ts).
+
+```ts
+// mcp/local/my-mcp/server.ts
+await createMcpHttpServer({
+  name: "my-mcp",
+  tools: [echo],
+  prompts: [greeting],          // optional; declares the `prompts` capability
+  resources: [welcomeMessage],  // optional; declares the `resources` capability
+});
+```
+
+The split mirrors what the protocol expects:
+
+- **Tools** = side-effecting operations the procedure runtime invokes (`messages_create`, `issue_refund`, `voice_say`).
+- **Prompts** = parameterised templates the controller's procedure-author UI consumes (`compose_compliant_sms_campaign`, `refund_eligibility_check`). Authored once per MCP, version-controlled.
+- **Resources** = read-only canonical state surfaced as named, citeable artefacts (`twilio://content-templates`, `ek://sources/{source_id}`). Procedures read them via `resources/read` instead of burning a tool call. Authors that need server-pushed freshness signal `subscribe: true` on the underlying SDK call so the connector forwards `notifications/resources/updated` as `mcp-notification`.
+
+The connector forwards the full server-method surface (`prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `completion/complete`, `logging/setLevel`) and wraps server-initiated notifications as the `mcp-notification` frame. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension" for the wire contract.
+
 ## Tests
 
 Vitest skeleton for defensive regression tests. The suite is regression-driven: tests are added when manual scenarios surface real bugs. See [`.claude/plans/TEST-SUITE.md`](../../.claude/plans/TEST-SUITE.md).

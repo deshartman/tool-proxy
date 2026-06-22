@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
+import { recordUuid } from "../resources/uuids-recent.js";
 
 // Bucket B (single-scalar) per OUTPUT-SCHEMA.md.
 const OutputSchema = {
@@ -18,6 +19,7 @@ export const uuid: Tool = {
       },
       async () => {
         const data = { value: randomUUID() };
+        recordUuid(data.value);
         return {
           structuredContent: data,
           content: [{ type: "text", text: data.value }],
