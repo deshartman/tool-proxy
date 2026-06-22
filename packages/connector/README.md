@@ -6,9 +6,10 @@ The earlier PoC (in-shim LLM agent, `can_answer` / `ask_procedure`) is preserved
 
 ## What it does
 
-1. Reads `connector.yaml` describing one or more **MCP servers**, each falling into one of two patterns:
-   - **Type 1 — customer-authored.** `transport: http` + `dir:` (no `endpoint`). The connector spawns `tsx <dir>/server.ts` as a child, auto-assigns a localhost port, and treats it like any HTTP MCP from there.
-   - **Type 2 — connect to existing.** `transport: http` with `endpoint:` set, or `transport: stdio` with `command:` set. Optional `dir:` whose `.env` is loaded into the child's environment.
+1. Reads `connector.yaml` (yaml-listed bundled / hand-written MCPs) AND auto-discovers customer-authored drop-in folders under `${MCP_DROPIN_DIR}/<name>/`:
+   - **Type 1 (customer-authored, drop-in shape — default).** Folder under `mcp/local/<name>/{tools,prompts,resources}/*.ts`. No yaml entry, no `server.ts`. The drop-in scanner finds the folder; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) spawns a per-folder subprocess.
+   - **Type 1 (hand-written, legacy escape hatch).** Yaml entry with `transport: http` + `dir:` (no `endpoint`). The connector spawns `tsx <dir>/server.ts` as a child. Used by `mcp/bundled/twilio/` (Twilio-authored Type 1 with the `twilio` SDK in its own `package.json`).
+   - **Type 2 — connect to existing 3rd-party MCP.** Pushed via the controller UI (NOT the yaml) as `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) v1.1.
 2. Connects to each, runs `tools/list` to discover their tools.
 3. Builds a **`ToolManifest`** by aggregating every discovered tool. Trust boundary is per-MCP-server: pick which servers run, get every tool they expose.
 4. Dials out to a controller URL via WSS and pushes `{ type: "register", manifest }`.
@@ -165,10 +166,22 @@ Type 2 tools (external `endpoint:` / `command:` MCPs) advertise whatever their u
 
 #### Prompts and resources (v1.2)
 
-The factory accepts `prompts: Prompt[]` and `resources: Resource[]` alongside `tools`. Both follow the same author shape — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. Worked examples in [`mcp/local/sample/prompts/weather-briefing.ts`](../../mcp/local/sample/prompts/weather-briefing.ts) and [`mcp/local/sample/resources/uuids-recent.ts`](../../mcp/local/sample/resources/uuids-recent.ts).
+Both follow the same author shape as tools — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. **In drop-in folders** (the default authoring shape) the runner auto-discovers `prompts/*.ts` and `resources/*.ts` siblings of `tools/`; nothing else needed. Worked examples in [`mcp/local/sample/prompts/weather-briefing.ts`](../../mcp/local/sample/prompts/weather-briefing.ts) and [`mcp/local/sample/resources/uuids-recent.ts`](../../mcp/local/sample/resources/uuids-recent.ts).
+
+```
+mcp/local/my-mcp/
+├── tools/
+│   └── echo.ts            # exports default Tool { name, register }
+├── prompts/
+│   └── greeting.ts        # exports default Prompt { name, register }
+└── resources/
+    └── welcome.ts         # exports default Resource { name, register }
+```
+
+For the legacy hand-written shape, the factory accepts `prompts: Prompt[]` and `resources: Resource[]` alongside `tools`:
 
 ```ts
-// mcp/local/my-mcp/server.ts
+// mcp/local/my-mcp/server.ts (legacy escape hatch only)
 await createMcpHttpServer({
   name: "my-mcp",
   tools: [echo],
