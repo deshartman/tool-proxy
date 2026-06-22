@@ -275,7 +275,11 @@ function renderManifest(m) {
   for (const s of m.servers) {
     elMServers.appendChild(buildServerCard(s));
   }
-  // Drop selection if the selected tool no longer exists.
+  // Drop selection if the selected item no longer exists. v1.2 also covers
+  // prompt / resource / resourceTemplate selections.
+  if (selection?.kind === 'prompt' || selection?.kind === 'resource' || selection?.kind === 'resourceTemplate') {
+    setSelection(null);
+  }
   if (selection?.kind === 'tool') {
     const stillThere = m.servers.some(
       (s) => s.name === selection.serverName && s.tools.some((t) => t.name === selection.tool.name)
@@ -288,8 +292,11 @@ function renderManifest(m) {
 function buildServerCard(s) {
   const card = document.createElement('div');
   card.className = 'server-card';
-  const count = s.tools.length;
-  const countLabel = count === 1 ? '1 tool' : `${count} tools`;
+  const promptsCount = (s.prompts || []).length;
+  const resourcesCount = (s.resources || []).length + (s.resourceTemplates || []).length;
+  const meta = [pluralLabel(s.tools.length, 'tool')];
+  if (promptsCount > 0) meta.push(pluralLabel(promptsCount, 'prompt'));
+  if (resourcesCount > 0) meta.push(pluralLabel(resourcesCount, 'resource'));
   const collapsed = isServerCollapsed(s.name);
   if (collapsed) card.classList.add('collapsed');
   card.innerHTML = `
@@ -298,7 +305,7 @@ function buildServerCard(s) {
       <span class="server-header-text">
         <span class="server-label">MCP Server</span>
         <span class="server-name">${escapeHtml(s.name)}</span>
-        <span class="server-meta">${escapeHtml(s.transport)} · ${countLabel}</span>
+        <span class="server-meta">${escapeHtml(s.transport)} · ${meta.join(' · ')}</span>
       </span>
     </button>
     <div class="tools-section">
@@ -309,6 +316,22 @@ function buildServerCard(s) {
   for (const t of s.tools) {
     toolsSection.appendChild(buildToolRow(s.name, t));
   }
+  // v1.2 — MCP-CLIENT-USE. Prompts and resources, when the server declared
+  // them, appear as sibling sections under the same server card. Same
+  // collapse/expand semantics as the tools list — operators see one MCP at
+  // a time, drill in for capabilities.
+  if (promptsCount > 0) {
+    const promptsSection = buildSection('Prompts', s.name, (s.prompts || []), buildPromptRow);
+    card.appendChild(promptsSection);
+  }
+  if (resourcesCount > 0) {
+    const resourcesSection = document.createElement('div');
+    resourcesSection.className = 'tools-section';
+    resourcesSection.innerHTML = `<div class="tools-section-label">Resources</div>`;
+    for (const r of (s.resources || [])) resourcesSection.appendChild(buildResourceRow(s.name, r, false));
+    for (const t of (s.resourceTemplates || [])) resourcesSection.appendChild(buildResourceRow(s.name, t, true));
+    card.appendChild(resourcesSection);
+  }
   card.querySelector('.server-header').addEventListener('click', () => {
     const nowCollapsed = !card.classList.contains('collapsed');
     card.classList.toggle('collapsed', nowCollapsed);
@@ -316,6 +339,47 @@ function buildServerCard(s) {
     setServerCollapsed(s.name, nowCollapsed);
   });
   return card;
+}
+
+function pluralLabel(n, noun) {
+  return n === 1 ? `1 ${noun}` : `${n} ${noun}s`;
+}
+
+function buildSection(label, serverName, items, rowBuilder) {
+  const section = document.createElement('div');
+  section.className = 'tools-section';
+  section.innerHTML = `<div class="tools-section-label">${escapeHtml(label)}</div>`;
+  for (const item of items) section.appendChild(rowBuilder(serverName, item));
+  return section;
+}
+
+function buildPromptRow(serverName, p) {
+  const row = document.createElement('div');
+  row.className = 'tool-row';
+  row.dataset.key = `prompt:${serverName}.${p.name}`;
+  row.innerHTML = `
+    <span>${escapeHtml(p.name)}</span>
+    <span class="verdict ready">Prompt</span>
+  `;
+  row.addEventListener('click', () => {
+    setSelection({ kind: 'prompt', key: row.dataset.key, prompt: p, serverName });
+  });
+  return row;
+}
+
+function buildResourceRow(serverName, r, isTemplate) {
+  const row = document.createElement('div');
+  row.className = 'tool-row';
+  const uri = isTemplate ? r.uriTemplate : r.uri;
+  row.dataset.key = `resource:${serverName}.${uri}`;
+  row.innerHTML = `
+    <span>${escapeHtml(r.name)}</span>
+    <span class="verdict ready">${isTemplate ? 'Template' : 'Resource'}</span>
+  `;
+  row.addEventListener('click', () => {
+    setSelection({ kind: isTemplate ? 'resourceTemplate' : 'resource', key: row.dataset.key, resource: r, serverName });
+  });
+  return row;
 }
 
 // Server cards default to collapsed — most operators want a high-level
@@ -564,6 +628,45 @@ function renderDetail() {
     return;
   }
 
+  if (selection.kind === 'prompt') {
+    elDetailTitle.textContent = `${selection.serverName}.${selection.prompt.name}`;
+    const card = document.createElement('div');
+    card.className = 'tool-card selected';
+    const argsHtml = (selection.prompt.arguments || []).map((arg) =>
+      `<li><code>${escapeHtml(arg.name)}</code>${arg.required ? ' <em>(required)</em>' : ''}${arg.description ? ` — ${escapeHtml(arg.description)}` : ''}</li>`
+    ).join('') || '<li class="muted">no arguments</li>';
+    card.innerHTML = `
+      <div class="tool-card-head">
+        <span class="name">${escapeHtml(selection.serverName)}.${escapeHtml(selection.prompt.name)}</span>
+        <span class="verdict ready">Prompt</span>
+      </div>
+      ${selection.prompt.description ? `<div class="muted">${escapeHtml(selection.prompt.description)}</div>` : ''}
+      <div class="muted" style="margin-top: 0.5em">arguments:</div>
+      <ul>${argsHtml}</ul>
+    `;
+    elDetailContent.appendChild(card);
+    return;
+  }
+
+  if (selection.kind === 'resource' || selection.kind === 'resourceTemplate') {
+    const r = selection.resource;
+    const uri = selection.kind === 'resourceTemplate' ? r.uriTemplate : r.uri;
+    elDetailTitle.textContent = `${selection.serverName} · ${r.name}`;
+    const card = document.createElement('div');
+    card.className = 'tool-card selected';
+    card.innerHTML = `
+      <div class="tool-card-head">
+        <span class="name">${escapeHtml(r.name)}</span>
+        <span class="verdict ready">${selection.kind === 'resourceTemplate' ? 'Template' : 'Resource'}</span>
+      </div>
+      <div><code>${escapeHtml(uri)}</code></div>
+      ${r.mimeType ? `<div class="muted">mime: <code>${escapeHtml(r.mimeType)}</code></div>` : ''}
+      ${r.description ? `<div class="muted">${escapeHtml(r.description)}</div>` : ''}
+    `;
+    elDetailContent.appendChild(card);
+    return;
+  }
+
   if (selection.kind === 'frame') {
     const tap = selection.tap;
     elDetailTitle.textContent = `${tap.direction === 'out' ? '→' : '←'} ${tap.frame.type}`;
@@ -671,8 +774,18 @@ function summarizeFrame(frame) {
   switch (frame.type) {
     case 'register':
       return `manifest with ${frame.manifest.servers.reduce((n, s) => n + s.tools.length, 0)} tools`;
-    case 'manifest-delta':
-      return `+${frame.delta.added.length} / -${frame.delta.removed.length} / ~${frame.delta.changed.length}`;
+    case 'manifest-delta': {
+      // Tools-only counts stay primary; prompts/resources counts append
+      // when present (v1.2). An older controller showing the same line
+      // sees the same counts; the new fields default to 0.
+      const tools = `+${frame.delta.added.length} / -${frame.delta.removed.length} / ~${frame.delta.changed.length}`;
+      const prompts = (frame.delta.addedPrompts?.length ?? 0) + (frame.delta.removedPrompts?.length ?? 0) + (frame.delta.changedPrompts?.length ?? 0);
+      const resources = (frame.delta.addedResources?.length ?? 0) + (frame.delta.removedResources?.length ?? 0) + (frame.delta.changedResources?.length ?? 0);
+      const extra = [];
+      if (prompts > 0) extra.push(`${prompts} prompt change(s)`);
+      if (resources > 0) extra.push(`${resources} resource change(s)`);
+      return extra.length > 0 ? `${tools} · ${extra.join(', ')}` : tools;
+    }
     case 'heartbeat':
       return `ts=${frame.ts}`;
     case 'goodbye':
@@ -696,6 +809,10 @@ function summarizeFrame(frame) {
     case 'creds-update': {
       const keys = frame.env ? Object.keys(frame.env) : [];
       return `mcp=${frame.mcp} keys=[${keys.join(',')}] source=${frame.source ?? '?'}`;
+    }
+    case 'mcp-notification': {
+      const method = frame.payload && typeof frame.payload === 'object' ? frame.payload.method : '?';
+      return `server=${frame.server} method=${method ?? '?'}`;
     }
     default:
       return '';

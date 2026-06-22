@@ -4,7 +4,12 @@
 >
 > **Authority.** This is the authoritative wire-format spec. Plans (e.g. [.claude/plans/MCP-LOADING.md](../.claude/plans/MCP-LOADING.md)) describe *intent*; this document is what each side actually implements. If a frame is described here, it MUST be implemented per the schema below; if it is not described here, it MUST NOT be sent without first updating this doc.
 >
-> **Version.** v1 — additions covered by this revision: `creds-request`, `creds-response`, `creds-update`. Pre-existing frames (`register`, `register-ack`, `manifest-delta`, `rpc`, `heartbeat`, `goodbye`, `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`) are documented in [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) and [CLAUDE.md](../CLAUDE.md). This document focuses on the new frames; older frames are linked in §"Pre-existing frames" for orientation only.
+> **Version.** v1.2 — additions covered by the most recent revisions:
+> - **v1** baseline: `creds-request`, `creds-response`, `creds-update`.
+> - **v1.1**: `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; optional `mcpId` field on creds frames.
+> - **v1.2** (this revision): widens the dispatcher to forward the full MCP server-method set — prompts / resources (incl. templates + subscribe) / completions / logging/setLevel — and adds the `mcp-notification` frame for server→client notifications. Manifest grows `prompts[]` / `resources[]` / `resourceTemplates[]` / `capabilities` on each `ServerDescriptor`. See §"v1.2 — MCP server-method extension" for the full contract.
+>
+> Pre-existing frames (`register`, `register-ack`, `manifest-delta`, `rpc`, `heartbeat`, `goodbye`, `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`) are documented in [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) and [CLAUDE.md](../CLAUDE.md).
 
 ## Transport
 
@@ -938,11 +943,126 @@ A practical rule for the controller UI:
 
 The connector's boot soft-wait expects a snapshot to arrive within ~5s of register-ack. If the controller has zero 3rd-party MCPs for this connector, send `{ generation: <persisted>, servers: [] }` rather than withholding the frame — the connector logs a `boot` resync request after the soft-wait elapses, which is noise the operator doesn't need to see.
 
+## v1.2 — MCP server-method extension (prompts / resources / completions / logging)
+
+> Source plan: [.claude/plans/MCP-CLIENT-USE.md](../.claude/plans/MCP-CLIENT-USE.md). Self-describing — read that plan + this section + [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) and a fresh-context Claude can implement the controller side.
+
+### Why
+
+The v1.0/v1.1 connector dispatched `tools/list` + `tools/call` and rejected every other MCP method with `-32601 method not found`. v1.2 widens the dispatcher to forward the rest of the server-method surface — **prompts**, **resources** (incl. templates + subscribe), **completions**, **logging/setLevel** — and adds a server→client notification path so MCPs can emit `notifications/progress`, `notifications/message`, `notifications/resources/updated`, and the `*/list_changed` notifications back to the controller. Both pieces are additive over v1.1; older controllers see no change.
+
+### Manifest extension
+
+`ServerDescriptor` (in `register` and snapshot manifests) grows three optional arrays plus a `capabilities` object. Older controllers ignore them per §"Frame envelope" unknown-fields rule.
+
+```ts
+interface ServerDescriptor {
+  // v1.0/v1.1 fields:
+  name: string;
+  transport: "http" | "stdio";
+  author: string;
+  tools: ToolDescriptor[];
+
+  // v1.2 additive — present only when the upstream MCP advertised the
+  // matching capability. Empty array vs absent: the connector emits the
+  // array only when at least one item exists, so absence and "advertised
+  // but empty" both render as "off / none" in the controller UI.
+  prompts?: PromptDescriptor[];
+  resources?: ResourceDescriptor[];
+  resourceTemplates?: ResourceTemplateDescriptor[];
+  capabilities?: {
+    prompts?:    { listChanged?: boolean };
+    resources?:  { listChanged?: boolean; subscribe?: boolean };
+    tools?:      { listChanged?: boolean };
+    completions?: {};
+    logging?:    {};
+  };
+}
+
+interface PromptDescriptor {
+  name: string;                  // server-relative; wire form is "${server}.${name}"
+  description?: string;
+  arguments?: { name: string; description?: string; required?: boolean }[];
+}
+
+interface ResourceDescriptor {
+  uri: string;                   // e.g. "ek://sources/abc"
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+interface ResourceTemplateDescriptor {
+  uriTemplate: string;           // RFC 6570
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+```
+
+`ManifestDelta` grows symmetrically with `addedPrompts` / `removedPrompts` / `changedPrompts`, the same triple for `Resources`, and the same triple for `ResourceTemplates`. Each is optional + omitted-when-empty so older controllers see today's tools-only delta untouched.
+
+### Server-method passthrough — request methods
+
+Every method below is forwarded to the upstream MCP through the `McpServerConnection` matching method. The connector does NOT interpret payloads — pass-through is verbatim. **Server discriminator:** prompts use `${server}.${name}` like tools; resources use the URI scheme/host; aggregate methods accept an optional `params.serverName` that narrows to one MCP (omit to fan out).
+
+| MCP method | Routing key | Payload shape (forwarded verbatim) |
+|---|---|---|
+| `prompts/list` | `params.serverName` (optional, narrows to one MCP) | `{}` |
+| `prompts/get` | `params.name = "${server}.${prompt}"` | `{ name, arguments? }` |
+| `resources/list` | `params.serverName` (optional) | `{}` |
+| `resources/templates/list` | `params.serverName` (optional) | `{}` |
+| `resources/read` | `params.serverName` OR fallback to URI scheme | `{ uri }` |
+| `resources/subscribe` | `params.serverName` OR URI scheme | `{ uri }` |
+| `resources/unsubscribe` | `params.serverName` OR URI scheme | `{ uri }` |
+| `completion/complete` | `params.serverName` REQUIRED | full `complete` request body |
+| `logging/setLevel` | `params.serverName` REQUIRED | `{ level }` |
+
+**Errors** the connector emits before forwarding:
+- `-32602 INVALID_PARAMS` — missing required field (e.g. `prompts/get` with no `${server}.${name}` form, `resources/read` with empty `uri`, `completion/complete` without `params.serverName`).
+- `-32010 (kind: "server_not_found")` — explicit `serverName` doesn't resolve, or no URI-scheme match.
+- `-32601 METHOD_NOT_FOUND` — unrecognized method (kept for forward-compat).
+
+Upstream errors flow back unchanged.
+
+### `mcp-notification` frame (connector → controller)
+
+Server-initiated notifications emitted by an MCP get wrapped and forwarded as a single new frame. **Connector is a pure forwarder — payload is opaque.** Same async-free `send()` path as the existing `webhook` frame so a notification burst doesn't starve heartbeats.
+
+```ts
+interface McpNotificationFrame {
+  type: "mcp-notification";
+  server: string;             // matches ServerDescriptor.name
+  payload: unknown;           // JSON-RPC notification envelope: { method, params? }
+}
+```
+
+Examples the controller will receive:
+- `{ method: "notifications/progress", params: { progressToken, progress, total? } }` — correlate by `progressToken` to the original request.
+- `{ method: "notifications/message", params: { level, logger, data } }` — this is `logging/message` on the wire.
+- `{ method: "notifications/resources/updated", params: { uri } }` — only after `resources/subscribe` succeeded.
+- `{ method: "notifications/{tools,prompts,resources}/list_changed" }` — re-fetch the list.
+
+**Loss model.** Notifications fired between WS close and reopen are dropped — they're advisory by spec, and the controller will re-list-resources / re-subscribe / re-fetch progress on its next call. The connector does NOT queue them across reconnects (queueing risks unbounded memory on a long outage; stale events are worse than missing ones).
+
+### `progressToken` round-trip
+
+A controller request can opt into progress reporting by setting `params._meta.progressToken`. The connector forwards verbatim; the upstream MCP emits `notifications/progress` with the same token; the connector wraps as `mcp-notification`. **No new connector logic** — it's all passthrough as long as the new method routing is open.
+
+### Server-side capability advertisement
+
+The connector itself stays a passthrough — it does NOT declare `sampling`, `elicitation`, or `roots` capabilities to upstream MCPs. The connector core is LLM-free (CLAUDE.md "No LLM, no agent loop, no document handling — *in the connector core*"); a future controller may implement those server→client request types via a separate frame, but they are NOT shipped in v1.2.
+
+### Backwards compat
+
+- **Older controller, new connector.** Connector advertises `prompts[]` / `resources[]` in the manifest; older controller sees only the `tools[]` field it always read. Connector emits `mcp-notification` frames; older controller logs+drops per the unknown-frames rule. Tools-only flow keeps working.
+- **Newer controller, older connector.** Controller calls `prompts/list` over the tunnel; older connector's dispatcher returns `-32601 method not found`. Controller treats that exactly like a server that didn't declare the prompts capability.
+
 ## Versioning
 
-This document is v1.1. Future revisions:
-- v1.1 (this revision) — adds `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; adds optional `mcpId` to existing creds frames. Backwards-compatible per §"Backwards compat".
-- v1.2 — add fields to existing frames (additive, backwards-compatible).
+This document is v1.2. Future revisions:
+- v1.1 — adds `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; adds optional `mcpId` to existing creds frames. Backwards-compatible per §"Backwards compat".
+- v1.2 (this revision) — adds the MCP server-method passthrough (prompts / resources incl. subscribe / completions / logging) and the `mcp-notification` frame for server→client notifications. Manifest grows `prompts[]` / `resources[]` / `resourceTemplates[]` / `capabilities` per server. Backwards-compatible per §"v1.2 — MCP server-method extension" → "Backwards compat".
 - v2 — add new frame types (additive, controller MUST log+ignore unknown frames per §"Frame envelope").
 - v3 — breaking change (rare). Would require a `protocol-capabilities` handshake at register time. **Not in scope today.**
 
