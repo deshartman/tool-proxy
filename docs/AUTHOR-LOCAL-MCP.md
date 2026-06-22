@@ -162,6 +162,22 @@ Two ways to get the connector to pick up a new folder:
 
 Both refresh paths re-run the drop-in scanner, register new folders with the supervisor, fan out a `creds-request` for each, and emit a `manifest-delta` so the controller picks up the new tools.
 
+## Smoke-testing locally before the admin pastes creds
+
+You drop a folder, the connector picks it up, the inspector lists your tools — but they're tagged **Awaiting config** if you declared `envKeys`. The dev feedback loop closes here:
+
+1. Open the inspector at <http://localhost:9090/>.
+2. Click the **purple name** of your MCP (peer to clicking a tool — opens the right pane).
+3. Paste your dev creds into the masked fields. Click **Apply (session only)**.
+4. Tools flip to **Ready**. Click any tool to bring up its shape + Run button. Smoke-test.
+
+Session creds:
+- Live in connector RAM only — never written to disk, never sent to the controller.
+- Expire 12 hours after paste. Re-paste resets the timer.
+- Layer **below** controller-supplied creds. If an admin later sets the same key in the controller UI, the controller value wins per-key automatically.
+
+This is for the dev's local box; production deployments should always use controller-supplied creds. See [`INSPECTOR.md`](INSPECTOR.md) §"Right pane — MCP creds view" for the full reference.
+
 ## Where do creds come from?
 
 Per-MCP env values arrive over the WSS tunnel from the **controller**. Operator enters them in the controller UI under Connector → MCPs → `<your MCP name>`; the controller pushes them down via `creds-response` (boot) or `creds-update` (steady state). The connector merges them into the child process's env and restarts the child if values change.

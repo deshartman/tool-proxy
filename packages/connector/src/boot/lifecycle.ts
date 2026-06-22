@@ -244,7 +244,7 @@ export async function boot(): Promise<void> {
   // 3. Build initial manifest and push it into the inspector (already running).
   // The supervisor list is the source of truth for what's running — it
   // includes the yaml entries plus any drop-ins discovered above.
-  let manifest: ToolManifest = await buildManifest(config, servers, version, configPath);
+  let manifest: ToolManifest = await buildManifest(config, servers, version, configPath, (name) => supervisor.fetchEnvKeys(name));
   // Manifest-time advisory: one log.warn per shipped MCP whose tools lack
   // outputSchema. Tools without a schema are still callable — the controller
   // surfaces them by name only (no field-projection), and that's a fine
@@ -432,6 +432,29 @@ export async function boot(): Promise<void> {
             errors: ack.errors,
           };
         },
+        // INSPECTOR-CREDS-VISIBILITY (W-S4): write-only entry point for
+        // developer-pasted dev creds. The supervisor owns the values; we
+        // never read them back. Returns only the expiry epoch-ms so the UI
+        // can render a countdown.
+        applySessionCreds: async (name: string, env: Record<string, string>) => {
+          // Merge mode: the inspector form sends only the fields the
+          // developer typed into, so keys already set (rendered as
+          // "•••• (set)" in the UI) survive a partial submit. To drop a
+          // key, the dev clicks Clear (which wipes the layer entirely).
+          const result = await supervisor.applySessionEnv(name, env, { mode: "merge" });
+          if (!result.applied) throw new Error(`unknown MCP "${name}"`);
+          return { expiresAt: result.expiresAt };
+        },
+        clearSessionCreds: async (name: string) => {
+          await supervisor.clearSessionEnv(name, "session-creds-cleared-by-operator");
+        },
+        // INSPECTOR-CREDS-VISIBILITY (W-S5): expose declared envKeys for an
+        // MCP so the inspector UI knows which form fields to render. Read-
+        // only — names not values. Falls back to [] for any spec the
+        // supervisor can't introspect (stdio / Type 2 http external).
+        fetchEnvKeys: async (name: string) => {
+          return supervisor.fetchEnvKeys(name);
+        },
       };
     }
 
@@ -541,7 +564,7 @@ export async function boot(): Promise<void> {
 
       // Rebuild manifest against the (possibly updated) config. Updates
       // inspector view too.
-      manifest = await buildManifest(config, servers, version, configPath);
+      manifest = await buildManifest(config, servers, version, configPath, (name) => supervisor.fetchEnvKeys(name));
       inspector?.setManifest(manifest);
 
       await connectTunnel("reconnect");
@@ -567,7 +590,7 @@ export async function boot(): Promise<void> {
 
   async function refreshManifestAndPushDelta(): Promise<void> {
     try {
-      const nextManifest = await buildManifest(config, servers, version, configPath);
+      const nextManifest = await buildManifest(config, servers, version, configPath, (name) => supervisor.fetchEnvKeys(name));
       const delta = diffManifest(manifest, nextManifest);
       manifest = nextManifest;
       inspector?.setManifest(nextManifest);

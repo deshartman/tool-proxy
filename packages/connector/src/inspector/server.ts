@@ -94,6 +94,24 @@ export interface McpActions {
   reloadCreds(name: string): Promise<void>;
   restart(name: string): Promise<void>;
   rescanLocal?(): Promise<{ added: { name: string; toolsCount: number }[]; removed: string[]; unchanged: string[]; errors: { name: string; error: string }[] }>;
+  // INSPECTOR-CREDS-VISIBILITY (W-S4): apply developer-pasted session env
+  // values to an MCP from the inspector loopback UI. Returns the
+  // expiresAt epoch-ms so the UI can render a countdown without
+  // re-querying.
+  // SECURITY: the route NEVER reads back values. The call signature here
+  // is write-only: env in, expiry out. No GET /mcp/:name/session-creds.
+  applySessionCreds?(name: string, env: Record<string, string>): Promise<{ expiresAt: number | undefined }>;
+  // INSPECTOR-CREDS-VISIBILITY (W-S4): drop the session env layer for an
+  // MCP. Used by the UI's Clear button and by automatic 12h TTL expiry
+  // (the supervisor handles the latter internally; this is the operator
+  // path).
+  clearSessionCreds?(name: string): Promise<void>;
+  // INSPECTOR-CREDS-VISIBILITY (W-S5): list the declared envKeys for an
+  // MCP so the UI can render the right form fields. Read-only; never
+  // returns values, only key NAMES. Backed by the supervisor's
+  // `fetchEnvKeys(name)` which queries the running child's /envkeys
+  // endpoint.
+  fetchEnvKeys?(name: string): Promise<string[]>;
 }
 
 const RING_SIZE = 500;
@@ -372,6 +390,152 @@ async function handleMcpAction(
   }
 }
 
+// INSPECTOR-CREDS-VISIBILITY (W-S4): apply developer-pasted session env
+// values for an MCP. Body shape: `{mcp: string, env: Record<string, string>}`.
+// Response: `{ok: true, expiresAt: number | undefined}` — the value expiry
+// epoch-ms, never the values themselves. Cred-leak guard: under no
+// circumstance does this route's response body include the pasted values
+// (W-S9 L1). The handler reads from a local env-map and hands the values
+// to the supervisor; the values then live ONLY in the supervisor's private
+// `entry.sessionEnv` until expiry or clear.
+//
+// Validation: rejects non-string keys/values, enforces a per-key length
+// cap (8KB) so a malformed paste can't OOM the connector.
+async function handleApplySessionCreds(
+  req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+): Promise<void> {
+  const actions = inspector.mcpActions;
+  res.setHeader("content-type", "application/json");
+  if (!actions?.applySessionCreds) {
+    res.statusCode = 503;
+    res.end('{"ok":false,"error":"applySessionCreds not configured"}');
+    return;
+  }
+  let body: { mcp?: unknown; env?: unknown };
+  try { body = (await readJsonBody(req) as { mcp?: unknown; env?: unknown }) ?? {}; }
+  catch { res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return; }
+  const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
+  if (!mcp) {
+    res.statusCode = 400;
+    res.end('{"ok":false,"error":"missing mcp"}');
+    return;
+  }
+  const envRaw = body.env;
+  if (!envRaw || typeof envRaw !== "object" || Array.isArray(envRaw)) {
+    res.statusCode = 400;
+    res.end('{"ok":false,"error":"env must be an object"}');
+    return;
+  }
+  const env: Record<string, string> = {};
+  const MAX_VALUE_LEN = 8 * 1024;
+  for (const [k, v] of Object.entries(envRaw as Record<string, unknown>)) {
+    if (typeof v !== "string") {
+      res.statusCode = 400;
+      res.end('{"ok":false,"error":"env values must be strings"}');
+      return;
+    }
+    if (v.length > MAX_VALUE_LEN) {
+      res.statusCode = 413;
+      res.end('{"ok":false,"error":"env value too long"}');
+      return;
+    }
+    env[k] = v;
+  }
+  try {
+    const result = await actions.applySessionCreds(mcp, env);
+    res.statusCode = 202;
+    res.end(JSON.stringify({ ok: true, expiresAt: result.expiresAt }));
+  } catch (err) {
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
+// INSPECTOR-CREDS-VISIBILITY (W-S4): clear the session env layer for an
+// MCP. Operator-driven path; the 12h TTL auto-clear is handled inside the
+// supervisor without going through this route.
+async function handleClearSessionCreds(
+  req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+): Promise<void> {
+  const actions = inspector.mcpActions;
+  res.setHeader("content-type", "application/json");
+  if (!actions?.clearSessionCreds) {
+    res.statusCode = 503;
+    res.end('{"ok":false,"error":"clearSessionCreds not configured"}');
+    return;
+  }
+  let body: { mcp?: unknown };
+  try { body = (await readJsonBody(req) as { mcp?: unknown }) ?? {}; }
+  catch { res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return; }
+  const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
+  if (!mcp) {
+    res.statusCode = 400;
+    res.end('{"ok":false,"error":"missing mcp"}');
+    return;
+  }
+  try {
+    await actions.clearSessionCreds(mcp);
+    res.statusCode = 202;
+    res.end('{"ok":true}');
+  } catch (err) {
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
+// INSPECTOR-CREDS-VISIBILITY (W-S4): single dispatch point for the
+// session-creds POST routes. Returns true if the path matched (caller
+// short-circuits), false otherwise. Folded together so the top-level
+// startInspector dispatcher doesn't add cognitive complexity for each
+// route variant.
+function handleSessionCredsRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+  path: string,
+): boolean {
+  if (path === "/mcp/session-creds-apply") {
+    void handleApplySessionCreds(req, res, inspector);
+    return true;
+  }
+  if (path === "/mcp/session-creds-clear") {
+    void handleClearSessionCreds(req, res, inspector);
+    return true;
+  }
+  return false;
+}
+
+// INSPECTOR-CREDS-VISIBILITY (W-S5): GET /mcp/env-keys?mcp=<name>. Read-
+// only listing of the envKeys an MCP declared (key NAMES only — never
+// values). Backs the UI's creds form so the operator sees exactly which
+// fields to fill in.
+async function handleEnvKeys(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+  mcp: string,
+): Promise<void> {
+  const actions = inspector.mcpActions;
+  res.setHeader("content-type", "application/json");
+  if (!actions?.fetchEnvKeys) {
+    res.statusCode = 503;
+    res.end('{"ok":false,"error":"fetchEnvKeys not configured"}');
+    return;
+  }
+  try {
+    const envKeys = await actions.fetchEnvKeys(mcp);
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true, envKeys }));
+  } catch (err) {
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
 async function handleRescanLocal(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -476,6 +640,18 @@ export function startInspector(port: number, inspector: Inspector): void {
     }
     if (path === "/mcp/rescan-local" && req.method === "POST") {
       void handleRescanLocal(req, res, inspector);
+      return;
+    }
+    // INSPECTOR-CREDS-VISIBILITY (W-S4): write-only routes for the
+    // developer-pasted session creds layer. The routes NEVER read back
+    // values — there is no GET sibling. See W-S9 L1 in the plan.
+    if (req.method === "POST" && handleSessionCredsRoute(req, res, inspector, path)) {
+      return;
+    }
+    if (path === "/mcp/env-keys" && req.method === "GET") {
+      const mcp = url.searchParams.get("mcp");
+      if (!mcp) { res.statusCode = 400; res.end('missing "mcp" query param'); return; }
+      void handleEnvKeys(req, res, inspector, mcp);
       return;
     }
     if (path === "/" || path === "/index.html") { void serveStatic(res, "index.html"); return; }

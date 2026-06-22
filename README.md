@@ -141,15 +141,11 @@ Twilio-authored Node MCPs follow the Type 1 shape but live under `mcp/bundled/<n
 
 ## Inspector
 
-`http://localhost:9090/` (binds to 127.0.0.1 only — see **What's load-bearing** below) shows:
+`http://localhost:9090/` (binds to 127.0.0.1 only — see **What's load-bearing** below) shows live WS state, the `ToolManifest`, MCP Status, Webhooks, and the frame log. Two click-targets on every MCP server card: the grey "MCP SERVER" header expands/collapses the tool list; the purple `<name>` opens an **MCP creds view** in the right pane where developers can paste session creds for local smoke-testing (12h hard TTL, never persisted, never sent to the controller).
 
-- live WS state (connecting / open / closed)
-- the `ToolManifest` and an "Available Tools" list (all discovered tools are Ready)
-- a **Webhooks** panel listing each MCP's allocated public URL with a copy button (only populated for MCPs that called `createWebhookEndpoint`)
-- every frame in/out (including the new `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke` frames)
-- a **Reconnect** button that re-reads the YAML and redials
+Full reference: [`docs/INSPECTOR.md`](docs/INSPECTOR.md).
 
-To pick up changes to `mcp_servers`, restart the script — those connections happen at boot. `policy` changes pick up via Reconnect.
+To pick up changes to `mcp_servers`, restart the script — those connections happen at boot. `policy` changes pick up via the **Reconnect** button.
 
 ## Tests
 

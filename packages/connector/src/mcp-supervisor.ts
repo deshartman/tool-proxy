@@ -22,6 +22,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, createConnection } from "node:net";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   isType1Spawn,
   type McpServerSpec,
@@ -45,6 +46,35 @@ import { resolveOAuthBearer, type OAuthProviderCache } from "./auth/resolve-mcp-
 const requireFromHere = createRequire(import.meta.url);
 const TSX_BIN = join(dirname(requireFromHere.resolve("tsx/package.json")), "dist/cli.mjs");
 
+// Drop-in framework deps (zod, the SDK) are hoisted to the workspace root
+// `node_modules`. When MCP_DROPIN_DIR is INSIDE the repo, Node's parent-dir
+// climb finds them. When the dir lives elsewhere (production: a mounted
+// /var/lib/mcp-connector/customer-mcps/; dev: a /tmp path), the climb yields
+// nothing and the child crashes with "Cannot find module 'zod'".
+//
+// Fix: pass NODE_PATH to spawned drop-in children pointing at every
+// node_modules ancestor of THIS module — the connector's tree. tsx /
+// Node honor NODE_PATH as an extra resolution root (legacy but supported).
+// Drop-in user files like `import { z } from "zod"` resolve through
+// NODE_PATH whenever the parent-dir climb fails.
+//
+// Computed once at boot. Walks up from this module's directory collecting
+// every `node_modules` directory, joined with the platform path delimiter.
+function computeDropinNodePath(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const out: string[] = [];
+  let cursor = here;
+  // Cap at 16 hops as a safety belt; in practice we hit the FS root in 4–5.
+  for (let i = 0; i < 16; i++) {
+    out.push(join(cursor, "node_modules"));
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return out.join(process.platform === "win32" ? ";" : ":");
+}
+const DROPIN_NODE_PATH = computeDropinNodePath();
+
 // Spec union the supervisor accepts. Dropin specs are an internal extension
 // of Type 1 (transport: http + dir) carrying a marker; the rest is plain
 // McpServerSpec.
@@ -53,8 +83,23 @@ export type SupervisedSpec = McpServerSpec | DropinSpec;
 export interface McpStatus {
   name: string;
   process: "running" | "stopped" | "restarting" | "permanently-failed";
-  credsSource: "controller" | "dir/.env" | "yaml" | "none";
+  // INSPECTOR-CREDS-VISIBILITY (Decision #1): session creds layer below
+  // controllerEnv. "session" means session-only with no controller values;
+  // "controller+session" means both layers active (controller wins per-key).
+  credsSource: "controller" | "controller+session" | "session" | "dir/.env" | "yaml" | "none";
   credsLastUpdated?: number;
+  // INSPECTOR-CREDS-VISIBILITY (Decision #2): epoch-ms when the session
+  // creds layer expires (12h hard from paste). Undefined when no session
+  // creds are active. Inspector renders a countdown.
+  sessionCredsExpiresAt?: number;
+  // INSPECTOR-CREDS-VISIBILITY: NAMES (only) of env keys with an active
+  // session value. The inspector uses this to render a "•••••••• (set)"
+  // placeholder on the matching form fields so a developer can see WHICH
+  // keys they've already pasted without the connector echoing the value
+  // back through the loopback UI. Cred-leak contract (W-S9 L1/L7) holds:
+  // values stay in the supervisor's private `entry.sessionEnv` and never
+  // appear on this struct. Empty list when no session creds are active.
+  sessionEnvKeys?: string[];
   restartCount: number;
   lastRestartReason?: string;
   toolsCount: number;
@@ -78,6 +123,15 @@ interface Entry {
   // Controller-supplied env values. Merged on every spawn so a creds-update
   // → restart picks them up. Cleared when controller returns nothing.
   controllerEnv: Record<string, string>;
+  // INSPECTOR-CREDS-VISIBILITY: developer-pasted env values from the
+  // inspector loopback UI. In-memory only, never persisted, expire via the
+  // 12h TTL timer (Decision #2). Sit BELOW controllerEnv in the merge
+  // (Decision #1: controller wins per-key). Private to the supervisor —
+  // no public accessor exposes their values to outside callers (W-S9 L7).
+  sessionEnv: Record<string, string>;
+  // Timer that clears sessionEnv at expiry. Per-MCP setTimeout; cleared
+  // and re-armed on each applySessionEnv call.
+  sessionExpiryTimer?: NodeJS.Timeout;
   child?: ChildProcess;
   connection?: McpServerConnection;
   status: McpStatus;
@@ -106,7 +160,12 @@ export interface SupervisorOpts {
   onConnect?: (name: string, connection: McpServerConnection) => void;
 }
 
-export type EnvSource = "controller" | "dir/.env" | "yaml" | "process.env";
+export type EnvSource = "controller" | "session" | "dir/.env" | "yaml" | "process.env";
+
+// INSPECTOR-CREDS-VISIBILITY: 12h hard TTL from paste (Decision #2).
+// Hard cap, not sliding-on-activity. Tests override via the ttlMs arg on
+// applySessionEnv to drive sub-second expiry.
+const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export class McpSupervisor {
   private readonly entries = new Map<string, Entry>();
@@ -139,6 +198,7 @@ export class McpSupervisor {
       this.entries.set(spec.name, {
         spec,
         controllerEnv: {},
+        sessionEnv: {},
         status: {
           name: spec.name,
           process: "stopped",
@@ -188,12 +248,123 @@ export class McpSupervisor {
 
     entry.controllerEnv = env;
     entry.status.credsLastUpdated = nowMs();
-    entry.status.credsSource = source === "none" ? entry.status.credsSource : "controller";
+    // Always recompute: a "none" + empty payload was filtered above
+    // (isEmptyNone short-circuit). For "none" + non-empty (rare —
+    // controller signalling "no row, but here are the dir-fallback
+    // values it'd send anyway") we still want the label to reflect
+    // session+controller layering correctly.
+    entry.status.credsSource = computeCredsSource(entry);
     if (entry.child) {
       await this.restartEntry(entry, reason);
       return { applied: true, restarted: true };
     }
     return { applied: true, restarted: false };
+  }
+
+  // INSPECTOR-CREDS-VISIBILITY: layer developer-pasted creds from the
+  // inspector loopback UI under controllerEnv. Restarts the child if it's
+  // already running; arms a 12h hard TTL timer (Decision #2) that clears
+  // sessionEnv on expiry and triggers a restart so the child re-spawns
+  // without the value. Repeat calls reset the timer (the developer just
+  // re-pasted; treat as fresh).
+  //
+  // ttlMs override is for tests only. Production callers omit it.
+  //
+  // SECURITY: env values never leave this method's argument and the
+  // entry.sessionEnv map. No accessor exposes them. mergeEnv() is the
+  // only reader. The route at /mcp/:name/session-creds (W-S4) accepts
+  // values via POST and never reads them back via GET.
+  async applySessionEnv(
+    mcp: string,
+    env: Record<string, string>,
+    opts: { ttlMs?: number; reason?: string; mode?: "replace" | "merge" } = {},
+  ): Promise<{ applied: boolean; restarted: boolean; expiresAt: number | undefined }> {
+    const entry = this.entries.get(mcp);
+    if (!entry) return { applied: false, restarted: false, expiresAt: undefined };
+
+    const ttl = opts.ttlMs ?? DEFAULT_SESSION_TTL_MS;
+    const reason = opts.reason ?? "session-creds";
+    // Mode chooses how `env` combines with the prior session layer:
+    //   - "replace" (default): supervisor-internal callers and tests get
+    //     full-replace semantics — easy to reason about, easy to clear.
+    //   - "merge":   the inspector route uses this so a form-submit only
+    //     overwrites the keys the developer typed into. Keys absent from
+    //     `env` are preserved (this is what makes the redacted "•••• (set)"
+    //     placeholder work — leaving it blank means "keep current").
+    const merge = opts.mode === "merge";
+    const nextEnv = merge ? { ...entry.sessionEnv, ...env } : { ...env };
+
+    // Empty payload + no prior session creds = no-op. Prevents a "clear"
+    // call on an already-clear MCP from triggering a useless restart.
+    const sameAsPrev = envEquals(entry.sessionEnv, nextEnv);
+    if (sameAsPrev && Object.keys(nextEnv).length === 0) {
+      return { applied: true, restarted: false, expiresAt: entry.status.sessionCredsExpiresAt };
+    }
+
+    if (entry.sessionExpiryTimer) {
+      clearTimeout(entry.sessionExpiryTimer);
+      entry.sessionExpiryTimer = undefined;
+    }
+
+    entry.sessionEnv = nextEnv;
+    const sessionKeys = Object.keys(nextEnv);
+    const hasSession = sessionKeys.length > 0;
+    let expiresAt: number | undefined;
+    if (hasSession) {
+      expiresAt = nowMs() + ttl;
+      entry.status.sessionCredsExpiresAt = expiresAt;
+      // Names only — the values live in the private sessionEnv map.
+      entry.status.sessionEnvKeys = [...sessionKeys];
+      // Arm timer. On expiry, clear sessionEnv + restart so the child
+      // respawns without the value. Re-entrant safe: clearSessionEnv
+      // checks for "already empty" and skips the restart in that case.
+      entry.sessionExpiryTimer = setTimeout(() => {
+        void this.clearSessionEnv(mcp, "session-creds-expired");
+      }, ttl);
+      // Don't keep the event loop alive on the TTL alone (a connector
+      // sitting idle should still be able to exit; we're not waiting on
+      // a 12h timer to fire).
+      entry.sessionExpiryTimer.unref?.();
+    } else {
+      entry.status.sessionCredsExpiresAt = undefined;
+      entry.status.sessionEnvKeys = undefined;
+    }
+
+    entry.status.credsLastUpdated = nowMs();
+    entry.status.credsSource = computeCredsSource(entry);
+
+    if (entry.child) {
+      await this.restartEntry(entry, reason);
+      return { applied: true, restarted: true, expiresAt };
+    }
+    return { applied: true, restarted: false, expiresAt };
+  }
+
+  // Clear session creds for an MCP. Called by the TTL timer on expiry, by
+  // an explicit DELETE /mcp/:name/session-creds (W-S4), or by the W-S2
+  // "session-creds-expired" auto-clear. No-op if already clear.
+  async clearSessionEnv(mcp: string, reason = "session-creds-cleared"): Promise<boolean> {
+    const entry = this.entries.get(mcp);
+    if (!entry) return false;
+    if (entry.sessionExpiryTimer) {
+      clearTimeout(entry.sessionExpiryTimer);
+      entry.sessionExpiryTimer = undefined;
+    }
+    if (Object.keys(entry.sessionEnv).length === 0) {
+      entry.status.sessionCredsExpiresAt = undefined;
+      entry.status.sessionEnvKeys = undefined;
+      return false;
+    }
+    entry.sessionEnv = {};
+    entry.status.sessionCredsExpiresAt = undefined;
+    entry.status.sessionEnvKeys = undefined;
+    entry.status.credsLastUpdated = nowMs();
+    entry.status.credsSource = computeCredsSource(entry);
+    if (entry.child) {
+      await this.restartEntry(entry, reason);
+      return true;
+    }
+    return true;
   }
 
   async restart(name: string, reason = "manual"): Promise<boolean> {
@@ -224,6 +395,7 @@ export class McpSupervisor {
     this.entries.set(spec.name, {
       spec,
       controllerEnv: {},
+      sessionEnv: {},
       status: {
         name: spec.name,
         process: "stopped",
@@ -410,6 +582,12 @@ export class McpSupervisor {
   }
 
   private async stopEntry(entry: Entry): Promise<void> {
+    // INSPECTOR-CREDS-VISIBILITY: cancel the session-creds expiry timer so
+    // it can't fire on a stopped (or about-to-be-unregistered) entry.
+    if (entry.sessionExpiryTimer) {
+      clearTimeout(entry.sessionExpiryTimer);
+      entry.sessionExpiryTimer = undefined;
+    }
     if (entry.connection) {
       try { await entry.connection.close(); } catch { /* swallow */ }
       entry.connection = undefined;
@@ -456,6 +634,10 @@ export class McpSupervisor {
     if (dropin) {
       env.DROPIN_DIR = dir;
       env.DROPIN_NAME = spec.name;
+      // Make framework deps (zod, @mcp-shim/connector/sdk) resolvable from
+      // a drop-in folder that sits OUTSIDE the connector's repo tree. See
+      // computeDropinNodePath() above for the rationale.
+      env.NODE_PATH = DROPIN_NODE_PATH;
     }
     sources.PORT = "process.env";
 
@@ -485,10 +667,12 @@ export class McpSupervisor {
   }
 
   // Build the env passed to the child. Layered per CLAUDE.md "highest-risk
-  // piece" rule, plus the controller-supplied layer at the top:
-  //   process.env  ⊕  spec.env (yaml inline + dir/.env)  ⊕  controllerEnv
-  // controllerEnv wins last. Records each var's source so onSpawn can log
-  // the W-B3 deprecation tracker.
+  // piece" rule, plus two extra layers for the inspector loopback creds
+  // (INSPECTOR-CREDS-VISIBILITY) and the controller:
+  //   process.env  ⊕  spec.env (yaml inline + dir/.env)  ⊕  sessionEnv  ⊕  controllerEnv
+  // controllerEnv wins last (Decision #1: controller always wins per-key).
+  // sessionEnv fills gaps the controller hasn't covered. Records each var's
+  // source so onSpawn can log the W-B3 deprecation tracker.
   private mergeEnv(
     entry: Entry,
     sources: Record<string, EnvSource>,
@@ -509,6 +693,10 @@ export class McpSupervisor {
         // a folder with a .env file present; otherwise yaml inline.
         sources[key] = "dir/.env";
       }
+    }
+    for (const [key, value] of Object.entries(entry.sessionEnv ?? {})) {
+      out[key] = value;
+      sources[key] = "session";
     }
     for (const [key, value] of Object.entries(entry.controllerEnv)) {
       out[key] = value;
@@ -537,6 +725,24 @@ function envEquals(a: Record<string, string>, b: Record<string, string>): boolea
   if (aKeys.length !== bKeys.length) return false;
   for (const k of aKeys) if (a[k] !== b[k]) return false;
   return true;
+}
+
+// INSPECTOR-CREDS-VISIBILITY: derive the inspector-visible credsSource
+// label from the supervisor's per-layer env state. Used by both
+// applyControllerEnv and applySessionEnv.
+//
+// "controller+session" wins when both layers have values; "session" alone
+// when only the inspector loopback paste is active; "controller" when only
+// the controller-pushed values are active; otherwise we fall back to the
+// spec-defined baseline ("dir/.env" if the spec carries env, else "none")
+// — same rule that register()/registerOne() use at entry creation.
+function computeCredsSource(entry: { spec: SupervisedSpec; controllerEnv: Record<string, string>; sessionEnv?: Record<string, string> }): McpStatus["credsSource"] {
+  const hasController = Object.keys(entry.controllerEnv ?? {}).length > 0;
+  const hasSession = Object.keys(entry.sessionEnv ?? {}).length > 0;
+  if (hasController && hasSession) return "controller+session";
+  if (hasController) return "controller";
+  if (hasSession) return "session";
+  return entry.spec.env ? "dir/.env" : "none";
 }
 
 function canBind(port: number): Promise<boolean> {
