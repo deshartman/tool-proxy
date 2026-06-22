@@ -44,14 +44,17 @@ tunnel:
   environment: dev
 
 mcp_servers:
-  # ── Type 1 (customer-authored, auto-spawned) ─────────────────────────
-  - name: sample
-    transport: http
-    dir: ../../mcp/local/sample
-
-  - name: crm
-    transport: http
-    dir: ../../mcp/local/crm
+  # ── Type 1 (customer-authored) ───────────────────────────────────────
+  # Customer-authored locals are NOT listed here. Drop a folder at
+  #   ${MCP_DROPIN_DIR}/<name>/tools/*.ts
+  # (defaults to mcp/local/<name>/ in dev, /var/lib/mcp-connector/customer-mcps/<name>/
+  # in prod) and the connector's drop-in scanner picks it up at boot. The
+  # synthesized child runtime in src/sdk/dropin-runner.ts does the wiring.
+  # See docs/AUTHOR-LOCAL-MCP.md.
+  #
+  # If a folder needs the legacy hand-authored shape (its own server.ts),
+  # it can still be listed here with `transport: http` + `dir:`. The yaml
+  # entry wins over drop-in discovery for the same folder name.
 
   # Twilio-authored Type 1 living under mcp/bundled/. "Bundled" describes
   # who ships it (Twilio, pre-installed in the connector image); the wire

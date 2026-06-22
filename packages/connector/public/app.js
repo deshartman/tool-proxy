@@ -30,6 +30,8 @@ const elWebhooksEmpty = document.getElementById('webhooks-empty');
 const elWebhooksList = document.getElementById('webhooks-list');
 const elMcpStatusEmpty = document.getElementById('mcp-status-empty');
 const elMcpStatusList = document.getElementById('mcp-status-list');
+const elRescanLocal = document.getElementById('rescan-local');
+const elRescanLocalStatus = document.getElementById('rescan-local-status');
 
 let showHeartbeats = false;
 // selection: null | { kind: 'tool', key, tool, serverName } | { kind: 'frame', tap, frameId }
@@ -89,6 +91,40 @@ elClear.addEventListener('click', () => {
   elFrames.appendChild(li);
   if (selection?.kind === 'frame') setSelection(null);
 });
+
+// W-L2: Refresh local MCPs — re-scan ${MCP_DROPIN_DIR} for new drop-in
+// folders and reconcile against the supervisor. Loopback-only POST against
+// the inspector port (same trust boundary as everything else here).
+elRescanLocal?.addEventListener('click', () => void runRescanLocal());
+
+async function runRescanLocal() {
+  if (!elRescanLocal) return;
+  elRescanLocal.disabled = true;
+  elRescanLocalStatus.textContent = 'scanning…';
+  elRescanLocalStatus.className = 'muted';
+  try {
+    const resp = await fetch('/mcp/rescan-local', { method: 'POST' });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      elRescanLocalStatus.textContent = body.error || `HTTP ${resp.status}`;
+      elRescanLocalStatus.className = 'mcp-action-status err';
+      return;
+    }
+    const a = (body.added || []).length;
+    const r = (body.removed || []).length;
+    const e = (body.errors || []).length;
+    let msg;
+    if (a === 0 && r === 0 && e === 0) msg = 'no changes';
+    else msg = `+${a} added · -${r} removed${e ? ` · ${e} error${e === 1 ? '' : 's'}` : ''}`;
+    elRescanLocalStatus.textContent = msg;
+    elRescanLocalStatus.className = e > 0 ? 'mcp-action-status err' : 'mcp-action-status ok';
+  } catch (err) {
+    elRescanLocalStatus.textContent = String(err.message || err);
+    elRescanLocalStatus.className = 'mcp-action-status err';
+  } finally {
+    elRescanLocal.disabled = false;
+  }
+}
 
 // Reconnect button: disable + show 'reconnecting…' until the SSE stream
 // reports a state change away from 'connecting' / 'reconnecting'. The
@@ -797,11 +833,15 @@ function buildMcpStatusRow(s) {
   const restartLine = s.restartCount === 0
     ? 'no restarts'
     : `${s.restartCount} restart${s.restartCount === 1 ? '' : 's'}` + (s.lastRestartReason ? ` (${s.lastRestartReason})` : '');
-  // W-E6: source badge — distinguishes yaml-listed entries (bundled +
-  // customer-authored) from controller-pushed 3rd-party MCPs. mcpId is the
-  // controller-minted opaque key, surfaced for operator-side correlation
-  // with the controller's row.
-  const sourceLabel = s.source === 'controller-config' ? 'controller' : 'yaml';
+  // W-E6 / W-L1: source badge — three values:
+  //   "yaml"              — bundled (Twilio-shipped) entry from connector.yaml
+  //   "local"             — customer-authored drop-in folder under MCP_DROPIN_DIR
+  //   "controller-config" — controller-pushed 3rd-party MCP
+  // mcpId is the controller-minted opaque key, surfaced for operator-side
+  // correlation with the controller's row.
+  let sourceLabel = 'yaml';
+  if (s.source === 'controller-config') sourceLabel = 'controller';
+  else if (s.source === 'local') sourceLabel = 'local';
   const sourceBadge = `<span class="mcp-source-badge mcp-source-${s.source || 'yaml'}">${escapeHtml(sourceLabel)}</span>`;
   const mcpIdLine = s.mcpId
     ? `<div><span class="muted">mcpId:</span> <code>${escapeHtml(s.mcpId)}</code></div>`
