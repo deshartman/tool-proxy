@@ -40,7 +40,7 @@ URL contract:
 - Random **tail** re-mints on every reconnect — listen for `cb.on("url", …)` if you cache the URL anywhere (most authors don't need to).
 - Bcrypt-protected on the controller; the connector never persists it.
 
-When the WS is down the controller returns 503 and Twilio retries upstream — the connector does **not** buffer. See [`.claude/plans/STATUS-CALLBACK-MCP.md`](.claude/plans/STATUS-CALLBACK-MCP.md) for the full design.
+When the WS is down the controller returns 503 and Twilio retries upstream — the connector does **not** buffer.
 
 ## Layout
 
@@ -159,7 +159,7 @@ npm test            # one-shot vitest run
 npm run test:watch  # watch mode
 ```
 
-Tests live at `packages/connector/tests/**/*.test.ts`. Regression-driven — see [`.claude/plans/TEST-SUITE.md`](.claude/plans/TEST-SUITE.md) for the living catalog and the rationale for peer-tests over colocation.
+Tests live at `packages/connector/tests/**/*.test.ts` (peer-tests, not colocated — keeps tests outside `tsconfig.json`'s `rootDir: "src"` so they don't compile into `dist/` and ship in the OCI image). Suite is regression-driven: cases are added when manual scenarios surface real bugs, not for coverage.
 
 ## CLI
 

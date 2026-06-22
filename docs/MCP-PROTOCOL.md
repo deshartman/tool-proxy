@@ -2,7 +2,7 @@
 
 > **Audience.** This document is the contract between the customer-side **MCP connector** and the **controller**. It specifies every frame the connector sends or accepts on the `/mcp-tunnel` WSS, and the controller-side behaviour the connector relies on.
 >
-> **Authority.** This is the authoritative wire-format spec. Plans (e.g. [.claude/plans/MCP-LOADING.md](../.claude/plans/MCP-LOADING.md)) describe *intent*; this document is what each side actually implements. If a frame is described here, it MUST be implemented per the schema below; if it is not described here, it MUST NOT be sent without first updating this doc.
+> **Authority.** This is the authoritative wire-format spec. If a frame is described here, it MUST be implemented per the schema below; if it is not described here, it MUST NOT be sent without first updating this doc.
 >
 > **Version.** v1.2 — additions covered by the most recent revisions:
 > - **v1** baseline: `creds-request`, `creds-response`, `creds-update`.
@@ -508,7 +508,7 @@ The frames below are unchanged by this revision. See [packages/connector/src/tun
 - `rpc` — opaque MCP JSON-RPC, both directions
 - `heartbeat` — connector → controller every `policy.heartbeat_interval_ms`
 - `goodbye` — connector → controller before SIGTERM-driven WS close
-- `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke` — webhook ingress (see [.claude/plans/STATUS-CALLBACK-MCP.md](../.claude/plans/STATUS-CALLBACK-MCP.md))
+- `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke` — webhook ingress (Twilio statusCallback / inbound-webhook delivery routed back over the tunnel)
 
 ## v1.1 — 3rd-party MCP roster (controller-driven)
 
@@ -947,7 +947,7 @@ The connector's boot soft-wait expects a snapshot to arrive within ~5s of regist
 
 ## v1.2 — Local MCP rescan (controller-triggered)
 
-W-L2 of [.claude/plans/Done/MCP-LOADING-LOCAL.md](../.claude/plans/Done/MCP-LOADING-LOCAL.md). The customer-authored "local" MCP shape is folders under `${MCP_DROPIN_DIR}/<name>/tools/*.ts` discovered by the connector at boot (see [src/dropin.ts](../packages/connector/src/dropin.ts)). Without an explicit refresh frame, dropping a new folder into a running connector requires a process restart for the controller to see it. v1.2 closes that gap with a single round-trip on the existing tunnel.
+The customer-authored "local" MCP shape is folders under `${MCP_DROPIN_DIR}/<name>/{tools,prompts,resources}/*.ts` discovered by the connector at boot (see [src/dropin.ts](../packages/connector/src/dropin.ts) and the authoring walkthrough at [docs/AUTHOR-LOCAL-MCP.md](AUTHOR-LOCAL-MCP.md)). Without an explicit refresh frame, dropping a new folder into a running connector requires a process restart for the controller to see it. v1.2 closes that gap with a single round-trip on the existing tunnel.
 
 Two frames, both opaque to the customer:
 
@@ -988,13 +988,11 @@ The ack is fire-and-forget — there's no second round-trip from the controller.
 
 **Inspector parity.** The connector also exposes the same operation via a loopback-only POST at `/mcp/rescan-local` on the inspector port — for local-dev iteration that doesn't need the controller round-trip. Same coordinator method on both paths.
 
-**No fs-watcher.** Operator-driven only. An auto-watcher on `${MCP_DROPIN_DIR}` was considered and rejected — see [.claude/plans/Done/MCP-LOADING-LOCAL.md](../.claude/plans/Done/MCP-LOADING-LOCAL.md) DL4 for the rationale.
+**No fs-watcher.** Operator-driven only. An auto-watcher on `${MCP_DROPIN_DIR}` was deliberately rejected — fs events fire mid-edit (a save-in-progress would spawn a child against half-written code), the connector has no way to distinguish operator intent ("I'm done editing") from intermediate save events, and a debounce window would just push the race. Explicit operator action is the right primitive.
 
 **Backwards compat.** A v1.1 controller never sends this frame, so the connector's behaviour is unchanged. A v1.1 connector ignores the frame per the unknown-frame rule and the controller's UI surfaces "rescan unsupported by this connector version."
 
 ## v1.2 — MCP server-method extension (prompts / resources / completions / logging)
-
-> Source plan: [.claude/plans/MCP-CLIENT-USE.md](../.claude/plans/MCP-CLIENT-USE.md). Self-describing — read that plan + this section + [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) and a fresh-context Claude can implement the controller side.
 
 ### Why
 
@@ -1122,8 +1120,7 @@ When adding a frame, update this document FIRST, then implement.
 
 ## Cross-references
 
-- [.claude/plans/MCP-LOADING.md](../.claude/plans/MCP-LOADING.md) — design intent, why these frames exist, workstream breakdown.
 - [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) — TypeScript type definitions for all frames.
 - [packages/connector/src/tunnel/client.ts](../packages/connector/src/tunnel/client.ts) — connector-side WS client.
+- [docs/AUTHOR-LOCAL-MCP.md](AUTHOR-LOCAL-MCP.md) — author-side walkthrough for the v1.2 drop-in shape (tools, prompts, resources).
 - [CLAUDE.md](../CLAUDE.md) — connector architecture, "Wire protocol — frames" section.
-- [.claude/plans/STATUS-CALLBACK-MCP.md](../.claude/plans/STATUS-CALLBACK-MCP.md) — webhook frames spec.

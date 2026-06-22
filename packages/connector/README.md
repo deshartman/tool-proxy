@@ -27,9 +27,11 @@ Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts); the contract for the 
 - `rpc { payload }` — opaque MCP JSON-RPC, both directions
 - `heartbeat { ts }` — every `policy.heartbeat_interval_ms`
 - `goodbye { reason? }` — graceful shutdown signal
-- `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke` — webhook ingress, see [`.claude/plans/STATUS-CALLBACK-MCP.md`](../../.claude/plans/STATUS-CALLBACK-MCP.md)
-- `creds-request` (out) / `creds-response` (in) / `creds-update` (in) — per-MCP creds protocol. The connector asks the controller for env values for each MCP after `register-ack`; the controller stores them in its existing UI/DB and pushes updates when an operator edits them. See [`.claude/plans/MCP-LOADING.md`](../../.claude/plans/MCP-LOADING.md).
-- `mcp-config-snapshot` (in) / `mcp-config-delta` (in) / `mcp-config-ack` (out) / `mcp-config-resync` (out) — v1.1 controller-driven 3rd-party MCP roster. Operators manage 3rd-party MCPs through the controller UI; the controller pushes the roster to the connector over the existing tunnel. The connector reconciles in-memory (no yaml rewrite); auth shapes (`none` / `bearer` / `header` / `oauth2-client-credentials`) and HTTP-family transports (http / streamable-http / sse / websocket) are resolved at spawn time. WebSocket auth must be embedded in the URL — the SDK's WS transport accepts no headers. See [`.claude/plans/MCP-LOADING.md`](../../.claude/plans/MCP-LOADING.md) Workstream E and `docs/MCP-PROTOCOL.md` v1.1.
+- `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke` — webhook ingress (Twilio statusCallback / inbound-webhook delivery routed back over the tunnel)
+- `creds-request` (out) / `creds-response` (in) / `creds-update` (in) — per-MCP creds protocol. The connector asks the controller for env values for each MCP after `register-ack`; the controller stores them in its existing UI/DB and pushes updates when an operator edits them. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"New frames added in v1".
+- `mcp-config-snapshot` (in) / `mcp-config-delta` (in) / `mcp-config-ack` (out) / `mcp-config-resync` (out) — v1.1 controller-driven 3rd-party MCP roster. Operators manage 3rd-party MCPs through the controller UI; the controller pushes the roster to the connector over the existing tunnel. The connector reconciles in-memory (no yaml rewrite); auth shapes (`none` / `bearer` / `header` / `oauth2-client-credentials`) and HTTP-family transports (http / streamable-http / sse / websocket) are resolved at spawn time. WebSocket auth must be embedded in the URL — the SDK's WS transport accepts no headers. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.1 — 3rd-party MCP roster".
+- `local-mcps-rescan` (in) / `local-mcps-rescan-ack` (out) — v1.2 controller-triggered rescan of customer-authored drop-in MCPs. Operator clicks **Refresh local MCPs** in the controller UI; the connector re-runs its drop-in scanner and reconciles new / removed folders. Same operation exposed loopback-only at `/mcp/rescan-local` on the inspector port for local-dev iteration. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
+- `mcp-notification` (out) — v1.2 server→client notifications forwarded from local MCPs to the controller (`notifications/progress`, `notifications/message`, `notifications/resources/updated`, `notifications/{tools,prompts,resources}/list_changed`). See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension".
 
 Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector splits on the first `.`.
 
@@ -124,7 +126,7 @@ Picking up a freshly-dropped folder doesn't need a process restart. Two paths:
 - **Controller UI** — Connector detail → MCPs tab → **Refresh local MCPs**. Emits a `local-mcps-rescan` frame down the WSS tunnel; the connector re-runs its drop-in scanner and reconciles new / removed folders against the running supervisor entries. Manifest changes ride the existing `manifest-delta` path. See [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
 - **Inspector** — <http://localhost:9090/> → **MCP Status** panel → **Refresh local MCPs**. Loopback-only POST against the connector's inspector port; same coordinator method, no controller round-trip. Useful when iterating locally.
 
-Operator-driven only — there's no fs-watcher. See DL4 in [.claude/plans/Done/MCP-LOADING-LOCAL.md](../../.claude/plans/Done/MCP-LOADING-LOCAL.md) for the rationale.
+Operator-driven only — there's no fs-watcher. fs events fire mid-edit (a save-in-progress would spawn against half-written code) and there's no clean way to tell "operator finished editing" from intermediate save events; explicit operator action is the right primitive.
 
 #### Per-MCP creds from the controller
 
@@ -154,7 +156,7 @@ Keep individual tool files **unaware** of creds gating — register them or don'
 
 #### `outputSchema` + `structuredContent` — five rules
 
-Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 / Type 3 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker. (See [.claude/plans/OUTPUT-SCHEMA.md](../../.claude/plans/OUTPUT-SCHEMA.md).)
+Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 / Type 3 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker.
 
 1. **Plain object of zod fields, NOT `z.object({...})`.** SDK convention — wrapping in `z.object` changes the inferred argument type and breaks the handler signature. See [`mcp/local/crm/tools/get-recent.ts`](../../mcp/local/crm/tools/get-recent.ts) for the canonical shape.
 2. **Every field gets `.describe(...)`.** This is the contract authors read in the controller UI.
@@ -200,7 +202,7 @@ The connector forwards the full server-method surface (`prompts/list`, `prompts/
 
 ## Tests
 
-Vitest skeleton for defensive regression tests. The suite is regression-driven: tests are added when manual scenarios surface real bugs. See [`.claude/plans/TEST-SUITE.md`](../../.claude/plans/TEST-SUITE.md).
+Vitest skeleton for defensive regression tests. The suite is regression-driven: tests are added when manual scenarios surface real bugs, not for coverage. Tests live at `packages/connector/tests/**/*.test.ts` (peer-tests, not colocated — keeps tests outside `tsconfig.json`'s `rootDir: "src"` so they don't compile into `dist/` and ship in the OCI image).
 
 ```bash
 cd packages/connector
