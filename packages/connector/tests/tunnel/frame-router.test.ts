@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -199,7 +199,6 @@ describe("frame-router register-ack error sub-table", () => {
     // Pre-create the file via the same atomic-rename code path so the test
     // mirrors a real boot. Easiest: use writeFileSync directly since we're
     // simulating the prior session's write.
-    const { writeFileSync } = require("node:fs");
     writeFileSync(h.statePath, JSON.stringify({ registrationToken: "tok_stale_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }));
     expect(existsSync(h.statePath)).toBe(true);
 

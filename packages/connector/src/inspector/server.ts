@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { resolve as resolvePath } from "node:path";
+import { dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FrameTap, WsState } from "../tunnel/client.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 import type { WebhookRegistry, WebhookEvent } from "../tunnel/webhook-registry.js";
@@ -83,13 +84,16 @@ export interface InspectorState {
   mcpStatuses?: McpStatus[];
 }
 
-// Per-MCP operator actions wired by boot/lifecycle. Both routes return
-// after the supervisor (or coordinator) has triggered the underlying work
-// — they don't wait for completion. The UI re-renders from the next
-// mcpStatuses snapshot.
+// Per-MCP operator actions wired by boot/lifecycle. Routes return after
+// the supervisor (or coordinator) has triggered the underlying work —
+// they don't wait for completion. The UI re-renders from the next
+// mcpStatuses snapshot. rescanLocal is the W-L2 entry point: re-scan
+// MCP_DROPIN_DIR and reconcile new / removed folders against the
+// running supervisor entries.
 export interface McpActions {
   reloadCreds(name: string): Promise<void>;
   restart(name: string): Promise<void>;
+  rescanLocal?(): Promise<{ added: { name: string; toolsCount: number }[]; removed: string[]; unchanged: string[]; errors: { name: string; error: string }[] }>;
 }
 
 const RING_SIZE = 500;
@@ -216,8 +220,9 @@ const STATIC_TYPES: Record<string, string> = {
   ".css":  "text/css; charset=utf-8",
 };
 
-// __dirname is dist/inspector/ at runtime; static UI is at ../../public/.
-const publicDir = resolvePath(__dirname, "../../public");
+// At runtime this resolves to dist/inspector/; static UI is at ../../public/.
+const here = dirname(fileURLToPath(import.meta.url));
+const publicDir = resolvePath(here, "../../public");
 
 async function serveStatic(res: ServerResponse, name: string): Promise<void> {
   const ext = name.slice(name.lastIndexOf("."));
@@ -367,6 +372,28 @@ async function handleMcpAction(
   }
 }
 
+async function handleRescanLocal(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+): Promise<void> {
+  const actions = inspector.mcpActions;
+  res.setHeader("content-type", "application/json");
+  if (!actions?.rescanLocal) {
+    res.statusCode = 503;
+    res.end('{"ok":false,"error":"rescanLocal not configured"}');
+    return;
+  }
+  try {
+    const summary = await actions.rescanLocal();
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true, ...summary }));
+  } catch (err) {
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
 function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Inspector, mcp: string): void {
   const reg = inspector.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
@@ -445,6 +472,10 @@ export function startInspector(port: number, inspector: Inspector): void {
     }
     if (path === "/mcp/restart" && req.method === "POST") {
       void handleMcpAction(req, res, inspector, "restart");
+      return;
+    }
+    if (path === "/mcp/rescan-local" && req.method === "POST") {
+      void handleRescanLocal(req, res, inspector);
       return;
     }
     if (path === "/" || path === "/index.html") { void serveStatic(res, "index.html"); return; }

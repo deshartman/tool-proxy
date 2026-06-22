@@ -6,9 +6,10 @@ The earlier PoC (in-shim LLM agent, `can_answer` / `ask_procedure`) is preserved
 
 ## What it does
 
-1. Reads `connector.yaml` describing one or more **MCP servers**, each falling into one of two patterns:
-   - **Type 1 — customer-authored.** `transport: http` + `dir:` (no `endpoint`). The connector spawns `tsx <dir>/server.ts` as a child, auto-assigns a localhost port, and treats it like any HTTP MCP from there.
-   - **Type 2 — connect to existing.** `transport: http` with `endpoint:` set, or `transport: stdio` with `command:` set. Optional `dir:` whose `.env` is loaded into the child's environment.
+1. Reads `connector.yaml` (yaml-listed bundled / hand-written MCPs) AND auto-discovers customer-authored drop-in folders under `${MCP_DROPIN_DIR}/<name>/`:
+   - **Type 1 (customer-authored, drop-in shape — default).** Folder under `mcp/local/<name>/{tools,prompts,resources}/*.ts`. No yaml entry, no `server.ts`. The drop-in scanner finds the folder; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) spawns a per-folder subprocess.
+   - **Type 1 (hand-written, legacy escape hatch).** Yaml entry with `transport: http` + `dir:` (no `endpoint`). The connector spawns `tsx <dir>/server.ts` as a child. Used by `mcp/bundled/twilio/` (Twilio-authored Type 1 with the `twilio` SDK in its own `package.json`).
+   - **Type 2 — connect to existing 3rd-party MCP.** Pushed via the controller UI (NOT the yaml) as `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) v1.1.
 2. Connects to each, runs `tools/list` to discover their tools.
 3. Builds a **`ToolManifest`** by aggregating every discovered tool. Trust boundary is per-MCP-server: pick which servers run, get every tool they expose.
 4. Dials out to a controller URL via WSS and pushes `{ type: "register", manifest }`.
@@ -79,63 +80,12 @@ The connector serves an **inspector UI at http://localhost:9090/** showing:
 
 To pick up `mcp_servers` changes, restart the connector — those connections are made at process boot. `policy` changes pick up via Reconnect.
 
-### Author a Type 1 MCP
+### Author a local MCP (drop-in)
 
-Drop a folder under `mcp/local/<name>/`:
+Drop a folder under `mcp/local/<name>/tools/` with one or more tool files. That's it — no `server.ts`, no `package.json`, no `.env`, no yaml entry. The connector's drop-in scanner ([`src/dropin.ts`](src/dropin.ts)) discovers the folder at boot; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) wires every tool into a per-folder subprocess. Folder name = MCP name.
 
 ```ts
 // mcp/local/my-mcp/tools/echo.ts
-import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
-
-const OutputSchema = {
-  echoed: z.string().describe("The text we echoed back."),
-};
-
-export const echo: Tool = {
-  name: "echo",
-  register(server) {
-    server.registerTool(
-      "echo",
-      {
-        description: "Echo a string back.",
-        inputSchema: { text: z.string() },
-        outputSchema: OutputSchema,
-      },
-      async ({ text }) => ({
-        structuredContent: { echoed: text },
-        content: [{ type: "text", text }],
-      }),
-    );
-  },
-};
-```
-
-```ts
-// mcp/local/my-mcp/server.ts
-import { createMcpHttpServer } from "@mcp-shim/connector/sdk";
-import { echo } from "./tools/echo.js";
-
-await createMcpHttpServer({ name: "my-mcp", tools: [echo] });
-```
-
-```yaml
-# packages/connector/connector.yaml
-- name: my-mcp
-  transport: http
-  dir: ../../mcp/local/my-mcp
-```
-
-No `package.json`, no build step, no port to pick. The connector spawns `tsx server.ts` for you.
-
-#### Drop-in shape — skip the `server.ts`
-
-Even simpler: drop a folder under `${MCP_DROPIN_DIR}/<name>/tools/*.ts` with no `server.ts` and no yaml entry. The connector auto-discovers the folder at boot and synthesizes the boilerplate via [`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts). Each `tools/*.ts` should default-export a `Tool` (named exports work as a fallback).
-
-`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` (the example above) or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative.
-
-```ts
-// /var/lib/mcp-connector/customer-mcps/my-mcp/tools/echo.ts
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
@@ -145,13 +95,36 @@ const echo: Tool = {
   register(server) {
     server.registerTool(
       "echo",
-      { description: "Echo a string back.", inputSchema: { text: z.string() } },
-      async ({ text }) => ({ content: [{ type: "text", text: `${process.env.ECHO_PREFIX ?? ""}${text}` }] }),
+      {
+        description: "Echo a string back.",
+        inputSchema: { text: z.string() },
+        outputSchema: { echoed: z.string().describe("The text we echoed back.") },
+      },
+      async ({ text }) => {
+        const echoed = `${process.env.ECHO_PREFIX ?? ""}${text}`;
+        return {
+          structuredContent: { echoed },
+          content: [{ type: "text", text: echoed }],
+        };
+      },
     );
   },
 };
 export default echo;
 ```
+
+For more depth — env precedence, `Refresh local MCPs`, the third-party-SDK case — see [docs/AUTHOR-LOCAL-MCP.md](../../docs/AUTHOR-LOCAL-MCP.md).
+
+`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative (legacy escape hatch; new MCPs should use the drop-in shape).
+
+#### Refresh without a restart
+
+Picking up a freshly-dropped folder doesn't need a process restart. Two paths:
+
+- **Controller UI** — Connector detail → MCPs tab → **Refresh local MCPs**. Emits a `local-mcps-rescan` frame down the WSS tunnel; the connector re-runs its drop-in scanner and reconciles new / removed folders against the running supervisor entries. Manifest changes ride the existing `manifest-delta` path. See [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
+- **Inspector** — <http://localhost:9090/> → **MCP Status** panel → **Refresh local MCPs**. Loopback-only POST against the connector's inspector port; same coordinator method, no controller round-trip. Useful when iterating locally.
+
+Operator-driven only — there's no fs-watcher. See DL4 in [.claude/plans/Done/MCP-LOADING-LOCAL.md](../../.claude/plans/Done/MCP-LOADING-LOCAL.md) for the rationale.
 
 #### Per-MCP creds from the controller
 
@@ -190,6 +163,40 @@ Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side proce
 5. **Errors return `content[]` only — no `structuredContent`.** Tool-level failure is signalled via `isError: true` (or just an error envelope in `content[0].text`). Do NOT also set `structuredContent` on the error path — the SDK validates `structuredContent` against `outputSchema` even when `isError: true`, and an error envelope shape (`{ error: "no_customer" }`) won't match a success schema. The schema describes the success shape only.
 
 Type 2 tools (external `endpoint:` / `command:` MCPs) advertise whatever their upstream `tools/list` returns. The connector forwards that verbatim — schema or not — and the controller handles the missing-schema case gracefully.
+
+#### Prompts and resources (v1.2)
+
+Both follow the same author shape as tools — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. **In drop-in folders** (the default authoring shape) the runner auto-discovers `prompts/*.ts` and `resources/*.ts` siblings of `tools/`; nothing else needed. Worked examples in [`mcp/local/sample/prompts/weather-briefing.ts`](../../mcp/local/sample/prompts/weather-briefing.ts) and [`mcp/local/sample/resources/uuids-recent.ts`](../../mcp/local/sample/resources/uuids-recent.ts).
+
+```
+mcp/local/my-mcp/
+├── tools/
+│   └── echo.ts            # exports default Tool { name, register }
+├── prompts/
+│   └── greeting.ts        # exports default Prompt { name, register }
+└── resources/
+    └── welcome.ts         # exports default Resource { name, register }
+```
+
+For the legacy hand-written shape, the factory accepts `prompts: Prompt[]` and `resources: Resource[]` alongside `tools`:
+
+```ts
+// mcp/local/my-mcp/server.ts (legacy escape hatch only)
+await createMcpHttpServer({
+  name: "my-mcp",
+  tools: [echo],
+  prompts: [greeting],          // optional; declares the `prompts` capability
+  resources: [welcomeMessage],  // optional; declares the `resources` capability
+});
+```
+
+The split mirrors what the protocol expects:
+
+- **Tools** = side-effecting operations the procedure runtime invokes (`messages_create`, `issue_refund`, `voice_say`).
+- **Prompts** = parameterised templates the controller's procedure-author UI consumes (`compose_compliant_sms_campaign`, `refund_eligibility_check`). Authored once per MCP, version-controlled.
+- **Resources** = read-only canonical state surfaced as named, citeable artefacts (`twilio://content-templates`, `ek://sources/{source_id}`). Procedures read them via `resources/read` instead of burning a tool call. Authors that need server-pushed freshness signal `subscribe: true` on the underlying SDK call so the connector forwards `notifications/resources/updated` as `mcp-notification`.
+
+The connector forwards the full server-method surface (`prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `completion/complete`, `logging/setLevel`) and wraps server-initiated notifications as the `mcp-notification` frame. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension" for the wire contract.
 
 ## Tests
 

@@ -30,6 +30,8 @@ const elWebhooksEmpty = document.getElementById('webhooks-empty');
 const elWebhooksList = document.getElementById('webhooks-list');
 const elMcpStatusEmpty = document.getElementById('mcp-status-empty');
 const elMcpStatusList = document.getElementById('mcp-status-list');
+const elRescanLocal = document.getElementById('rescan-local');
+const elRescanLocalStatus = document.getElementById('rescan-local-status');
 
 let showHeartbeats = false;
 // selection: null | { kind: 'tool', key, tool, serverName } | { kind: 'frame', tap, frameId }
@@ -89,6 +91,40 @@ elClear.addEventListener('click', () => {
   elFrames.appendChild(li);
   if (selection?.kind === 'frame') setSelection(null);
 });
+
+// W-L2: Refresh local MCPs — re-scan ${MCP_DROPIN_DIR} for new drop-in
+// folders and reconcile against the supervisor. Loopback-only POST against
+// the inspector port (same trust boundary as everything else here).
+elRescanLocal?.addEventListener('click', () => void runRescanLocal());
+
+async function runRescanLocal() {
+  if (!elRescanLocal) return;
+  elRescanLocal.disabled = true;
+  elRescanLocalStatus.textContent = 'scanning…';
+  elRescanLocalStatus.className = 'muted';
+  try {
+    const resp = await fetch('/mcp/rescan-local', { method: 'POST' });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      elRescanLocalStatus.textContent = body.error || `HTTP ${resp.status}`;
+      elRescanLocalStatus.className = 'mcp-action-status err';
+      return;
+    }
+    const a = (body.added || []).length;
+    const r = (body.removed || []).length;
+    const e = (body.errors || []).length;
+    let msg;
+    if (a === 0 && r === 0 && e === 0) msg = 'no changes';
+    else msg = `+${a} added · -${r} removed${e ? ` · ${e} error${e === 1 ? '' : 's'}` : ''}`;
+    elRescanLocalStatus.textContent = msg;
+    elRescanLocalStatus.className = e > 0 ? 'mcp-action-status err' : 'mcp-action-status ok';
+  } catch (err) {
+    elRescanLocalStatus.textContent = String(err.message || err);
+    elRescanLocalStatus.className = 'mcp-action-status err';
+  } finally {
+    elRescanLocal.disabled = false;
+  }
+}
 
 // Reconnect button: disable + show 'reconnecting…' until the SSE stream
 // reports a state change away from 'connecting' / 'reconnecting'. The
@@ -275,7 +311,11 @@ function renderManifest(m) {
   for (const s of m.servers) {
     elMServers.appendChild(buildServerCard(s));
   }
-  // Drop selection if the selected tool no longer exists.
+  // Drop selection if the selected item no longer exists. v1.2 also covers
+  // prompt / resource / resourceTemplate selections.
+  if (selection?.kind === 'prompt' || selection?.kind === 'resource' || selection?.kind === 'resourceTemplate') {
+    setSelection(null);
+  }
   if (selection?.kind === 'tool') {
     const stillThere = m.servers.some(
       (s) => s.name === selection.serverName && s.tools.some((t) => t.name === selection.tool.name)
@@ -288,8 +328,11 @@ function renderManifest(m) {
 function buildServerCard(s) {
   const card = document.createElement('div');
   card.className = 'server-card';
-  const count = s.tools.length;
-  const countLabel = count === 1 ? '1 tool' : `${count} tools`;
+  const promptsCount = (s.prompts || []).length;
+  const resourcesCount = (s.resources || []).length + (s.resourceTemplates || []).length;
+  const meta = [pluralLabel(s.tools.length, 'tool')];
+  if (promptsCount > 0) meta.push(pluralLabel(promptsCount, 'prompt'));
+  if (resourcesCount > 0) meta.push(pluralLabel(resourcesCount, 'resource'));
   const collapsed = isServerCollapsed(s.name);
   if (collapsed) card.classList.add('collapsed');
   card.innerHTML = `
@@ -298,7 +341,7 @@ function buildServerCard(s) {
       <span class="server-header-text">
         <span class="server-label">MCP Server</span>
         <span class="server-name">${escapeHtml(s.name)}</span>
-        <span class="server-meta">${escapeHtml(s.transport)} · ${countLabel}</span>
+        <span class="server-meta">${escapeHtml(s.transport)} · ${meta.join(' · ')}</span>
       </span>
     </button>
     <div class="tools-section">
@@ -309,6 +352,22 @@ function buildServerCard(s) {
   for (const t of s.tools) {
     toolsSection.appendChild(buildToolRow(s.name, t));
   }
+  // v1.2 — MCP-CLIENT-USE. Prompts and resources, when the server declared
+  // them, appear as sibling sections under the same server card. Same
+  // collapse/expand semantics as the tools list — operators see one MCP at
+  // a time, drill in for capabilities.
+  if (promptsCount > 0) {
+    const promptsSection = buildSection('Prompts', s.name, (s.prompts || []), buildPromptRow);
+    card.appendChild(promptsSection);
+  }
+  if (resourcesCount > 0) {
+    const resourcesSection = document.createElement('div');
+    resourcesSection.className = 'tools-section';
+    resourcesSection.innerHTML = `<div class="tools-section-label">Resources</div>`;
+    for (const r of (s.resources || [])) resourcesSection.appendChild(buildResourceRow(s.name, r, false));
+    for (const t of (s.resourceTemplates || [])) resourcesSection.appendChild(buildResourceRow(s.name, t, true));
+    card.appendChild(resourcesSection);
+  }
   card.querySelector('.server-header').addEventListener('click', () => {
     const nowCollapsed = !card.classList.contains('collapsed');
     card.classList.toggle('collapsed', nowCollapsed);
@@ -316,6 +375,47 @@ function buildServerCard(s) {
     setServerCollapsed(s.name, nowCollapsed);
   });
   return card;
+}
+
+function pluralLabel(n, noun) {
+  return n === 1 ? `1 ${noun}` : `${n} ${noun}s`;
+}
+
+function buildSection(label, serverName, items, rowBuilder) {
+  const section = document.createElement('div');
+  section.className = 'tools-section';
+  section.innerHTML = `<div class="tools-section-label">${escapeHtml(label)}</div>`;
+  for (const item of items) section.appendChild(rowBuilder(serverName, item));
+  return section;
+}
+
+function buildPromptRow(serverName, p) {
+  const row = document.createElement('div');
+  row.className = 'tool-row';
+  row.dataset.key = `prompt:${serverName}.${p.name}`;
+  row.innerHTML = `
+    <span>${escapeHtml(p.name)}</span>
+    <span class="verdict ready">Prompt</span>
+  `;
+  row.addEventListener('click', () => {
+    setSelection({ kind: 'prompt', key: row.dataset.key, prompt: p, serverName });
+  });
+  return row;
+}
+
+function buildResourceRow(serverName, r, isTemplate) {
+  const row = document.createElement('div');
+  row.className = 'tool-row';
+  const uri = isTemplate ? r.uriTemplate : r.uri;
+  row.dataset.key = `resource:${serverName}.${uri}`;
+  row.innerHTML = `
+    <span>${escapeHtml(r.name)}</span>
+    <span class="verdict ready">${isTemplate ? 'Template' : 'Resource'}</span>
+  `;
+  row.addEventListener('click', () => {
+    setSelection({ kind: isTemplate ? 'resourceTemplate' : 'resource', key: row.dataset.key, resource: r, serverName });
+  });
+  return row;
 }
 
 // Server cards default to collapsed — most operators want a high-level
@@ -564,6 +664,45 @@ function renderDetail() {
     return;
   }
 
+  if (selection.kind === 'prompt') {
+    elDetailTitle.textContent = `${selection.serverName}.${selection.prompt.name}`;
+    const card = document.createElement('div');
+    card.className = 'tool-card selected';
+    const argsHtml = (selection.prompt.arguments || []).map((arg) =>
+      `<li><code>${escapeHtml(arg.name)}</code>${arg.required ? ' <em>(required)</em>' : ''}${arg.description ? ` — ${escapeHtml(arg.description)}` : ''}</li>`
+    ).join('') || '<li class="muted">no arguments</li>';
+    card.innerHTML = `
+      <div class="tool-card-head">
+        <span class="name">${escapeHtml(selection.serverName)}.${escapeHtml(selection.prompt.name)}</span>
+        <span class="verdict ready">Prompt</span>
+      </div>
+      ${selection.prompt.description ? `<div class="muted">${escapeHtml(selection.prompt.description)}</div>` : ''}
+      <div class="muted" style="margin-top: 0.5em">arguments:</div>
+      <ul>${argsHtml}</ul>
+    `;
+    elDetailContent.appendChild(card);
+    return;
+  }
+
+  if (selection.kind === 'resource' || selection.kind === 'resourceTemplate') {
+    const r = selection.resource;
+    const uri = selection.kind === 'resourceTemplate' ? r.uriTemplate : r.uri;
+    elDetailTitle.textContent = `${selection.serverName} · ${r.name}`;
+    const card = document.createElement('div');
+    card.className = 'tool-card selected';
+    card.innerHTML = `
+      <div class="tool-card-head">
+        <span class="name">${escapeHtml(r.name)}</span>
+        <span class="verdict ready">${selection.kind === 'resourceTemplate' ? 'Template' : 'Resource'}</span>
+      </div>
+      <div><code>${escapeHtml(uri)}</code></div>
+      ${r.mimeType ? `<div class="muted">mime: <code>${escapeHtml(r.mimeType)}</code></div>` : ''}
+      ${r.description ? `<div class="muted">${escapeHtml(r.description)}</div>` : ''}
+    `;
+    elDetailContent.appendChild(card);
+    return;
+  }
+
   if (selection.kind === 'frame') {
     const tap = selection.tap;
     elDetailTitle.textContent = `${tap.direction === 'out' ? '→' : '←'} ${tap.frame.type}`;
@@ -671,8 +810,18 @@ function summarizeFrame(frame) {
   switch (frame.type) {
     case 'register':
       return `manifest with ${frame.manifest.servers.reduce((n, s) => n + s.tools.length, 0)} tools`;
-    case 'manifest-delta':
-      return `+${frame.delta.added.length} / -${frame.delta.removed.length} / ~${frame.delta.changed.length}`;
+    case 'manifest-delta': {
+      // Tools-only counts stay primary; prompts/resources counts append
+      // when present (v1.2). An older controller showing the same line
+      // sees the same counts; the new fields default to 0.
+      const tools = `+${frame.delta.added.length} / -${frame.delta.removed.length} / ~${frame.delta.changed.length}`;
+      const prompts = (frame.delta.addedPrompts?.length ?? 0) + (frame.delta.removedPrompts?.length ?? 0) + (frame.delta.changedPrompts?.length ?? 0);
+      const resources = (frame.delta.addedResources?.length ?? 0) + (frame.delta.removedResources?.length ?? 0) + (frame.delta.changedResources?.length ?? 0);
+      const extra = [];
+      if (prompts > 0) extra.push(`${prompts} prompt change(s)`);
+      if (resources > 0) extra.push(`${resources} resource change(s)`);
+      return extra.length > 0 ? `${tools} · ${extra.join(', ')}` : tools;
+    }
     case 'heartbeat':
       return `ts=${frame.ts}`;
     case 'goodbye':
@@ -696,6 +845,10 @@ function summarizeFrame(frame) {
     case 'creds-update': {
       const keys = frame.env ? Object.keys(frame.env) : [];
       return `mcp=${frame.mcp} keys=[${keys.join(',')}] source=${frame.source ?? '?'}`;
+    }
+    case 'mcp-notification': {
+      const method = frame.payload && typeof frame.payload === 'object' ? frame.payload.method : '?';
+      return `server=${frame.server} method=${method ?? '?'}`;
     }
     default:
       return '';
@@ -797,11 +950,15 @@ function buildMcpStatusRow(s) {
   const restartLine = s.restartCount === 0
     ? 'no restarts'
     : `${s.restartCount} restart${s.restartCount === 1 ? '' : 's'}` + (s.lastRestartReason ? ` (${s.lastRestartReason})` : '');
-  // W-E6: source badge — distinguishes yaml-listed entries (bundled +
-  // customer-authored) from controller-pushed 3rd-party MCPs. mcpId is the
-  // controller-minted opaque key, surfaced for operator-side correlation
-  // with the controller's row.
-  const sourceLabel = s.source === 'controller-config' ? 'controller' : 'yaml';
+  // W-E6 / W-L1: source badge — three values:
+  //   "yaml"              — bundled (Twilio-shipped) entry from connector.yaml
+  //   "local"             — customer-authored drop-in folder under MCP_DROPIN_DIR
+  //   "controller-config" — controller-pushed 3rd-party MCP
+  // mcpId is the controller-minted opaque key, surfaced for operator-side
+  // correlation with the controller's row.
+  let sourceLabel = 'yaml';
+  if (s.source === 'controller-config') sourceLabel = 'controller';
+  else if (s.source === 'local') sourceLabel = 'local';
   const sourceBadge = `<span class="mcp-source-badge mcp-source-${s.source || 'yaml'}">${escapeHtml(sourceLabel)}</span>`;
   const mcpIdLine = s.mcpId
     ? `<div><span class="muted">mcpId:</span> <code>${escapeHtml(s.mcpId)}</code></div>`

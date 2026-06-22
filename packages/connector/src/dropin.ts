@@ -15,10 +15,16 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
 import type { McpServerSpec } from "./config.js";
 import { envOptional } from "./env.js";
+
+// ESM equivalent of CJS `__dirname`. At runtime this resolves to the
+// compiled `dist/` directory because tsc preserves file structure under
+// outDir.
+const here = dirname(fileURLToPath(import.meta.url));
 
 export interface DropinDiscoveryOpts {
   // Names already declared in connector.yaml — these win over drop-in
@@ -98,14 +104,14 @@ export function isDropinSpec(spec: McpServerSpec | DropinSpec): spec is DropinSp
 // Resolve the absolute path to the compiled dropin-runner.js. Used by the
 // supervisor to launch a synthesized server.
 export function dropinRunnerPath(): string {
-  // __dirname at runtime is dist/; the runner sits at dist/sdk/dropin-runner.js.
-  return resolve(__dirname, "sdk", "dropin-runner.js");
+  // `here` at runtime is dist/; the runner sits at dist/sdk/dropin-runner.js.
+  return resolve(here, "sdk", "dropin-runner.js");
 }
 
 // Helper for callers that need to feed the supervisor a uniform list:
 // returns the directory the connector package itself lives in, so the
 // .env-default fallback works when MCP_DROPIN_DIR is unset.
 export function connectorPackageRoot(): string {
-  // dist/ at runtime; up one to packages/connector/.
-  return dirname(__dirname);
+  // `here` at runtime is dist/; up one to packages/connector/.
+  return dirname(here);
 }

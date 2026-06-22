@@ -9,6 +9,50 @@ export interface ToolDescriptor {
   allowed: boolean;           // always true on this connector — see CLAUDE.md "Trust boundary"
 }
 
+// v1.2 — MCP-CLIENT-USE. Prompts and resources from the upstream MCP carried
+// alongside the existing tools list. Optional fields default to undefined when
+// the upstream server didn't declare the matching capability — older
+// controllers ignore them per the §"Frame envelope" unknown-fields rule.
+
+export interface PromptArgumentDescriptor {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface PromptDescriptor {
+  name: string;
+  description?: string;
+  arguments?: PromptArgumentDescriptor[];
+}
+
+export interface ResourceDescriptor {
+  uri: string;                // e.g. "ek://sources/abc123"
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export interface ResourceTemplateDescriptor {
+  uriTemplate: string;        // RFC 6570, e.g. "ek://sources/{source_id}/chunks/{chunk_id}"
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+// What the connector tells the controller the upstream MCP can do. Mirrors
+// the shape MCP servers declare to clients at initialize-time. The connector
+// captures this at connect-time and forwards verbatim — it doesn't synthesise
+// or filter. Empty/missing object means "didn't declare" — surface as "off"
+// in the controller UI rather than "unknown."
+export interface ServerCapabilitiesAdvert {
+  prompts?:    { listChanged?: boolean };
+  resources?:  { listChanged?: boolean; subscribe?: boolean };
+  tools?:      { listChanged?: boolean };
+  completions?: Record<string, never>;
+  logging?:    Record<string, never>;
+}
+
 export interface ServerDescriptor {
   name: string;
   transport: "http" | "stdio";
@@ -22,6 +66,12 @@ export interface ServerDescriptor {
   // values added later (e.g. partner-authored MCPs).
   author: string;
   tools: ToolDescriptor[];
+  // v1.2 additive — older controllers ignore these and the connector still
+  // works as a tools-only dispatcher.
+  prompts?: PromptDescriptor[];
+  resources?: ResourceDescriptor[];
+  resourceTemplates?: ResourceTemplateDescriptor[];
+  capabilities?: ServerCapabilitiesAdvert;
 }
 
 export interface ToolManifest {
@@ -35,6 +85,18 @@ export interface ManifestDelta {
   added:   { server: string; tool: ToolDescriptor }[];
   removed: { server: string; tool: string }[];
   changed: { server: string; tool: ToolDescriptor }[];
+  // v1.2 additive — symmetric with the tools-only fields above. Empty arrays
+  // (and absent fields) are equivalent on the wire; older controllers see no
+  // change. Only emitted when prompts/resources actually change.
+  addedPrompts?:            { server: string; prompt: PromptDescriptor }[];
+  removedPrompts?:          { server: string; prompt: string }[];
+  changedPrompts?:          { server: string; prompt: PromptDescriptor }[];
+  addedResources?:          { server: string; resource: ResourceDescriptor }[];
+  removedResources?:        { server: string; resource: string }[];
+  changedResources?:        { server: string; resource: ResourceDescriptor }[];
+  addedResourceTemplates?:  { server: string; resourceTemplate: ResourceTemplateDescriptor }[];
+  removedResourceTemplates?: { server: string; resourceTemplate: string }[];
+  changedResourceTemplates?: { server: string; resourceTemplate: ResourceTemplateDescriptor }[];
 }
 
 export interface RegisterFrame {
@@ -246,6 +308,50 @@ export interface McpConfigResyncFrame {
   reason: "gap" | "boot" | "manual";
 }
 
+// ── v1.2 — Local MCP rescan (controller-triggered) ────────────────────────
+//
+// W-L2 of MCP-LOADING-LOCAL.md. The controller's "Refresh local MCPs" button
+// emits this frame; the connector re-runs its drop-in scanner against
+// MCP_DROPIN_DIR and reconciles new / removed folders against the running
+// supervisor entries. No payload — the connector decides what's there; the
+// controller just triggers. The inspector exposes the same operation via a
+// loopback POST at /mcp/rescan-local for the local-dev path.
+//
+// Backwards compat: a v1.1 controller never sends this frame so the
+// connector's behaviour is unchanged. A v1.1 connector ignores the frame
+// per the unknown-frame rule.
+
+// Controller → connector. Trigger a re-scan of MCP_DROPIN_DIR.
+export interface LocalMcpsRescanFrame {
+  type: "local-mcps-rescan";
+}
+
+// Connector → controller. Reply to local-mcps-rescan summarising the diff
+// against running supervisor entries. The controller's UI uses this to render
+// "Done — N added, M removed". Manifest changes ride the existing
+// manifest-delta path; this ack is small-and-static (no tool-level detail).
+export interface LocalMcpsRescanAckFrame {
+  type: "local-mcps-rescan-ack";
+  added: { name: string; toolsCount: number }[];
+  removed: string[];
+  unchanged: string[];
+  errors: { name: string; error: string }[];
+}
+
+// v1.2 — MCP-CLIENT-USE. Server-initiated notification forwarded from a
+// local MCP up to the controller. Opaque payload (full JSON-RPC notification
+// envelope) — the connector validates the wrapping shape but doesn't
+// interpret. Examples: `notifications/progress`, `notifications/message`
+// (logging/message on the wire), `notifications/resources/updated`,
+// `notifications/{tools,prompts,resources}/list_changed`. The controller
+// correlates progress by `params.progressToken`, resource updates by
+// `params.uri`. The connector is a pure forwarder.
+export interface McpNotificationFrame {
+  type: "mcp-notification";
+  server: string;             // matches ServerDescriptor.name
+  payload: unknown;           // JSON-RPC notification envelope (method + params)
+}
+
 // Frames the connector originates.
 export type TunnelFrame =
   | RegisterFrame
@@ -257,7 +363,9 @@ export type TunnelFrame =
   | WebhookRevokeFrame
   | CredsRequestFrame
   | McpConfigAckFrame
-  | McpConfigResyncFrame;
+  | McpConfigResyncFrame
+  | LocalMcpsRescanAckFrame
+  | McpNotificationFrame;
 
 // Frames the connector receives (inbound). Register-ack is a non-spec but
 // useful response from the controller — see RegisterAckFrame above.
@@ -269,4 +377,5 @@ export type InboundTunnelFrame =
   | CredsResponseFrame
   | CredsUpdateFrame
   | McpConfigSnapshotFrame
-  | McpConfigDeltaFrame;
+  | McpConfigDeltaFrame
+  | LocalMcpsRescanFrame;

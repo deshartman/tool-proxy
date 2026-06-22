@@ -29,6 +29,8 @@ import { ReconnectController } from "../tunnel/reconnect.js";
 import { createFrameRouter } from "../tunnel/frame-router.js";
 import { CredsCoordinator } from "../tunnel/creds-coordinator.js";
 import { McpConfigCoordinator } from "../tunnel/mcp-config-coordinator.js";
+import { LocalMcpsCoordinator } from "../tunnel/local-mcps-coordinator.js";
+import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins } from "../dropin.js";
 import { resolveAuth } from "./auth.js";
@@ -158,6 +160,15 @@ export async function boot(): Promise<void> {
   // mutated by every spawn / restart so the dispatcher (wired below) and
   // inspector pick up new connections without re-attach.
   const servers = new Map<string, McpServerConnection>();
+
+  // v1.2 (Workstream D) — server→client notification forwarder. Constructed
+  // ONCE per connector process; the supervisor's `onConnect` hook attaches
+  // a listener to every freshly-established MCP connection. Per-tunnel
+  // rebind (the wire `send` callback) goes through `bind()` inside
+  // `connectTunnel`. Notifications fired during a brief tunnel-down period
+  // are dropped — they're advisory by spec.
+  const notifications = new NotificationForwarder(log);
+
   const supervisor = new McpSupervisor({
     log,
     servers,
@@ -172,6 +183,9 @@ export async function boot(): Promise<void> {
     onRestart: async (name) => {
       log.info({ name }, `mcp restart complete — refreshing manifest`);
       await refreshManifestAndPushDelta();
+    },
+    onConnect: (name, connection) => {
+      notifications.attachToConnection(name, connection);
     },
   });
   supervisor.register(allSpecs);
@@ -190,6 +204,36 @@ export async function boot(): Promise<void> {
     send: () => log.warn(`mcp-config send before tunnel bind — dropping frame`),
     supervisor,
     log,
+  });
+
+  // Controller-triggered local-MCP rescan (W-L2 of MCP-LOADING-LOCAL).
+  // Same lifetime story as McpConfigCoordinator — constructed ONCE per
+  // process, rebound per-tunnel via bind() so its single-flight guard
+  // survives WS reconnect. The onApplied hook refreshes the manifest +
+  // pushes a delta so the controller sees the new tools without waiting
+  // for the next discovery interval; onMcpAdded fans out a creds-request
+  // for the freshly-spawned MCP (rescan-added MCPs miss the boot-time
+  // creds fan-out).
+  const localMcps = new LocalMcpsCoordinator({
+    send: () => log.warn(`local-mcps send before tunnel bind — dropping frame`),
+    supervisor,
+    log,
+    yamlNames,
+    onApplied: () => refreshManifestAndPushDelta(),
+    onMcpAdded: async (name) => {
+      // Latest creds coordinator binds per-tunnel inside connectTunnel.
+      // We capture the live one via the closure when reload() is needed.
+      // boot's `creds` reference doesn't outlive connectTunnel, so we
+      // route through the inspector's mcpActions (which always points at
+      // the live creds coord). Falls back to a no-op when the inspector
+      // is disabled — the next register-ack triggers a full creds fan-out
+      // anyway.
+      try {
+        await inspector?.mcpActions?.reloadCreds(name);
+      } catch (err) {
+        log.warn({ name, err: err as Error }, `creds-request for newly-added drop-in failed — will retry on next reconnect`);
+      }
+    },
   });
 
   log.info(`connecting to ${allSpecs.length} local MCP server(s)`);
@@ -257,6 +301,10 @@ export async function boot(): Promise<void> {
     pendingTunnel.onclose = () => {
       log.info(`tunnel closed`);
       webhooks.onTunnelClose();
+      // v1.2 (Workstream D) — drop the wire callback so notifications
+      // fired during the WS gap are dropped rather than crashing on a
+      // closed socket. Re-bound on the next connectTunnel.
+      notifications.unbind();
       stopTimers();
       // SIGTERM/SIGINT closes the tunnel intentionally — that path sets
       // shuttingDown so we bail. The manual /reconnect path also closes
@@ -322,6 +370,17 @@ export async function boot(): Promise<void> {
     // survive reconnect — see LIFETIME comment on McpConfigCoordinator.
     mcpConfig.bind({ send: (frame) => pendingTunnel.send(frame) });
 
+    // Local-MCP rescan coordinator — same per-tunnel rebind shape as
+    // mcpConfig. Single-flight state survives reconnect by design.
+    localMcps.bind({ send: (frame) => pendingTunnel.send(frame) });
+
+    // v1.2 (Workstream D) — bind the notification forwarder to the live
+    // tunnel. Same pattern as mcpConfig.bind: process-wide listeners,
+    // per-tunnel send callback. Notifications fired between unbind and
+    // the next bind() are dropped (advisory frames; consumer state will
+    // recover on next list call).
+    notifications.bind({ send: (frame) => pendingTunnel.send(frame) });
+
     const baseRouter = createFrameRouter({
       webhooks,
       state,
@@ -336,6 +395,7 @@ export async function boot(): Promise<void> {
       if (frame.type === "creds-update") { creds.handleUpdate(frame); return; }
       if (frame.type === "mcp-config-snapshot") { void mcpConfig.handleSnapshot(frame); return; }
       if (frame.type === "mcp-config-delta") { void mcpConfig.handleDelta(frame); return; }
+      if (frame.type === "local-mcps-rescan") { void localMcps.rescanFromController(); return; }
       if (frame.type === "register-ack" && !frame.error) {
         // After register-ack success, kick off creds-request per MCP and arm
         // the mcp-config soft-wait. Don't block the router callback — fire-
@@ -360,6 +420,17 @@ export async function boot(): Promise<void> {
         restart: async (name: string) => {
           const ok = await supervisor.restart(name, "manual");
           if (!ok) throw new Error(`unknown MCP "${name}"`);
+        },
+        rescanLocal: async () => {
+          // W-L2: same coordinator method as the controller-triggered path,
+          // minus the wire ack. Returns the summary for the inspector UI.
+          const ack = await localMcps.rescan();
+          return {
+            added: ack.added,
+            removed: ack.removed,
+            unchanged: ack.unchanged,
+            errors: ack.errors,
+          };
         },
       };
     }

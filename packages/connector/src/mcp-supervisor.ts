@@ -20,6 +20,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, createConnection } from "node:net";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import {
   isType1Spawn,
@@ -39,8 +40,10 @@ import { resolveOAuthBearer, type OAuthProviderCache } from "./auth/resolve-mcp-
 
 // Resolve tsx's bin from the connector package's own node_modules — same
 // approach as the original spawner. Going via package.json sidesteps tsx's
-// `exports` map blocking subpath access to ./dist/cli.mjs.
-const TSX_BIN = join(dirname(require.resolve("tsx/package.json")), "dist/cli.mjs");
+// `exports` map blocking subpath access to ./dist/cli.mjs. ESM has no
+// `require` global, so synthesize one anchored at this module's URL.
+const requireFromHere = createRequire(import.meta.url);
+const TSX_BIN = join(dirname(requireFromHere.resolve("tsx/package.json")), "dist/cli.mjs");
 
 // Spec union the supervisor accepts. Dropin specs are an internal extension
 // of Type 1 (transport: http + dir) carrying a marker; the rest is plain
@@ -55,12 +58,15 @@ export interface McpStatus {
   restartCount: number;
   lastRestartReason?: string;
   toolsCount: number;
-  // W-E6: where this MCP came from. "yaml" = bundled / customer-authored
-  // entry from connector.yaml. "controller-config" = controller-driven
-  // 3rd-party MCP (W-E2, mcp-config-snapshot/delta). The inspector renders
-  // the source as a small badge so operators can tell yaml-listed entries
-  // apart from controller-pushed ones.
-  source: "yaml" | "controller-config";
+  // W-E6 / W-L1: where this MCP came from.
+  //   "yaml"              — bundled (Twilio-shipped) entry listed in connector.yaml
+  //   "local"             — customer-authored drop-in folder under MCP_DROPIN_DIR
+  //                         (auto-discovered by src/dropin.ts at boot or via L2 rescan)
+  //   "controller-config" — controller-driven 3rd-party MCP (W-E2,
+  //                         mcp-config-snapshot/delta)
+  // The inspector renders the source as a small badge so operators can tell
+  // yaml-listed entries apart from drop-ins and controller-pushed ones.
+  source: "yaml" | "local" | "controller-config";
   // mcpId is the controller-minted opaque routing key for controller-config
   // entries (always undefined for yaml entries). Surfaced in the inspector
   // for operator-side correlation with the controller's row.
@@ -91,6 +97,13 @@ export interface SupervisorOpts {
   // Called after a restart completes successfully. The boot wiring uses this
   // to push a manifest-delta if the new child advertises a different toolset.
   onRestart?: (name: string) => void | Promise<void>;
+  // v1.2 (Workstream D): called for every freshly-established connection
+  // (boot + restart + controller-config add). The hook attaches a
+  // notification listener to the connection so server-initiated
+  // notifications get forwarded as `mcp-notification` frames. The
+  // listener is owned by the connection — no explicit deregister on
+  // close. Stays optional so tests / older boot paths can omit it.
+  onConnect?: (name: string, connection: McpServerConnection) => void;
 }
 
 export type EnvSource = "controller" | "dir/.env" | "yaml" | "process.env";
@@ -116,8 +129,10 @@ export class McpSupervisor {
 
   // Register specs without spawning. Use this when the boot flow wants to
   // collect creds before the first spawn. Yaml-listed entries default
-  // status.source to "yaml" — the controller-config coordinator uses
-  // registerOne() with metadata to mark "controller-config" entries.
+  // status.source to "yaml"; drop-in specs (carrying the __dropin marker)
+  // get "local" so the inspector renders the right badge. The controller-
+  // config coordinator uses registerOne() with metadata to mark
+  // "controller-config" entries.
   register(specs: SupervisedSpec[]): void {
     for (const spec of specs) {
       if (this.entries.has(spec.name)) continue;
@@ -130,7 +145,7 @@ export class McpSupervisor {
           credsSource: spec.env ? "dir/.env" : "none",
           restartCount: 0,
           toolsCount: 0,
-          source: "yaml",
+          source: isDropinSpec(spec) ? "local" : "yaml",
         },
       });
     }
@@ -199,10 +214,13 @@ export class McpSupervisor {
   // Add ONE spec post-boot. Idempotent: a duplicate name is silently skipped
   // (matches register()'s behavior). Caller must call startOne() to spawn.
   // Optional `meta` lets the controller-config coordinator mark the entry
-  // as "controller-config" with the controller-minted mcpId; absent meta
-  // defaults to yaml-listed.
-  registerOne(spec: SupervisedSpec, meta?: { source?: "yaml" | "controller-config"; mcpId?: string }): void {
+  // as "controller-config" with the controller-minted mcpId; the local-mcps
+  // rescan coordinator (W-L2) marks fresh drop-ins as "local". Absent meta
+  // defaults to "local" for drop-in specs (the __dropin marker is the tell)
+  // and "yaml" otherwise.
+  registerOne(spec: SupervisedSpec, meta?: { source?: "yaml" | "local" | "controller-config"; mcpId?: string }): void {
     if (this.entries.has(spec.name)) return;
+    const defaultSource = isDropinSpec(spec) ? "local" : "yaml";
     this.entries.set(spec.name, {
       spec,
       controllerEnv: {},
@@ -212,7 +230,7 @@ export class McpSupervisor {
         credsSource: spec.env ? "dir/.env" : "none",
         restartCount: 0,
         toolsCount: 0,
-        source: meta?.source ?? "yaml",
+        source: meta?.source ?? defaultSource,
         ...(meta?.mcpId ? { mcpId: meta.mcpId } : {}),
       },
     });
@@ -313,6 +331,10 @@ export class McpSupervisor {
     try {
       entry.connection = await connectServer(entry.spec);
       this.opts.servers.set(spec.name, entry.connection);
+      // v1.2 (Workstream D): attach the notification forwarder once per
+      // connection. The forwarder is process-wide; per-tunnel send is
+      // bound separately, so attaching here is independent of WS state.
+      this.opts.onConnect?.(spec.name, entry.connection);
       entry.status.process = "running";
       entry.status.lastRestartReason = reason;
     } catch (err) {

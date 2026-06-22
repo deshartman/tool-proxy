@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import { McpSupervisor } from "../../src/mcp-supervisor.js";
 import type { McpServerSpec } from "../../src/config.js";
+import type { DropinSpec } from "../../src/dropin.js";
 import type { McpServerConnection } from "../../src/servers/index.js";
 
 // Pin W-E6: McpStatus.source distinguishes yaml-listed entries from
@@ -85,5 +86,36 @@ describe("McpSupervisor — status.source / status.mcpId", () => {
     first[0].source = "controller-config" as const;
     const second = supervisor.statusList();
     expect(second[0].source).toBe("yaml");
+  });
+
+  it("register() defaults drop-in specs (carrying __dropin) to source: 'local'", () => {
+    // W-L1: drop-in folders auto-discovered by src/dropin.ts get the
+    // "local" badge so the inspector renders them distinctly from yaml-
+    // listed (bundled) and controller-pushed entries.
+    const dropinSpec: DropinSpec = {
+      name: "drop-mcp",
+      transport: "http",
+      dir: "/var/synthetic/drop-mcp",
+      timeout_ms: 5000,
+      __dropin: true,
+    };
+    const supervisor = buildSupervisor();
+    supervisor.register([dropinSpec]);
+    const status = supervisor.statusList().find((s) => s.name === "drop-mcp");
+    expect(status?.source).toBe("local");
+  });
+
+  it("registerOne() with no meta defaults a drop-in spec to source: 'local'", () => {
+    const dropinSpec: DropinSpec = {
+      name: "drop-mcp",
+      transport: "http",
+      dir: "/var/synthetic/drop-mcp",
+      timeout_ms: 5000,
+      __dropin: true,
+    };
+    const supervisor = buildSupervisor();
+    supervisor.registerOne(dropinSpec);
+    const status = supervisor.statusList().find((s) => s.name === "drop-mcp");
+    expect(status?.source).toBe("local");
   });
 });
