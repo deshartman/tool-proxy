@@ -4,12 +4,13 @@
 >
 > **Authority.** This is the authoritative wire-format spec. If a frame is described here, it MUST be implemented per the schema below; if it is not described here, it MUST NOT be sent without first updating this doc.
 >
-> **Version.** v1.2 — additions covered by the most recent revisions:
+> **Version.** v1.3 — additions covered by the most recent revisions:
 > - **v1** baseline: `creds-request`, `creds-response`, `creds-update`.
 > - **v1.1**: `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; optional `mcpId` field on creds frames.
-> - **v1.2** (this revision): two additive extensions —
+> - **v1.2**: two additive extensions —
 >   - **MCP server-method extension** — widens the dispatcher to forward the full MCP server-method set (prompts / resources incl. templates + subscribe / completions / `logging/setLevel`); adds the `mcp-notification` frame for server→client notifications; manifest grows `prompts[]` / `resources[]` / `resourceTemplates[]` / `capabilities` on each `ServerDescriptor`. See §"v1.2 — MCP server-method extension".
 >   - **Local MCPs rescan** — adds `local-mcps-rescan` (controller → connector) and `local-mcps-rescan-ack` (connector → controller) for operator-triggered drop-in folder rescans without a connector restart. See §"v1.2 — Local MCP rescan".
+> - **v1.3** (this revision): **Customer drop-in approval gate** — adds `mcp-discovered` (connector → controller), `mcp-enable` (controller → connector), `mcp-disable` (controller → connector), `mcp-enable-ack` (connector → controller). Customer-authored drop-in MCPs no longer auto-enable when the connector finds the folder; their tools are withheld from the manifest until the controller sends `mcp-enable`. The controller becomes the gate for what surfaces to the LLM. See §"v1.3 — Customer drop-in approval gate".
 >
 > Pre-existing frames (`register`, `register-ack`, `manifest-delta`, `rpc`, `heartbeat`, `goodbye`, `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`) are documented in [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) and [CLAUDE.md](../CLAUDE.md).
 
@@ -52,6 +53,8 @@ A controller implementing v1 of this protocol MUST be able to:
 8. **Tolerate unknown frame types.** Log and ignore — never close the WS. This rule is symmetric with the connector's behaviour and is what allows additive evolution of the protocol.
 
 9. **Audit operator actions.** Every UI edit that produces a `creds-update`, every `creds-request` received, and every WS-upgrade attempt SHOULD write to the controller's existing audit log (see §"Audit logging").
+
+10. **Gate customer drop-in MCPs behind operator approval (v1.3+).** When the connector emits `mcp-discovered` for a customer-authored drop-in MCP, the controller MUST surface it in a "pending" UI lane and require an explicit operator gesture before sending `mcp-enable`. The connector withholds the MCP's tools from `manifest-delta` until enable arrives. After every `register-ack`, the controller MUST replay `mcp-enable` for every previously-approved drop-in (the connector keeps no approval state across restarts). See §"v1.3 — Customer drop-in approval gate".
 
 The frames below specify the wire shape that supports each responsibility.
 
@@ -1105,14 +1108,288 @@ The connector itself stays a passthrough — it does NOT declare `sampling`, `el
 - **Older controller, new connector.** Connector advertises `prompts[]` / `resources[]` in the manifest; older controller sees only the `tools[]` field it always read. Connector emits `mcp-notification` frames; older controller logs+drops per the unknown-frames rule. Tools-only flow keeps working.
 - **Newer controller, older connector.** Controller calls `prompts/list` over the tunnel; older connector's dispatcher returns `-32601 method not found`. Controller treats that exactly like a server that didn't declare the prompts capability.
 
+## v1.3 — Customer drop-in approval gate
+
+> **Status: protocol drafted; connector implementation in progress on branch `feature/mcp-creds-config`.** Older controllers that don't speak v1.3 keep working — they don't see `mcp-discovered`, so customer drop-ins stay pending forever (fail-closed). See §"v1.3 — Backwards compat" below.
+
+### Why
+
+Through v1.2, customer-authored drop-in MCPs auto-enable the moment the connector sees the folder under `${MCP_DROPIN_DIR}`. The customer admin's gate is the filesystem (whoever has write access). The controller is informed via `manifest-delta`, but has no acceptance gesture between "connector spawned the child" and "LLM can call the tool."
+
+This asymmetric with 3rd-party (Type 2) MCPs, which require the operator to author them in the controller UI before they appear, AND with bundled (Type 3 + yaml-listed Type 1) MCPs, which require Twilio engineering to ship them in the connector image. Customer drop-ins were the only path with no operator-side acceptance.
+
+v1.3 closes that gap. The controller becomes the **acceptance authority** for customer drop-ins:
+
+- Connector spawns the child (unchanged — same crash isolation).
+- Connector advertises the MCP via `mcp-discovered` (NEW).
+- Operator approves in controller UI; controller sends `mcp-enable` with optional creds (NEW).
+- Connector adds tools to manifest, emits `manifest-delta`.
+- LLM can call the tool.
+
+Approval state lives **controller-only**. After every `register-ack`, the controller replays `mcp-enable` for every previously-approved drop-in. The connector keeps no approval persistence across restarts — same posture as the 3rd-party MCP roster.
+
+### What gates and what doesn't
+
+| MCP type | Source field | Gated in v1.3? |
+|---|---|---|
+| Customer drop-in | `source: "local"` (`__dropin: true` marker) | **YES** — requires `mcp-enable` |
+| Yaml-listed Type 1 hand-written | `source: "yaml"` | NO — yaml IS the acceptance |
+| Bundled Type 3 (Twilio Python venvs) | `source: "yaml"` (with `bundled:` resolver) | NO — Twilio ships in image |
+| Bundled Type 1 hand-written (`mcp/bundled/twilio/`) | `source: "yaml"` | NO — Twilio ships in image |
+| 3rd-party Type 2 (controller-pushed) | `source: "controller-config"` | NO — already operator-authored |
+
+The gate predicate on the connector side is exactly `author === "customer"` AND `source === "local"`. Anything else flows through unchanged.
+
+### `mcp-discovered` (connector → connector)
+
+```ts
+interface McpDiscoveredFrame {
+  type: "mcp-discovered";
+  mcp: string;                    // folder name; stable identity across reconnects
+  author: "customer";             // always — bundled / yaml / 3rd-party MCPs don't go through this gate
+  source: "local";                // always — co-occurs with author:"customer" but kept distinct for clarity
+  envKeys: string[];              // de-duped union from the child's /envkeys endpoint
+  tools: Array<{
+    name: string;                 // e.g. "issue_refund"
+    description?: string;         // from the tool's register() metadata; absent if author omitted
+  }>;
+  discoveredAt: string;           // ISO8601, connector wall-clock
+}
+```
+
+Sent at two emission points:
+
+1. **Boot.** After `register` is sent (so the controller has a `connectorId` to scope against), one frame per drop-in MCP discovered on disk. The connector emits this for ALL drop-ins, including ones the controller may have approved previously — the connector has no persistent approval state, and trusts the controller to reply `mcp-enable` for the ones it has on file.
+2. **Runtime rescan.** When [`LocalMcpsCoordinator.rescan()`](../packages/connector/src/tunnel/local-mcps-coordinator.ts) discovers a new drop-in folder and spawns its child, one frame per added MCP.
+
+**Deliberately NOT in the payload:**
+- `inputSchema` / `outputSchema` — the actual call surface; withheld until approval.
+- `prompts` / `resources` — for now only `tools` is gated; v1.4 may extend.
+- `mcpId` — the controller mints its own row id on first approval; the connector identifies by `(connectorId, mcp)` end-to-end (folder name is the wire identity).
+
+**Example:**
+
+```json
+{
+  "type": "mcp-discovered",
+  "mcp": "crm",
+  "author": "customer",
+  "source": "local",
+  "envKeys": ["MOCK_CUSTOMERS_URL"],
+  "tools": [
+    { "name": "get_customer",  "description": "Returns the customer's identity profile keyed by phone." },
+    { "name": "get_recent",    "description": "Returns the customer's most recent order." },
+    { "name": "issue_refund",  "description": "Issues a refund for a given order_id." }
+  ],
+  "discoveredAt": "2026-06-23T12:00:00Z"
+}
+```
+
+### `mcp-enable` (controller → connector)
+
+```ts
+interface McpEnableFrame {
+  type: "mcp-enable";
+  mcp: string;
+  env?: Record<string, string>;   // optional — pasted creds; subset of envKeys is fine
+  source?: "operator-entered";    // for telemetry / inspector display; reserved for future values
+}
+```
+
+Sent at two emission points:
+
+1. **Operator approval.** New approval click in the controller UI. Operator may paste env values inline; if so, `env` is populated.
+2. **Replay on register-ack.** For every previously-approved MCP, the controller MUST re-send `mcp-enable` after `register-ack`. This is the source-of-truth-restore mechanism — the connector's in-memory approved-set survives WS reconnects but does NOT survive process restarts, so the controller is the durable authority.
+
+The connector treats both forms identically:
+- `env` present → `supervisor.applyControllerEnv(name, env, source, "mcp-enable")` → child restart with merged env → tools register at boot → manifest-delta added.
+- `env` absent → existing controllerEnv (if any from a prior `creds-update`) is preserved unchanged → no restart needed → manifest-delta added if MCP was previously unapproved.
+
+Idempotent: `mcp-enable` for an already-enabled MCP fires the ack but produces no `manifest-delta` (nothing changed).
+
+**Examples:**
+
+Initial approval with creds:
+```json
+{
+  "type": "mcp-enable",
+  "mcp": "crm",
+  "env": { "MOCK_CUSTOMERS_URL": "https://mock.internal:7400" },
+  "source": "operator-entered"
+}
+```
+
+Re-replay on register-ack, no env change:
+```json
+{ "type": "mcp-enable", "mcp": "crm" }
+```
+
+### `mcp-disable` (controller → connector)
+
+```ts
+interface McpDisableFrame {
+  type: "mcp-disable";
+  mcp: string;
+}
+```
+
+Sent when the operator revokes approval in the controller UI. The connector keeps the child running — disable is a manifest-visibility toggle only. Re-enable via a fresh `mcp-enable` puts the tools back into the manifest with no spawn latency.
+
+There is deliberately no `stop` field. If a future scenario needs to actually kill the child (RAM pressure, MCP misbehavior), a separate `mcp-stop` frame will be added in a later version. Don't overload `mcp-disable` with a boolean.
+
+### `mcp-enable-ack` (connector → controller)
+
+```ts
+interface McpEnableAckFrame {
+  type: "mcp-enable-ack";
+  mcp: string;
+  status: "enabled" | "disabled" | "error";
+  error?: string;                 // present iff status === "error"
+  toolsCount?: number;            // present iff status === "enabled"; reflects post-merge manifest
+}
+```
+
+Sent in reply to every `mcp-enable` (success or error). Sent in reply to every `mcp-disable` for symmetry — same frame type, `status: "disabled"`.
+
+**Error cases:**
+
+| Scenario | `status` | `error` |
+|---|---|---|
+| Controller sent `mcp-enable` for an unknown name | `"error"` | `"unknown_mcp"` |
+| Connector failed to apply env (e.g. supervisor restart errored) | `"error"` | `"apply_env_failed: <reason>"` |
+| MCP is yaml-listed (gate doesn't apply) | `"error"` | `"not_gated: yaml-listed MCP, no approval needed"` |
+| MCP is `controller-config` (3rd-party, gate doesn't apply) | `"error"` | `"not_gated: 3rd-party MCP, use mcp-config-snapshot"` |
+
+**Examples:**
+
+Success:
+```json
+{ "type": "mcp-enable-ack", "mcp": "crm", "status": "enabled", "toolsCount": 3 }
+```
+
+Disable success:
+```json
+{ "type": "mcp-enable-ack", "mcp": "crm", "status": "disabled" }
+```
+
+Error — controller approving something that isn't a drop-in:
+```json
+{ "type": "mcp-enable-ack", "mcp": "twilio", "status": "error", "error": "not_gated: yaml-listed MCP, no approval needed" }
+```
+
+### Frame ordering rules (v1.3)
+
+1. `mcp-discovered` MUST precede the first `manifest-delta` for that MCP. The connector withholds the MCP's tools from the manifest until `mcp-enable` arrives.
+2. After `mcp-enable` succeeds, the connector emits `manifest-delta { added: [<server descriptor>] }` BEFORE `mcp-enable-ack`. The ack is the "I'm done" signal; the manifest-delta is the actual surface change.
+3. After `mcp-disable`, the connector emits `manifest-delta { removed: [<server name>] }` BEFORE `mcp-enable-ack { status: "disabled" }`.
+4. `mcp-enable` for an already-enabled MCP is idempotent — no manifest-delta (nothing changed), but the ack still fires with `status: "enabled"` and the current `toolsCount`.
+
+### Boot sequence — first-ever approval (v1.3)
+
+```
+[Connector startup]
+  scan MCP_DROPIN_DIR  →  finds crm/
+  spawn child via dropin-runner   (child running, tools loaded into McpServer)
+  HTTP GET child:/envkeys         →  ["MOCK_CUSTOMERS_URL"]
+  list child tools/list           →  [get_customer, get_recent, issue_refund]
+  build manifest                  (crm tools WITHHELD — author=customer, source=local, not approved)
+
+[Connector → Controller]   register { manifest: { servers: [...], excluding crm } }
+[Controller → Connector]   register-ack { connectorId: "conn_abc" }
+
+[Connector → Controller]   mcp-discovered { mcp: "crm", author: "customer", source: "local", envKeys: ["MOCK_CUSTOMERS_URL"], tools: [...], discoveredAt: "..." }
+
+[Controller UI]            renders crm in "Pending approval" lane
+                           operator clicks Approve, pastes MOCK_CUSTOMERS_URL value
+
+[Controller → Connector]   mcp-enable { mcp: "crm", env: { MOCK_CUSTOMERS_URL: "https://..." }, source: "operator-entered" }
+
+[Connector]                applyControllerEnv → supervisor restarts child → tools register → connector adds crm to approved set
+
+[Connector → Controller]   manifest-delta { added: [{ name: "crm", tools: [3 tools with full schemas], envKeys: [...] }] }
+[Connector → Controller]   mcp-enable-ack { mcp: "crm", status: "enabled", toolsCount: 3 }
+
+[LLM]                      can now call crm.issue_refund
+```
+
+### Boot sequence — replay on reconnect (v1.3)
+
+The same connector restarts (image redeploy, container restart, WS reconnect after network blip). The controller already has `crm` marked approved with persisted env from the first approval.
+
+```
+[Connector startup]                       (or WS reconnect after drop)
+  scan, spawn, list tools                 (same as first-ever boot)
+  build manifest                          (crm WITHHELD — connector has no approval state across restart)
+
+[Connector → Controller]   register { manifest: { servers: [...], excluding crm } }
+[Controller → Connector]   register-ack { connectorId: "conn_abc" }
+[Connector → Controller]   mcp-discovered { mcp: "crm", ... }
+
+[Controller]               looks up crm in approved table for connectorId="conn_abc"
+                           found — replay enable with persisted env
+
+[Controller → Connector]   mcp-enable { mcp: "crm", env: { MOCK_CUSTOMERS_URL: "https://..." } }
+
+[Connector]                same as first-ever — applyControllerEnv → restart → manifest add
+
+[Connector → Controller]   manifest-delta { added: [{ name: "crm", ... }] }
+[Connector → Controller]   mcp-enable-ack { mcp: "crm", status: "enabled", toolsCount: 3 }
+```
+
+The connector emits `mcp-discovered` for ALL drop-ins on every register cycle, including ones the controller has already approved. This is intentional — the connector is stateless across restarts (per the v1.1 / v1.3 source-of-truth-on-controller convention). Controller-side rule: **on every `mcp-discovered`, look up `(connectorId, mcp)` in the approval table; if found, emit `mcp-enable` immediately (with stored env if any). No operator gesture required for replay.**
+
+### Disable sequence (v1.3)
+
+```
+[Controller UI]            operator clicks Disable for crm
+[Controller → Connector]   mcp-disable { mcp: "crm" }
+
+[Connector]                supervisor.markUnapproved("crm")
+                              → child KEEPS running (no stopAll, no restart)
+                              → manifest rebuilt without crm's tools
+
+[Connector → Controller]   manifest-delta { removed: ["crm"] }
+[Connector → Controller]   mcp-enable-ack { mcp: "crm", status: "disabled" }
+```
+
+Re-enable after disable is a fresh `mcp-enable` from the controller. No spawn — the child has been running. Sub-second turnaround.
+
+### Late creds update vs `mcp-enable` (v1.3)
+
+`mcp-enable` is for the **approval gesture**. After approval, ongoing creds rotation goes through the existing v1 `creds-update` frame, NOT through repeated `mcp-enable`s.
+
+```
+[Controller → Connector]   creds-update { mcp: "crm", env: { MOCK_CUSTOMERS_URL: "..." }, source: "operator-entered" }
+[Connector]                applyControllerEnv → restart child → manifest stays same shape (no manifest-delta if tool list unchanged)
+```
+
+The controller team is encouraged to wire two distinct UI affordances — "Approve" (initial gesture, one-time per MCP) and "Edit creds" (ongoing). Don't overload `mcp-enable` for re-edits — it costs an unnecessary `manifest-delta` round-trip.
+
+### v1.3 — Backwards compat
+
+| Connector v1.3 + Controller v1.2 | Controller doesn't know `mcp-discovered`. The frame is logged-and-ignored per the unknown-frames rule. The MCP stays pending forever — no manifest exposure. **Fail-closed** by design. |
+| Connector v1.2 + Controller v1.3 | Connector doesn't withhold tools from manifest — drop-ins auto-enable as today. Controller sees them in `manifest-delta` without prior `mcp-discovered`. Controller MUST treat any `manifest-delta` containing an unknown customer-authored MCP as implicitly approved (legacy behavior). On the next deploy of the v1.3 connector, the gate engages. |
+
+The asymmetry favors the migration: a fresh connector against an old controller is the conservative path; a fresh controller against an old connector preserves today's behavior. Standard ship order is connector-first, controller catches up — same as v1.2 (`local-mcps-rescan`).
+
+### v1.3 — Implementation notes for the controller team
+
+- **Approval table schema.** A new `(connector_id, mcp_name) → { approved_at, approved_by, env_jsonb }` row in the controller's existing schema. Keyed by the connector's WS-authenticated `connectorId` AND the connector-supplied `mcp` field (folder name) — no separate mcpId for v1.3.
+- **Frame ordering on the controller side.** When the operator clicks Approve, fire `mcp-enable` exactly once and wait for `mcp-enable-ack`. If the ack carries `status: "error"`, surface to the operator and do NOT retry automatically. If the ack carries `status: "enabled"`, mark the row approved and persist any env values the operator pasted.
+- **Replay timing.** After receiving `register-ack`, look up every approved row for the connector and fire `mcp-enable` for each. Do this BEFORE `mcp-discovered` arrives if you can — the connector tolerates either ordering, but the operator-UX is cleaner if the manifest-delta lands before the pending-MCP UI flashes "discovered" then immediately flips to "enabled."
+- **UI lane.** Surface `mcp-discovered` payloads in a separate "Pending approval" UI lane within the connector detail view, alongside the existing custom-MCPs section. Tools / descriptions are in the payload — no need to fetch the manifest. The approval form should display the `envKeys` list and let the operator paste values inline.
+- **Audit log.** Approve / disable / re-edit-creds actions all SHOULD write to the controller's existing audit log (per responsibility 9 above). Stamp the operator identity at action time; the connector doesn't track who approved.
+- **Frame storms on reconnect.** A connector with N unapproved drop-ins emits N `mcp-discovered` frames after `register-ack`. The 256 KB per-frame cap covers each (each frame is ~1 KB), but consider batching UI updates if N is large.
+
 ## Versioning
 
-This document is v1.2. Future revisions:
+This document is v1.3. Revisions:
 - v1.1 — adds `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; adds optional `mcpId` to existing creds frames. Backwards-compatible per §"Backwards compat".
-- v1.2 (this revision) — two additive extensions:
+- v1.2 — two additive extensions:
   - `local-mcps-rescan` + `local-mcps-rescan-ack` for the controller-triggered local-MCP refresh.
   - MCP server-method passthrough (prompts / resources incl. subscribe / completions / logging) and the `mcp-notification` frame for server→client notifications. Manifest grows `prompts[]` / `resources[]` / `resourceTemplates[]` / `capabilities` per server.
   Both backwards-compatible (additive only). See §"v1.2 — MCP server-method extension" → "Backwards compat".
+- v1.3 (this revision) — customer drop-in approval gate: `mcp-discovered`, `mcp-enable`, `mcp-disable`, `mcp-enable-ack`. Customer-authored drop-in MCPs no longer auto-enable; tools held back from manifest until controller approval. Backwards-compatible per §"v1.3 — Backwards compat".
 - v2 — add new frame types (additive, controller MUST log+ignore unknown frames per §"Frame envelope").
 - v3 — breaking change (rare). Would require a `protocol-capabilities` handshake at register time. **Not in scope today.**
 

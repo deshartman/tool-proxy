@@ -32,6 +32,7 @@ Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts); the contract for the 
 - `mcp-config-snapshot` (in) / `mcp-config-delta` (in) / `mcp-config-ack` (out) / `mcp-config-resync` (out) — v1.1 controller-driven 3rd-party MCP roster. Operators manage 3rd-party MCPs through the controller UI; the controller pushes the roster to the connector over the existing tunnel. The connector reconciles in-memory (no yaml rewrite); auth shapes (`none` / `bearer` / `header` / `oauth2-client-credentials`) and HTTP-family transports (http / streamable-http / sse / websocket) are resolved at spawn time. WebSocket auth must be embedded in the URL — the SDK's WS transport accepts no headers. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.1 — 3rd-party MCP roster".
 - `local-mcps-rescan` (in) / `local-mcps-rescan-ack` (out) — v1.2 controller-triggered rescan of customer-authored drop-in MCPs. Operator clicks **Refresh local MCPs** in the controller UI; the connector re-runs its drop-in scanner and reconciles new / removed folders. Same operation exposed loopback-only at `/mcp/rescan-local` on the inspector port for local-dev iteration. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
 - `mcp-notification` (out) — v1.2 server→client notifications forwarded from local MCPs to the controller (`notifications/progress`, `notifications/message`, `notifications/resources/updated`, `notifications/{tools,prompts,resources}/list_changed`). See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension".
+- `mcp-discovered` (out) / `mcp-enable` (in) / `mcp-disable` (in) / `mcp-enable-ack` (out) — v1.3 customer drop-in approval gate. Customer-authored drop-in MCPs no longer auto-enable; the connector advertises each via `mcp-discovered` and withholds the tools from the manifest until the controller sends `mcp-enable` (optionally carrying pasted env values). Approval state lives controller-only; replayed via `mcp-enable` after every `register-ack`. Disable is manifest-visibility-only — the child stays running. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.3 — Customer drop-in approval gate".
 
 Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector splits on the first `.`.
 
@@ -127,6 +128,14 @@ Picking up a freshly-dropped folder doesn't need a process restart. Two paths:
 - **Inspector** — <http://localhost:9090/> → **MCP Status** panel → **Refresh local MCPs**. Loopback-only POST against the connector's inspector port; same coordinator method, no controller round-trip. Useful when iterating locally.
 
 Operator-driven only — there's no fs-watcher. fs events fire mid-edit (a save-in-progress would spawn against half-written code) and there's no clean way to tell "operator finished editing" from intermediate save events; explicit operator action is the right primitive.
+
+#### Approval gate (v1.3+)
+
+Customer-authored drop-ins do NOT auto-enable. After the connector spawns the child and lists its tools, it withholds the tools from the manifest and emits an `mcp-discovered` frame to the controller. The controller surfaces the MCP in a "Pending approval" lane within its custom-MCPs section; an operator clicks **Approve** (and pastes any `envKeys` values inline) to send `mcp-enable` back. Only then does the connector add the tools to `manifest-delta`. See [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) §"v1.3 — Customer drop-in approval gate" for the full handshake.
+
+The approved-set lives **controller-only** — after every connector restart, the controller automatically re-replays `mcp-enable` for every previously-approved MCP. The connector keeps no approval state across restarts. Disable via the controller UI is a manifest-visibility toggle: the child stays running, re-enable is sub-second.
+
+This gate applies only to drop-ins (folders under `${MCP_DROPIN_DIR}` that auto-discovered). Yaml-listed Type 1 hand-written MCPs and Twilio-bundled (Type 3) MCPs auto-enable as before — yaml is the existing acceptance for those. 3rd-party MCPs added via the controller UI's New 3rd Party MCP button are also unaffected — they're already operator-authored.
 
 #### Per-MCP creds from the controller
 
