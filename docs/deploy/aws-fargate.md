@@ -89,6 +89,15 @@ To view the UI from outside the container:
 
 **Do not** put the inspector port behind a public LB. The Webhooks panel exposes the bcrypt-protected webhook URL with a copy button — that URL *is* the secret.
 
+## Reconnect — orchestrator vs. built-in
+
+The connector auto-reconnects on unexpected WS close by default (`policy.reconnect.enabled: true` in `connector.yaml`). On Fargate you have two coherent shapes; pick one.
+
+- **Built-in (default).** Leave `policy.reconnect.enabled: true`. The connector backs off and redials in-process; the inspector pill flips through `closed → reconnecting → connecting → open`. The Fargate task stays up. Right answer when you want a single long-lived task and care about tunnel-state visibility in the inspector.
+- **Orchestrator-managed.** Set `policy.reconnect.enabled: false` and configure the task to exit non-zero on tunnel close (or set a healthcheck against `/events` from a sidecar). ECS will replace the task. Right answer when your operations team prefers task-level restart semantics and doesn't want a connector that "looks fine" while sitting in `closed` indefinitely.
+
+Don't enable both — the built-in loop will mask task-level failures from your monitoring.
+
 ## Logs
 
 `stdout` only. CloudWatch Logs is the default. The connector logs every

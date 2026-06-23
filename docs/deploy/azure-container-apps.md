@@ -79,6 +79,15 @@ To view the UI: `az containerapp exec --name "$APP" --resource-group "$RG" --com
 
 **Do not** route public ingress to the inspector port. The Webhooks panel exposes the bcrypt-protected webhook URL with a copy button — that URL *is* the secret.
 
+## Reconnect — orchestrator vs. built-in
+
+The connector auto-reconnects on unexpected WS close by default (`policy.reconnect.enabled: true` in `connector.yaml`). On Container Apps, two shapes work; pick one.
+
+- **Built-in (default).** Leave `policy.reconnect.enabled: true`. The connector backs off and redials in-process; the replica stays up. Right answer with `minReplicas: 1, maxReplicas: 1` — Container Apps doesn't need to restart the container.
+- **Orchestrator-managed.** Set `policy.reconnect.enabled: false` and rely on Container Apps' replica-restart policy to recycle on exit. Less common on Container Apps because there's no per-port healthcheck on the WS dial — the built-in path is usually the better fit.
+
+Don't enable both — the built-in loop will mask replica-level failures from your monitoring.
+
 ## Logs
 
 `stdout` flows to Log Analytics. Query:

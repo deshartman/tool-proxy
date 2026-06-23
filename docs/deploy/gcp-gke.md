@@ -84,20 +84,33 @@ spec:
             # For an OAuth 2.0 row, also add:
             # - { name: OAUTH_TOKEN_URL, value: "https://controller.example.com/oauth2/token" }
             - { name: CONNECTOR_CONFIG, value: "/etc/mcp-connector/config.yaml" }
+            # Where the connector persists registrationToken across pod
+            # restarts. Without a stable, writable path here, every pod
+            # restart re-mints and the controller's dup-name guard 409s.
+            - { name: CONNECTOR_STATE_PATH, value: "/var/lib/mcp-connector/.connector-state.json" }
             # INSPECTOR_PORT defaults to 9090 and binds 127.0.0.1 only. Keep it
             # on — any MCP using createWebhookEndpoint depends on the inspector
             # loopback for SDK ↔ connector IPC. Setting INSPECTOR_PORT=0
             # disables both the operator UI AND webhook ingress.
             - { name: INSPECTOR_PORT,   value: "9090" }
-          # Mount a writable volume at /etc/mcp-connector for
-          # .connector-state.json (registrationToken). Without it, every pod
-          # restart re-mints — the controller's dup-name guard then 409s, so
-          # use a PVC or hostPath for stable identity.
           volumeMounts:
+            # config.yaml is read-only — sourced from a ConfigMap.
             - { name: config, mountPath: /etc/mcp-connector, readOnly: true }
+            # .connector-state.json must be writable AND survive pod restarts
+            # — back it with a PVC. ReadWriteOnce is sufficient (replicas: 1).
+            - { name: state, mountPath: /var/lib/mcp-connector }
       volumes:
         - name: config
           configMap: { name: mcp-connector-config }
+        - name: state
+          persistentVolumeClaim: { claimName: mcp-connector-state }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: mcp-connector-state }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 64Mi } }
 ```
 
 For Secret Manager → Kubernetes secret syncing, use the [Secret Manager CSI
@@ -114,6 +127,15 @@ kubectl port-forward deploy/mcp-connector 9090:9090
 ```
 
 **Do not** create a Service of type `LoadBalancer` or `NodePort` targeting port 9090. The Webhooks panel exposes the bcrypt-protected webhook URL with a copy button — that URL *is* the secret. ClusterIP-only Services for in-cluster debugging are fine.
+
+## Reconnect — orchestrator vs. built-in
+
+The connector auto-reconnects on unexpected WS close by default (`policy.reconnect.enabled: true` in `connector.yaml`). On GKE, two shapes work; pick one.
+
+- **Built-in (default).** Leave `policy.reconnect.enabled: true`. The connector backs off and redials in-process; the pod stays Ready. Right answer when you want the inspector pill to surface tunnel state for in-cluster operators.
+- **Kubelet-managed.** Set `policy.reconnect.enabled: false` and add a process exit on terminal disconnect (or a liveness probe against the inspector port that fails when the WS is closed). The kubelet restarts the pod. Right answer when your team uses Kubernetes-native restart semantics and reads pod status, not the inspector, for health.
+
+Don't enable both — the built-in loop will mask pod-level failures from your liveness probes.
 
 ## Logs
 
