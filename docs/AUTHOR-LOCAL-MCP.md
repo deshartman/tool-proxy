@@ -3,6 +3,8 @@
 > Drop a folder under `mcp/local/<name>/` with one or more tool files (and optionally prompts and resources). That's it. The connector picks it up at boot — or at runtime via the **Refresh local MCPs** button.
 >
 > No `server.ts`, no `package.json`, no `.env`, no `connector.yaml` edit.
+>
+> **One operator gesture before your tools go live (v1.3+).** After the connector picks up your folder, your MCP appears in the controller UI's "Pending approval" lane. An operator clicks **Approve** (and pastes any `envKeys` values you declared) to enable the tools. See §"Approval — the operator's one click" below.
 
 ## What you write
 
@@ -160,7 +162,26 @@ Two ways to get the connector to pick up a new folder:
 | **Refresh local MCPs** (controller UI: Connector detail → MCPs tab) | Live. No restart needed. |
 | **Refresh local MCPs** (inspector at <http://localhost:9090/>) | Live, local-dev path. |
 
-Both refresh paths re-run the drop-in scanner, register new folders with the supervisor, fan out a `creds-request` for each, and emit a `manifest-delta` so the controller picks up the new tools.
+Both refresh paths re-run the drop-in scanner, register new folders with the supervisor, fan out an `mcp-discovered` frame for each new drop-in, and (after the operator approves) emit a `manifest-delta` so the controller picks up the new tools.
+
+## Approval — the operator's one click
+
+In v1.3+, customer-authored drop-in MCPs go through an explicit operator approval gate before the LLM can call their tools. The flow:
+
+1. **You drop the folder.** Connector scans `${MCP_DROPIN_DIR}`, spawns the child, lists tools, but **withholds them from the manifest** (because they're customer-authored and not yet approved).
+2. **Connector emits `mcp-discovered`** with your MCP's name, the `envKeys` list you declared, and the tool names + descriptions.
+3. **Controller UI surfaces the MCP** in a "Pending approval" lane within the connector detail view's custom-MCPs section. The operator sees the tool names + descriptions and an inline form for the `envKeys` you declared.
+4. **Operator clicks Approve.** They paste env values inline (or skip — they can be added later via Edit creds).
+5. **Controller sends `mcp-enable`** to the connector. The connector merges the env, restarts the child, adds the tools to the manifest, emits a `manifest-delta`.
+6. **Tools light up in the LLM's view.** Now callable via the controller's normal procedure dispatch.
+
+After this one-time approval, ongoing creds rotation goes through the existing **Edit creds** path (NOT through repeated approvals). The controller persists the approval row keyed on `(connectorId, mcp-name)`. After every connector restart, the controller automatically re-sends `mcp-enable` — no operator action needed for the replay.
+
+**Disable.** The operator can click **Disable** at any time. The connector drops the tools from the manifest immediately, but the child process keeps running — re-enabling is sub-second (no spawn cost).
+
+**What gates and what doesn't.** Only customer drop-ins (folders under `${MCP_DROPIN_DIR}` with `author: "customer"`) go through the gate. Yaml-listed Type 1 hand-written MCPs and Twilio-bundled MCPs auto-enable as before — the yaml listing IS the acceptance for those. 3rd-party MCPs (added via the controller's New 3rd Party MCP button) are also unaffected — they're already operator-authored.
+
+**Wire details:** see [MCP-PROTOCOL.md §"v1.3 — Customer drop-in approval gate"](MCP-PROTOCOL.md).
 
 ## Smoke-testing locally before the admin pastes creds
 
@@ -180,7 +201,7 @@ This is for the dev's local box; production deployments should always use contro
 
 ## Where do creds come from?
 
-Per-MCP env values arrive over the WSS tunnel from the **controller**. Operator enters them in the controller UI under Connector → MCPs → `<your MCP name>`; the controller pushes them down via `creds-response` (boot) or `creds-update` (steady state). The connector merges them into the child process's env and restarts the child if values change.
+Per-MCP env values arrive over the WSS tunnel from the **controller**. Operator enters them in the controller UI under Connector → MCPs → `<your MCP name>`; the controller pushes them down via `mcp-enable` (initial approval, v1.3+) or `creds-update` (steady state). The connector merges them into the child process's env and restarts the child if values change.
 
 The `envKeys` array on each `Tool` (or, server-level, on `createMcpHttpServer({ envKeys: [...] })`) tells the controller's UI which keys to surface — the operator never has to guess.
 
@@ -228,5 +249,5 @@ Both are live drop-ins — no `server.ts`, no `package.json`, no yaml entry.
 ## Cross-references
 
 - [packages/connector/README.md](../packages/connector/README.md) — connector overview + boot / build / inspect.
-- [docs/MCP-PROTOCOL.md](MCP-PROTOCOL.md) — wire-format contract between connector and controller. §"v1.2 — MCP server-method extension" covers prompts / resources / completions / logging on the wire; §"v1.2 — Local MCP rescan" describes the **Refresh local MCPs** frame.
+- [docs/MCP-PROTOCOL.md](MCP-PROTOCOL.md) — wire-format contract between connector and controller. §"v1.2 — MCP server-method extension" covers prompts / resources / completions / logging on the wire; §"v1.2 — Local MCP rescan" describes the **Refresh local MCPs** frame; §"v1.3 — Customer drop-in approval gate" describes the approval handshake.
 - [CLAUDE.md](../CLAUDE.md) — connector architecture, "Three MCP integration patterns" section.
