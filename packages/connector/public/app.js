@@ -346,7 +346,7 @@ function buildServerCard(s) {
         <span class="server-toggle" aria-hidden="true">▾</span>
         <span class="server-label">MCP Server</span>
       </button>
-      <button type="button" class="server-name-btn" data-mcp="${escapeHtml(s.name)}">
+      <button type="button" class="server-name-btn${(s.envKeys || []).length > 0 ? ' has-env' : ''}" data-mcp="${escapeHtml(s.name)}"${(s.envKeys || []).length > 0 ? ' title="Click to set environment variables"' : ''}>
         <span class="server-name">${escapeHtml(s.name)}</span>
       </button>
       <span class="server-meta">${escapeHtml(s.transport)} · ${meta.join(' · ')}</span>
@@ -666,7 +666,112 @@ function applySelectionHighlight() {
   document.querySelectorAll('.server-name-btn').forEach((el) => {
     el.classList.toggle('selected', el.dataset.mcp === mcpName);
   });
+  const webhookKey = selection?.kind === 'webhook' ? selection.eventKey : null;
+  document.querySelectorAll('.webhook-event').forEach((el) => {
+    el.classList.toggle('selected', el.dataset.webhookKey === webhookKey);
+  });
 }
+
+function buildToolDetail(sel) {
+  elDetailTitle.textContent = `${sel.serverName}.${sel.tool.name}`;
+  const card = document.createElement('div');
+  card.className = 'tool-card selected';
+  // W-S8: mirror the verdict downgrade in the right-pane card head.
+  const awaiting = isMcpAwaitingConfig(sel.serverName);
+  const verdictClass = awaiting ? 'awaiting' : 'ready';
+  const verdictLabel = awaiting ? 'Awaiting config' : 'Ready';
+  card.innerHTML = `
+    <div class="tool-card-head">
+      <span class="name">${escapeHtml(sel.serverName)}.${escapeHtml(sel.tool.name)}</span>
+      <span class="verdict ${verdictClass}">${verdictLabel}</span>
+    </div>
+    <pre>${renderToolShape(sel.tool)}</pre>
+  `;
+  card.appendChild(buildToolRunner(sel.serverName, sel.tool));
+  return card;
+}
+
+function buildPromptDetail(sel) {
+  elDetailTitle.textContent = `${sel.serverName}.${sel.prompt.name}`;
+  const card = document.createElement('div');
+  card.className = 'tool-card selected';
+  const argsHtml = (sel.prompt.arguments || []).map((arg) =>
+    `<li><code>${escapeHtml(arg.name)}</code>${arg.required ? ' <em>(required)</em>' : ''}${arg.description ? ` — ${escapeHtml(arg.description)}` : ''}</li>`
+  ).join('') || '<li class="muted">no arguments</li>';
+  card.innerHTML = `
+    <div class="tool-card-head">
+      <span class="name">${escapeHtml(sel.serverName)}.${escapeHtml(sel.prompt.name)}</span>
+      <span class="verdict ready">Prompt</span>
+    </div>
+    ${sel.prompt.description ? `<div class="muted">${escapeHtml(sel.prompt.description)}</div>` : ''}
+    <div class="muted" style="margin-top: 0.5em">arguments:</div>
+    <ul>${argsHtml}</ul>
+  `;
+  return card;
+}
+
+function buildResourceDetail(sel) {
+  const r = sel.resource;
+  const uri = sel.kind === 'resourceTemplate' ? r.uriTemplate : r.uri;
+  elDetailTitle.textContent = `${sel.serverName} · ${r.name}`;
+  const card = document.createElement('div');
+  card.className = 'tool-card selected';
+  card.innerHTML = `
+    <div class="tool-card-head">
+      <span class="name">${escapeHtml(r.name)}</span>
+      <span class="verdict ready">${sel.kind === 'resourceTemplate' ? 'Template' : 'Resource'}</span>
+    </div>
+    <div><code>${escapeHtml(uri)}</code></div>
+    ${r.mimeType ? `<div class="muted">mime: <code>${escapeHtml(r.mimeType)}</code></div>` : ''}
+    ${r.description ? `<div class="muted">${escapeHtml(r.description)}</div>` : ''}
+  `;
+  return card;
+}
+
+function buildFrameDetailPanel(sel) {
+  const tap = sel.tap;
+  elDetailTitle.textContent = `${tap.direction === 'out' ? '→' : '←'} ${tap.frame.type}`;
+  return renderFrameDetail(tap);
+}
+
+function buildMcpDetailPanel(sel) {
+  elDetailTitle.textContent = sel.serverName;
+  return buildMcpCredsView(sel.serverName);
+}
+
+function buildWebhookDetail(sel) {
+  const { sid, status } = summarizeEvent(sel.event);
+  const heading = formatWebhookHeading(sid, status);
+  elDetailTitle.textContent = `${sel.mcp} · ${heading}`;
+  const card = document.createElement('div');
+  card.className = 'tool-card selected';
+  card.innerHTML = `
+    <div class="tool-card-head">
+      <span class="name">${escapeHtml(sel.mcp)} ← webhook</span>
+      <span class="verdict ready">${escapeHtml(formatAge(sel.event.receivedAt))}</span>
+    </div>
+  `;
+  const pre = document.createElement('pre');
+  pre.className = 'webhook-event-detail';
+  pre.textContent = JSON.stringify({
+    body: sel.event.body,
+    queryParameters: sel.event.queryParameters,
+    headers: sel.event.headers ?? {},
+    receivedAt: sel.event.receivedAt,
+  }, null, 2);
+  card.appendChild(pre);
+  return card;
+}
+
+const DETAIL_BUILDERS = {
+  tool: buildToolDetail,
+  prompt: buildPromptDetail,
+  resource: buildResourceDetail,
+  resourceTemplate: buildResourceDetail,
+  frame: buildFrameDetailPanel,
+  mcp: buildMcpDetailPanel,
+  webhook: buildWebhookDetail,
+};
 
 function renderDetail() {
   if (!selection) {
@@ -679,77 +784,8 @@ function renderDetail() {
   elDetailEmpty.hidden = true;
   elDetailContent.hidden = false;
   elDetailContent.replaceChildren();
-
-  if (selection.kind === 'tool') {
-    elDetailTitle.textContent = `${selection.serverName}.${selection.tool.name}`;
-    const card = document.createElement('div');
-    card.className = 'tool-card selected';
-    // W-S8: mirror the verdict downgrade in the right-pane card head.
-    const awaiting = isMcpAwaitingConfig(selection.serverName);
-    const verdictClass = awaiting ? 'awaiting' : 'ready';
-    const verdictLabel = awaiting ? 'Awaiting config' : 'Ready';
-    card.innerHTML = `
-      <div class="tool-card-head">
-        <span class="name">${escapeHtml(selection.serverName)}.${escapeHtml(selection.tool.name)}</span>
-        <span class="verdict ${verdictClass}">${verdictLabel}</span>
-      </div>
-      <pre>${renderToolShape(selection.tool)}</pre>
-    `;
-    card.appendChild(buildToolRunner(selection.serverName, selection.tool));
-    elDetailContent.appendChild(card);
-    return;
-  }
-
-  if (selection.kind === 'prompt') {
-    elDetailTitle.textContent = `${selection.serverName}.${selection.prompt.name}`;
-    const card = document.createElement('div');
-    card.className = 'tool-card selected';
-    const argsHtml = (selection.prompt.arguments || []).map((arg) =>
-      `<li><code>${escapeHtml(arg.name)}</code>${arg.required ? ' <em>(required)</em>' : ''}${arg.description ? ` — ${escapeHtml(arg.description)}` : ''}</li>`
-    ).join('') || '<li class="muted">no arguments</li>';
-    card.innerHTML = `
-      <div class="tool-card-head">
-        <span class="name">${escapeHtml(selection.serverName)}.${escapeHtml(selection.prompt.name)}</span>
-        <span class="verdict ready">Prompt</span>
-      </div>
-      ${selection.prompt.description ? `<div class="muted">${escapeHtml(selection.prompt.description)}</div>` : ''}
-      <div class="muted" style="margin-top: 0.5em">arguments:</div>
-      <ul>${argsHtml}</ul>
-    `;
-    elDetailContent.appendChild(card);
-    return;
-  }
-
-  if (selection.kind === 'resource' || selection.kind === 'resourceTemplate') {
-    const r = selection.resource;
-    const uri = selection.kind === 'resourceTemplate' ? r.uriTemplate : r.uri;
-    elDetailTitle.textContent = `${selection.serverName} · ${r.name}`;
-    const card = document.createElement('div');
-    card.className = 'tool-card selected';
-    card.innerHTML = `
-      <div class="tool-card-head">
-        <span class="name">${escapeHtml(r.name)}</span>
-        <span class="verdict ready">${selection.kind === 'resourceTemplate' ? 'Template' : 'Resource'}</span>
-      </div>
-      <div><code>${escapeHtml(uri)}</code></div>
-      ${r.mimeType ? `<div class="muted">mime: <code>${escapeHtml(r.mimeType)}</code></div>` : ''}
-      ${r.description ? `<div class="muted">${escapeHtml(r.description)}</div>` : ''}
-    `;
-    elDetailContent.appendChild(card);
-    return;
-  }
-
-  if (selection.kind === 'frame') {
-    const tap = selection.tap;
-    elDetailTitle.textContent = `${tap.direction === 'out' ? '→' : '←'} ${tap.frame.type}`;
-    elDetailContent.appendChild(renderFrameDetail(tap));
-    return;
-  }
-
-  if (selection.kind === 'mcp') {
-    elDetailTitle.textContent = selection.serverName;
-    elDetailContent.appendChild(buildMcpCredsView(selection.serverName));
-  }
+  const build = DETAIL_BUILDERS[selection.kind];
+  if (build) elDetailContent.appendChild(build(selection));
 }
 
 // W-S5: right-pane creds view. Renders:
@@ -1267,6 +1303,84 @@ function fmtAgo(ts) {
   return `${Math.round(diff / 3_600_000)}h ago`;
 }
 
+// Mirror of the SID/Status keys the apis MCP's status-callback helper uses;
+// we sniff the same fields so a Twilio webhook renders as "SM… status" rather
+// than "(payload)". Anything not in this list falls back to "webhook".
+const WEBHOOK_SID_KEYS = ['MessageSid', 'CallSid', 'RecordingSid', 'ConferenceSid', 'FaxSid', 'RoomSid'];
+const WEBHOOK_STATUS_KEYS = ['MessageStatus', 'CallStatus', 'RecordingStatus', 'ConferenceStatus', 'FaxStatus', 'RoomStatus'];
+
+function readField(obj, keys) {
+  if (!obj || typeof obj !== 'object') return undefined;
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+  }
+  return undefined;
+}
+
+function summarizeEvent(event) {
+  const sid = readField(event.body, WEBHOOK_SID_KEYS) ?? readField(event.queryParameters, WEBHOOK_SID_KEYS);
+  const status = readField(event.body, WEBHOOK_STATUS_KEYS) ?? readField(event.queryParameters, WEBHOOK_STATUS_KEYS);
+  return { sid, status };
+}
+
+function formatAge(receivedAt) {
+  const seconds = Math.max(0, Math.round((Date.now() - receivedAt) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  return `${hours}h ago`;
+}
+
+function shortSid(sid) {
+  if (!sid) return '';
+  if (sid.length <= 10) return sid;
+  return `${sid.slice(0, 8)}…`;
+}
+
+function formatWebhookLabel(sid, status) {
+  if (sid && status) return `${shortSid(sid)} ${status}`;
+  if (sid) return shortSid(sid);
+  return status ?? 'webhook';
+}
+
+function formatWebhookHeading(sid, status) {
+  if (sid && status) return `${shortSid(sid)} · ${status}`;
+  return sid ?? status ?? 'webhook';
+}
+
+function webhookEventKey(mcp, event) {
+  // Stable per-event identifier for selection highlighting. receivedAt is
+  // controller-stamped and sufficiently unique within a connector lifetime;
+  // pairing with mcp avoids collisions across MCPs.
+  return `${mcp}:${event.receivedAt}`;
+}
+
+function renderWebhookEvents(mcp, events) {
+  if (!events || events.length === 0) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'webhook-events';
+  for (const event of events) {
+    const { sid, status } = summarizeEvent(event);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'webhook-event';
+    row.dataset.webhookKey = webhookEventKey(mcp, event);
+    const label = formatWebhookLabel(sid, status);
+    row.innerHTML = `
+      <span class="webhook-event-label">${escapeHtml(label)}</span>
+      <span class="webhook-event-age">${escapeHtml(formatAge(event.receivedAt))}</span>
+    `;
+    row.addEventListener('click', () => {
+      setSelection({ kind: 'webhook', mcp, event, eventKey: webhookEventKey(mcp, event) });
+    });
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
 function renderWebhooks(list) {
   if (!list || list.length === 0) {
     elWebhooksList.hidden = true;
@@ -1300,6 +1414,8 @@ function renderWebhooks(list) {
       });
       li.appendChild(btn);
     }
+    const events = renderWebhookEvents(w.mcp, w.recentEvents);
+    if (events) li.appendChild(events);
     elWebhooksList.appendChild(li);
   }
 }

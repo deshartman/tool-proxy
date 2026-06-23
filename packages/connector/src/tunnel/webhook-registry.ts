@@ -53,7 +53,10 @@ interface Subscription {
   url?: string;                       // undefined while WS is closed or pre-ack
   webhookListeners: Set<WebhookListener>;
   urlListeners: Set<UrlListener>;     // fired on (re)allocate so the SDK can surface fresh URLs
+  recentEvents: WebhookEvent[];       // ringbuffer for the inspector UI; cap = RECENT_EVENTS_CAP
 }
+
+const RECENT_EVENTS_CAP = 5;
 
 export interface WebhookRegistryOptions {
   // Outbound frame send. Returns false when the WS is not open; the registry
@@ -62,6 +65,10 @@ export interface WebhookRegistryOptions {
   // Allocation timeout. If the controller doesn't ack inside this window,
   // allocate() rejects.
   allocateTimeoutMs?: number;
+  // Inspector hook: called after every successful dispatch() so the inspector
+  // can broadcast a fresh webhooks snapshot (which now includes recentEvents)
+  // to its SSE subscribers. Synchronous, fire-and-forget.
+  onDispatched?: () => void;
   log?: Logger;
 }
 
@@ -78,12 +85,17 @@ export class WebhookRegistry {
   }
 
   // Snapshot for the inspector UI. Returns one entry per allocated MCP with
-  // its current URL (if minted) and listener counts.
-  snapshot(): Array<{ mcp: string; url?: string; listeners: number }> {
+  // its current URL (if minted), listener counts, and the most recent
+  // dispatched events (newest first, capped at RECENT_EVENTS_CAP). The
+  // ringbuffer survives an inspector page refresh — same rationale as the
+  // FrameTap ring on the inspector itself.
+  snapshot(): Array<{ mcp: string; url?: string; listeners: number; recentEvents: WebhookEvent[] }> {
     return [...this.subs.values()].map((sub) => ({
       mcp: sub.mcp,
       url: sub.url,
       listeners: sub.webhookListeners.size,
+      // Copy out so consumers can't mutate the internal buffer.
+      recentEvents: [...sub.recentEvents],
     }));
   }
 
@@ -156,7 +168,7 @@ export class WebhookRegistry {
   async subscribe(mcp: string, listener: WebhookListener): Promise<{ url: string; unsubscribe: () => void; onUrl: (fn: UrlListener) => () => void }> {
     let sub = this.subs.get(mcp);
     if (!sub) {
-      sub = { mcp, webhookListeners: new Set(), urlListeners: new Set() };
+      sub = { mcp, webhookListeners: new Set(), urlListeners: new Set(), recentEvents: [] };
       this.subs.set(mcp, sub);
     }
     sub.webhookListeners.add(listener);
@@ -252,10 +264,17 @@ export class WebhookRegistry {
       headers: frame.headers,
       receivedAt: frame.receivedAt,
     };
+    // Newest-first ringbuffer for the inspector. Cap is small (RECENT_EVENTS_CAP)
+    // — operators wanting full history use the Frames panel.
+    sub.recentEvents.unshift(event);
+    if (sub.recentEvents.length > RECENT_EVENTS_CAP) {
+      sub.recentEvents.length = RECENT_EVENTS_CAP;
+    }
     for (const fn of sub.webhookListeners) {
       try { fn(event); }
       catch (error) { this.log.error({ err: error as Error, mcp: frame.mcp }, `webhook listener threw`); }
     }
+    this.opts.onDispatched?.();
   }
 
   // Pause in-flight allocates across a WS bounce. Called when the WS closes.
