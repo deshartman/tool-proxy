@@ -1140,7 +1140,7 @@ Approval state lives **controller-only**. After every `register-ack`, the contro
 
 The gate predicate on the connector side is exactly `author === "customer"` AND `source === "local"`. Anything else flows through unchanged.
 
-### `mcp-discovered` (connector → connector)
+### `mcp-discovered` (connector → controller)
 
 ```ts
 interface McpDiscoveredFrame {
