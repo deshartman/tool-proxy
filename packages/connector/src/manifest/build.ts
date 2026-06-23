@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import type { ConnectorConfig } from "../config.js";
 import { authorOf } from "../config.js";
+import { isDropinSpec } from "../dropin.js";
 import type { McpServerConnection } from "../servers/index.js";
 import { toDescriptor } from "../servers/index.js";
 import type {
@@ -21,6 +22,13 @@ import type {
 // configPath is the absolute path to the loaded yaml — passed through so
 // authorOf() can resolve relative `dir:` entries against the yaml's
 // location and decide twilio-vs-customer per server.
+//
+// dropinSpecsByName lets buildManifest tell drop-in entries apart from
+// hand-written Type 1 entries with the same yaml `dir:`. Both share
+// transport: "http" + dir on the supervisor side; only the spec carries
+// the `__dropin: true` marker that the v1.3 approval gate hangs off.
+// Optional + best-effort: when omitted, no entries are gated (preserves
+// pre-v1.3 boot paths and tests). Empty map → same effect.
 export async function buildManifest(
   config: ConnectorConfig,
   servers: Map<string, McpServerConnection>,
@@ -32,13 +40,37 @@ export async function buildManifest(
   // can omit it; absent → ServerDescriptor.envKeys is undefined and the
   // inspector falls back to "no badge".
   envKeysFor?: (name: string) => Promise<string[]>,
+  // v1.3 — Customer drop-in approval gate. Predicate consulted ONLY for
+  // entries whose spec is a drop-in (`__dropin === true`); when it returns
+  // false the entire ServerDescriptor is omitted from the manifest. Yaml-
+  // listed and controller-config entries bypass this check entirely. Optional
+  // so tests + older boot paths can omit it (absent ≡ all-approved).
+  isApproved?: (name: string) => boolean,
+  // Drop-in spec lookup. The supervisor knows which specs carry the
+  // `__dropin: true` marker; we don't repeat that classification here.
+  // Boot wiring threads through `discoverDropins()` output keyed by name.
+  dropinSpecsByName?: Map<string, unknown>,
 ): Promise<ToolManifest> {
   const yamlDir = dirname(resolve(configPath));
   const specByName = new Map(config.mcp_servers.map((server) => [server.name, server]));
 
-  const serverEntries: ServerDescriptor[] = await Promise.all(
-    [...servers.values()].map((server) => buildServerDescriptor(server, specByName, yamlDir, envKeysFor)),
+  const allEntries: Array<ServerDescriptor | undefined> = await Promise.all(
+    [...servers.values()].map(async (server) => {
+      // Gate predicate: drop-ins only. The classifier is "name appears in
+      // the dropin map" — set up by boot wiring; absence is "not a drop-in".
+      // We deliberately don't peek at McpServerSpec internals here so the
+      // yaml-listed Type 1 hand-written shape (legacy escape hatch) stays
+      // un-gated even when a future change adds `__dropin` somewhere
+      // unexpected.
+      const isDropin = dropinSpecsByName?.has(server.name) ?? false;
+      if (isDropin && isApproved && !isApproved(server.name)) {
+        return undefined;
+      }
+      return buildServerDescriptor(server, specByName, yamlDir, envKeysFor);
+    }),
   );
+
+  const serverEntries = allEntries.filter((entry): entry is ServerDescriptor => entry !== undefined);
 
   // Stable ordering: keep server order from YAML so diffs are deterministic.
   const orderByName = new Map(config.mcp_servers.map((server, index) => [server.name, index]));
@@ -53,6 +85,20 @@ export async function buildManifest(
     version,
     servers: serverEntries,
   };
+}
+
+// Helper: build the drop-in name set the manifest gate consults. Boot
+// wiring calls this once per buildManifest pass with `discoverDropins()`'s
+// output. Exposed so the inspector and tests can re-use the same
+// classification rule.
+export function dropinSpecsToMap(specs: Iterable<unknown>): Map<string, unknown> {
+  const map = new Map<string, unknown>();
+  for (const spec of specs) {
+    if (isDropinSpec(spec as never) && (spec as { name: string }).name) {
+      map.set((spec as { name: string }).name, spec);
+    }
+  }
+  return map;
 }
 
 async function buildServerDescriptor(

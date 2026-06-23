@@ -360,6 +360,77 @@ export interface McpNotificationFrame {
   payload: unknown;           // JSON-RPC notification envelope (method + params)
 }
 
+// ── v1.3 — Customer drop-in approval gate ──────────────────────────────────
+//
+// Customer-authored drop-in MCPs (folders under MCP_DROPIN_DIR with
+// author === "customer" && source === "local") are NOT advertised in the
+// manifest until the controller's operator approves them. The connector
+// spawns the child unconditionally (preserves crash isolation), withholds
+// the server descriptor from the manifest, and emits `mcp-discovered` so
+// the controller can render it in a "Pending approval" lane.
+//
+// Approval state lives on the controller. After every register-ack the
+// controller replays `mcp-enable` for every previously-approved MCP — the
+// connector keeps the approved set in RAM only (no .connector-state.json
+// persistence). Yaml-listed Type 1 / Type 3 / 3rd-party MCPs are NOT gated.
+//
+// See docs/MCP-PROTOCOL.md §"v1.3 — Customer drop-in approval gate" and
+// .claude/plans/MCP-CUSTOM-APPROVAL.md for the full contract.
+
+// Connector → controller. A customer drop-in MCP whose tools are NOT yet
+// in the manifest. Two emission points: at boot for every drop-in (the
+// controller decides whether to auto-replay enable), and on rescan-added
+// drop-ins. `tools` carries names + descriptions only — schemas are
+// withheld until approval lands.
+export interface McpDiscoveredFrame {
+  type: "mcp-discovered";
+  mcp: string;                          // folder name; stable identity across reconnects
+  author: "customer";                   // gate predicate, always literal
+  source: "local";                      // gate predicate, always literal
+  envKeys: string[];                    // de-duped union from the child's /envkeys endpoint
+  tools: Array<{
+    name: string;
+    description?: string;
+  }>;
+  discoveredAt: string;                 // ISO8601, connector wall-clock
+}
+
+// Controller → connector. Operator-side approval (initial click) OR
+// replay-on-register-ack for every previously-approved MCP. Idempotent —
+// re-enabling an already-enabled MCP is a no-op except for the ack.
+// `env` merges via supervisor.applyControllerEnv (same path creds-update
+// uses); creds-update remains the steady-state ongoing-rotation path.
+export interface McpEnableFrame {
+  type: "mcp-enable";
+  mcp: string;
+  env?: Record<string, string>;         // optional inline-paste; subset of envKeys is fine
+  source?: "operator-entered";          // for telemetry; reserved for future values
+}
+
+// Controller → connector. Operator revokes approval. Connector drops the
+// tools from the manifest (manifest-delta { removed }); the child KEEPS
+// running. No `stop` field — kill-the-child is reserved for a future
+// `mcp-stop` if a real scenario emerges (RAM, misbehaviour). Don't
+// overload `mcp-disable`.
+export interface McpDisableFrame {
+  type: "mcp-disable";
+  mcp: string;
+}
+
+// Connector → controller. Reply to `mcp-enable` and `mcp-disable`.
+// Frame-ordering rule: `manifest-delta` MUST precede this ack — the ack
+// is the "I'm done" signal, the manifest-delta is the actual surface
+// change. `status: "enabled"` carries `toolsCount`; `status: "error"`
+// carries `error` (`unknown_mcp`, `apply_env_failed: <reason>`,
+// `not_gated: ...`).
+export interface McpEnableAckFrame {
+  type: "mcp-enable-ack";
+  mcp: string;
+  status: "enabled" | "disabled" | "error";
+  error?: string;
+  toolsCount?: number;
+}
+
 // Frames the connector originates.
 export type TunnelFrame =
   | RegisterFrame
@@ -373,7 +444,9 @@ export type TunnelFrame =
   | McpConfigAckFrame
   | McpConfigResyncFrame
   | LocalMcpsRescanAckFrame
-  | McpNotificationFrame;
+  | McpNotificationFrame
+  | McpDiscoveredFrame
+  | McpEnableAckFrame;
 
 // Frames the connector receives (inbound). Register-ack is a non-spec but
 // useful response from the controller — see RegisterAckFrame above.
@@ -386,4 +459,6 @@ export type InboundTunnelFrame =
   | CredsUpdateFrame
   | McpConfigSnapshotFrame
   | McpConfigDeltaFrame
-  | LocalMcpsRescanFrame;
+  | LocalMcpsRescanFrame
+  | McpEnableFrame
+  | McpDisableFrame;

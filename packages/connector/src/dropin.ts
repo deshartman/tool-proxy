@@ -5,13 +5,12 @@
 //   * folders that already have server.ts (hand-written Type 1; the
 //     customer authored boilerplate deliberately and we don't second-guess)
 //   * folders whose name is already declared in connector.yaml (yaml entry
-//     wins so today's mcp/local/sample, mcp/local/crm keep working
-//     unchanged until each migrates)
+//     wins so a migration from hand-written Type 1 to drop-in is incremental)
 //
 // MCP_DROPIN_DIR resolution:
 //   * Production (OCI image): /var/lib/mcp-connector/customer-mcps/
 //   * Local dev: defaults to mcp/local/ relative to the connector package
-//     so sample/crm continue to work without a new mount.
+//     so the bundled `sample` drop-in works without a new mount.
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";

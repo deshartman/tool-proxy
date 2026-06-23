@@ -241,10 +241,7 @@ These are pinned by tests at [packages/connector/tests/mcp-tools/](../packages/c
 
 ## Live examples
 
-- [`mcp/local/sample/`](../mcp/local/sample/) — `tools/` (`now`, `slow_echo`, `uuid`, `weather`), `prompts/weather-briefing.ts`, `resources/uuids-recent.ts`. The fullest worked example — all three sibling categories. No external services.
-- [`mcp/local/crm/tools/`](../mcp/local/crm/tools/) — `get_customer`, `get_recent`, `issue_refund`, plus calendar helpers. Thin client over the mock customer service at [mock/customers/](../mock/customers/). Tools-only.
-
-Both are live drop-ins — no `server.ts`, no `package.json`, no yaml entry.
+- [`mcp/local/sample/`](../mcp/local/sample/) — `tools/` (`now`, `slow_echo`, `uuid`, `weather`), `prompts/weather-briefing.ts`, `resources/uuids-recent.ts`. The fullest worked example — all three sibling categories. No external services. Live drop-in: no `server.ts`, no `package.json`, no yaml entry.
 
 ## Cross-references
 

@@ -57,4 +57,3 @@ graphify-out/*
 # the inspector through the Playwright browser MCP during verification).
 .playwright-mcp/
 XXX/*
-mcp/local/*
