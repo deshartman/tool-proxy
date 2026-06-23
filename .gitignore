@@ -56,3 +56,5 @@ graphify-out/*
 # Playwright MCP smoke-test scratch (snapshots + console logs from running
 # the inspector through the Playwright browser MCP during verification).
 .playwright-mcp/
+XXX/*
+mcp/local/*
