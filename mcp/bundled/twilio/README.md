@@ -28,6 +28,30 @@ would stutter (`twilio_apis_twilio_messages_create`).
 | `verify_check({to, code, serviceSid})` | Validate an OTP a user submitted | free |
 | `verify_services_fetch({sid})` | Inspect a Verify Service's config | free |
 | `lookups_fetch({phone_number})` | Twilio Lookup v2 — validate a number | free |
+| `email_send({to, from, subject?, text?, html?, templateId?, ...})` | Send an email via SendGrid | **incurs charges** |
+| `email_fetch({msgId})` | Fetch SendGrid delivery + event timeline (Pro+) | free |
+| `email_search({query?, ...})` | Search recent SendGrid messages | free |
+| `email_templates_fetch({templateId?, ...})` | Inspect SendGrid dynamic templates | free |
+| `segment_profile_traits({id_type, value, ...})` | Read latest traits for a unified profile | free |
+| `segment_profile_events({id_type, value, ...})` | Read recent events for a unified profile | free |
+| `segment_profile_external_ids({id_type, value})` | List every external id linked to a profile | free |
+| `segment_identify({userId|anonymousId, traits?})` | Upsert traits onto a Segment profile | free |
+| `segment_track({userId|anonymousId, event, properties?})` | Record an event on a Segment profile | free |
+
+## Creds gating
+
+The bundle registers tools in three independent groups, each gated on its own credentials. Customers running only one or two services see only those groups' tools:
+
+| Group | Required env | Tools registered |
+|---|---|---|
+| Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | messaging / voice / verify / lookups (16 tools) |
+| SendGrid | `SENDGRID_API_KEY` | email (4 tools) |
+| Segment — read | `SEGMENT_SPACE_ID`, `SEGMENT_PROFILE_PAT` | profile traits / events / external_ids (3 tools) |
+| Segment — write | `SEGMENT_WRITE_KEY` | identify / track (2 tools) |
+
+Within a group, missing keys are all-or-nothing — supplying `TWILIO_ACCOUNT_SID` without `TWILIO_AUTH_TOKEN` registers zero Twilio tools. The Twilio and Segment-read groups each need both env vars set.
+
+`SEGMENT_PROFILE_HOST` is an optional override (default `https://profiles.segment.com`); set it to `https://profiles.euw1.segment.com` for EU-resident Segment workspaces.
 
 ## Setup
 
