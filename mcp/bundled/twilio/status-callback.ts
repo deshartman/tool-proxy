@@ -146,28 +146,38 @@ export function extractStatus(event: WebhookEvent): string | undefined {
   return readField(event.body, STATUS_KEYS) ?? readField(event.queryParameters, STATUS_KEYS);
 }
 
-// TODO(user): implement waitForStatus — see "How to apply" below.
+// Resolves with the status string from the first webhook event for `sid` that
+// satisfies `opts.until` (or the first event for `sid`, if `until` is omitted).
+// Rejects with `{ code: "timeout" }` when no satisfying event arrives in time.
 //
-// Constraints / things to think about:
-// - Multiple awaiters may exist for the same SID concurrently (two tool calls
-//   to different APIs, both happen to await delivery). They should all see
-//   the same events.
-// - When the predicate `until` is provided, only events whose extracted
-//   status satisfies it should resolve. Events that don't satisfy `until`
-//   should be ignored, NOT cause rejection.
-// - When `until` is omitted, the first event for that SID resolves with
-//   whatever status was in it (may be undefined if the upstream didn't
-//   include one — in that case resolve with the empty string or design
-//   another way to signal "callback received, no status field").
-// - Always clean up: remove the listener on resolve, reject, or timeout.
-// - Use the existing `onStatusCallback(listener)` API to register your
-//   internal listener — don't reach into `listeners` directly. Keeping
-//   this layered means a future change to onStatusCallback's signature
-//   doesn't break waitForStatus.
-//
-// Suggested signature:
-//   export function waitForStatus(sid: string, opts: WaitForStatusOptions): Promise<string>
+// Each call gets its own listener — concurrent awaiters for the same SID all
+// receive the same events through the shared onStatusCallback fan-out, and
+// each settles independently. Status defaults to empty string when the
+// upstream didn't include a *Status field — callers can distinguish "callback
+// received but status absent" (empty) from "no callback yet" (still pending).
 export function waitForStatus(sid: string, opts: WaitForStatusOptions): Promise<string> {
-  void sid; void opts;
-  return Promise.reject(new Error("waitForStatus not yet implemented — see status-callback.ts TODO"));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      const err = new Error(`waitForStatus(${sid}) timed out after ${opts.timeout}ms`) as Error & { code: string };
+      err.code = "timeout";
+      reject(err);
+    }, opts.timeout);
+
+    unsubscribe = onStatusCallback((event) => {
+      if (settled) return;
+      if (extractSid(event) !== sid) return;
+      const status = extractStatus(event) ?? "";
+      if (opts.until && !opts.until(status)) return;
+      settled = true;
+      clearTimeout(timer);
+      unsubscribe?.();
+      resolve(status);
+    });
+  });
 }
