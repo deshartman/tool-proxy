@@ -90,19 +90,28 @@ export async function boot(): Promise<void> {
   // reaches into the live `tunnel` ref above (closed-over binding); on reopen
   // we call reallocateAll so SDK consumers don't have to re-subscribe across
   // reconnects.
+  // Forward declaration: the registry's onDispatched closure needs to reach
+  // the inspector, but the inspector is constructed below this block (and
+  // the inspector itself takes `webhooks` as a constructor arg, so we can't
+  // simply flip the order). The `let` binding is captured by reference; the
+  // closure resolves `inspector` lazily on each call, after the assignment
+  // below has run.
+  let inspector: Inspector | undefined;
+
   const webhooks = new WebhookRegistry({
     sendFrame: (frame) => {
       if (tunnel?.state !== "open") return false;
       tunnel.send(frame);
       return true;
     },
+    onDispatched: () => inspector?.publishWebhookSnapshot(),
   });
 
   // 1. Inspector starts FIRST — before any Type 1 children spawn. Children
   // that consume the SDK's createWebhookEndpoint() open a stream against
   // 127.0.0.1:INSPECTOR_PORT immediately on boot; the inspector has to be
   // listening by then or the first allocation hits ECONNREFUSED.
-  const inspector = inspectorPort > 0
+  inspector = inspectorPort > 0
     ? new Inspector({
         controllerUrl: config.tunnel.controller_url,
         state: "connecting",

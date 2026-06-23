@@ -67,10 +67,20 @@ export type InspectorEvent =
   | { kind: "webhooks"; webhooks: WebhookSummary[] }
   | { kind: "mcpStatuses"; mcpStatuses: McpStatus[] };
 
+export interface WebhookEventSummary {
+  body: unknown;
+  queryParameters: Record<string, string | string[]>;
+  headers?: Record<string, string>;
+  receivedAt: number;
+}
+
 export interface WebhookSummary {
   mcp: string;
   url?: string;
   listeners: number;
+  // Most recent events (newest first), arrived from the controller as `webhook`
+  // frames. Bounded ringbuffer; full history lives in the Frames panel.
+  recentEvents: WebhookEventSummary[];
 }
 
 export interface InspectorState {
