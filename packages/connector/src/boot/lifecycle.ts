@@ -15,7 +15,7 @@
 
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
 import type { McpServerConnection } from "../servers/index.js";
-import { buildManifest } from "../manifest/build.js";
+import { buildManifest, dropinSpecsToMap } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
 import { validateManifestSchemas } from "../manifest/validate.js";
 import { TunnelClient } from "../tunnel/client.js";
@@ -30,9 +30,10 @@ import { createFrameRouter } from "../tunnel/frame-router.js";
 import { CredsCoordinator } from "../tunnel/creds-coordinator.js";
 import { McpConfigCoordinator } from "../tunnel/mcp-config-coordinator.js";
 import { LocalMcpsCoordinator } from "../tunnel/local-mcps-coordinator.js";
+import { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
 import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
-import { discoverDropins } from "../dropin.js";
+import { discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
 import { resolveAuth } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { envOptional, envString, envNumber } from "../env.js";
@@ -156,6 +157,14 @@ export async function boot(): Promise<void> {
   }
   const allSpecs: SupervisedSpec[] = [...config.mcp_servers, ...dropins];
 
+  // v1.3 — drop-in name set, threaded through every buildManifest call so
+  // the gate predicate knows which entries to consult `isApproved` for.
+  // Mutated by L2 rescan (added drop-ins join the set; removed drop-ins
+  // leave). Keeping the map separate from the supervisor's internal entry
+  // map preserves the buildManifest layering — the manifest builder doesn't
+  // peek at supervisor internals.
+  const dropinSpecsByName = new Map<string, DropinSpec>(dropins.map((spec) => [spec.name, spec]));
+
   // 2b. Supervisor owns child lifecycle. The shared `servers` map is
   // mutated by every spawn / restart so the dispatcher (wired below) and
   // inspector pick up new connections without re-attach.
@@ -206,6 +215,20 @@ export async function boot(): Promise<void> {
     log,
   });
 
+  // v1.3 — Customer drop-in approval gate. Same lifetime contract as
+  // McpConfigCoordinator + LocalMcpsCoordinator: constructed ONCE per
+  // process, rebound per-tunnel via bind({send}). The approved set lives
+  // in RAM only — the controller is the durable authority and replays
+  // mcp-enable for every approved MCP after every register-ack. Don't
+  // refactor it back to per-tunnel construction (would cause manifest
+  // tools to vanish briefly on every reconnect until the replay landed).
+  const approval = new ApprovalCoordinator({
+    send: () => log.warn(`approval send before tunnel bind — dropping frame`),
+    supervisor,
+    log,
+    onManifestChange: () => refreshManifestAndPushDelta(),
+  });
+
   // Controller-triggered local-MCP rescan (W-L2 of MCP-LOADING-LOCAL).
   // Same lifetime story as McpConfigCoordinator — constructed ONCE per
   // process, rebound per-tunnel via bind() so its single-flight guard
@@ -221,13 +244,37 @@ export async function boot(): Promise<void> {
     yamlNames,
     onApplied: () => refreshManifestAndPushDelta(),
     onMcpAdded: async (name) => {
-      // Latest creds coordinator binds per-tunnel inside connectTunnel.
-      // We capture the live one via the closure when reload() is needed.
-      // boot's `creds` reference doesn't outlive connectTunnel, so we
-      // route through the inspector's mcpActions (which always points at
-      // the live creds coord). Falls back to a no-op when the inspector
-      // is disabled — the next register-ack triggers a full creds fan-out
-      // anyway.
+      // v1.3 — rescan-added drop-ins are now gated. Update the
+      // dropinSpecsByName map (so the manifest gate sees them) and emit an
+      // mcp-discovered frame so the controller can render the new MCP in
+      // its Pending lane. Yaml-listed Type 1 hand-written drop-ins (legacy
+      // escape hatch — folder + server.ts + yaml entry) keep the existing
+      // creds-request flow because they aren't `__dropin: true` specs.
+      const status = supervisor.statusList().find((s) => s.name === name);
+      const isCustomerDropin = status?.source === "local";
+      if (isCustomerDropin) {
+        // Re-discover so we have the freshly-spawned spec to register in
+        // the gate map. The L2 rescan registered it on the supervisor side
+        // already; here we just keep dropinSpecsByName in sync.
+        const fresh = discoverDropins({ yamlNames });
+        for (const spec of fresh) dropinSpecsByName.set(spec.name, spec);
+
+        try {
+          const envKeys = await supervisor.fetchEnvKeys(name);
+          const conn = servers.get(name);
+          const tools = conn ? await conn.listTools() : [];
+          approval.emitDiscovered({
+            mcp: name,
+            envKeys,
+            tools: tools.map((t) => ({ name: t.name, description: t.description })),
+          });
+        } catch (err) {
+          log.warn({ name, err: err as Error }, `mcp-discovered emission for newly-added drop-in failed`);
+        }
+        return;
+      }
+      // Non-drop-in (legacy yaml-listed Type 1 hand-written) — keep the
+      // creds-request flow as today.
       try {
         await inspector?.mcpActions?.reloadCreds(name);
       } catch (err) {
@@ -244,7 +291,18 @@ export async function boot(): Promise<void> {
   // 3. Build initial manifest and push it into the inspector (already running).
   // The supervisor list is the source of truth for what's running — it
   // includes the yaml entries plus any drop-ins discovered above.
-  let manifest: ToolManifest = await buildManifest(config, servers, version, configPath, (name) => supervisor.fetchEnvKeys(name));
+  // v1.3: drop-in entries are gated by the approval coordinator. Until the
+  // controller sends `mcp-enable` (operator approval click OR replay-on-
+  // register-ack), the descriptor is omitted entirely.
+  let manifest: ToolManifest = await buildManifest(
+    config,
+    servers,
+    version,
+    configPath,
+    (name) => supervisor.fetchEnvKeys(name),
+    (name) => approval.isApproved(name),
+    dropinSpecsByName,
+  );
   // Manifest-time advisory: one log.warn per shipped MCP whose tools lack
   // outputSchema. Tools without a schema are still callable — the controller
   // surfaces them by name only (no field-projection), and that's a fine
@@ -260,10 +318,20 @@ export async function boot(): Promise<void> {
   // Wire operator-driven tool invocation from the inspector UI into the same
   // servers map the dispatcher uses for controller-driven calls. Same callTool
   // path; same per-tool timeout.
+  //
+  // v1.3 trust-boundary fix: unapproved drop-ins must NOT be callable through
+  // the inspector. Without this gate the loopback UI would be a backdoor
+  // around the controller's approval gesture — a customer admin (whoever
+  // dropped the folder) could call the tools without an operator's accept,
+  // defeating the two-key model.
   if (inspector) {
     inspector.toolDispatch = async (serverName, toolName, args) => {
       const server = servers.get(serverName);
       if (!server) throw new Error(`no local MCP server '${serverName}'`);
+      const isDropin = dropinSpecsByName.has(serverName);
+      if (isDropin && !approval.isApproved(serverName)) {
+        throw new Error(`MCP '${serverName}' is awaiting controller approval — tool calls are blocked`);
+      }
       return server.callTool(toolName, args, {
         timeoutMs: config.policy.tool_timeout_ms,
       });
@@ -374,6 +442,10 @@ export async function boot(): Promise<void> {
     // mcpConfig. Single-flight state survives reconnect by design.
     localMcps.bind({ send: (frame) => pendingTunnel.send(frame) });
 
+    // v1.3 — Customer drop-in approval gate. Same per-tunnel rebind:
+    // approved set survives reconnect; only the wire `send` callback flips.
+    approval.bind({ send: (frame) => pendingTunnel.send(frame) });
+
     // v1.2 (Workstream D) — bind the notification forwarder to the live
     // tunnel. Same pattern as mcpConfig.bind: process-wide listeners,
     // per-tunnel send callback. Notifications fired between unbind and
@@ -396,6 +468,12 @@ export async function boot(): Promise<void> {
       if (frame.type === "mcp-config-snapshot") { void mcpConfig.handleSnapshot(frame); return; }
       if (frame.type === "mcp-config-delta") { void mcpConfig.handleDelta(frame); return; }
       if (frame.type === "local-mcps-rescan") { void localMcps.rescanFromController(); return; }
+      // v1.3 — Customer drop-in approval gate. mcp-enable carries the
+      // operator's approval gesture (initial click OR replay-on-register-
+      // ack); mcp-disable carries the revoke gesture. Both update the
+      // approval set, push a manifest-delta if shape changed, and ack.
+      if (frame.type === "mcp-enable") { void approval.handleEnable(frame); return; }
+      if (frame.type === "mcp-disable") { void approval.handleDisable(frame); return; }
       if (frame.type === "register-ack" && !frame.error) {
         // After register-ack success, kick off creds-request per MCP and arm
         // the mcp-config soft-wait. Don't block the router callback — fire-
@@ -404,6 +482,12 @@ export async function boot(): Promise<void> {
         baseRouter(frame);
         void requestCredsForAllMcps(creds, mcpConfig);
         mcpConfig.armSnapshotWait();
+        // v1.3 — emit mcp-discovered for every drop-in NOT yet approved.
+        // The connector is stateless across restarts; the controller's
+        // approval table is the durable authority and replays mcp-enable
+        // for previously-approved MCPs. Until that replay arrives, every
+        // drop-in's tools stay omitted from the manifest by the gate.
+        void announceDiscoveredDropins();
         return;
       }
       baseRouter(frame);
@@ -518,6 +602,40 @@ export async function boot(): Promise<void> {
     inspector?.setMcpStatuses(supervisor.statusList());
   }
 
+  // v1.3 — emit `mcp-discovered` after register-ack for every customer
+  // drop-in NOT yet approved this session. The controller looks each one
+  // up in its approval table keyed on (connectorId, mcp) and replays
+  // `mcp-enable` immediately for previously-approved MCPs. New MCPs land
+  // in the controller's "Pending approval" lane and stay there until an
+  // operator clicks Approve.
+  //
+  // Drop-ins ALREADY in the approved set (post-replay race condition: a
+  // very-fast controller could replay mcp-enable before this fans out)
+  // skip the announce — re-announcing would just wake up an idempotent
+  // re-replay and cost a frame for nothing.
+  async function announceDiscoveredDropins(): Promise<void> {
+    const dropinNames = [...dropinSpecsByName.keys()];
+    if (dropinNames.length === 0) return;
+    let announced = 0;
+    for (const name of dropinNames) {
+      if (approval.isApproved(name)) continue;
+      try {
+        const envKeys = await supervisor.fetchEnvKeys(name);
+        const conn = servers.get(name);
+        const tools = conn ? await conn.listTools() : [];
+        approval.emitDiscovered({
+          mcp: name,
+          envKeys,
+          tools: tools.map((t) => ({ name: t.name, description: t.description })),
+        });
+        announced += 1;
+      } catch (err) {
+        log.warn({ name, err: err as Error }, `mcp-discovered emission failed for drop-in`);
+      }
+    }
+    log.info({ announced, totalDropins: dropinNames.length }, `mcp-discovered fan-out complete`);
+  }
+
   async function reconnect(reason: string, opts?: { manual?: boolean }): Promise<void> {
     // Auto-fires that arrive while a reconnect is already in flight are
     // genuine duplicates — drop them. Manual operator clicks are NOT
@@ -564,7 +682,15 @@ export async function boot(): Promise<void> {
 
       // Rebuild manifest against the (possibly updated) config. Updates
       // inspector view too.
-      manifest = await buildManifest(config, servers, version, configPath, (name) => supervisor.fetchEnvKeys(name));
+      manifest = await buildManifest(
+        config,
+        servers,
+        version,
+        configPath,
+        (name) => supervisor.fetchEnvKeys(name),
+        (name) => approval.isApproved(name),
+        dropinSpecsByName,
+      );
       inspector?.setManifest(manifest);
 
       await connectTunnel("reconnect");
@@ -590,7 +716,15 @@ export async function boot(): Promise<void> {
 
   async function refreshManifestAndPushDelta(): Promise<void> {
     try {
-      const nextManifest = await buildManifest(config, servers, version, configPath, (name) => supervisor.fetchEnvKeys(name));
+      const nextManifest = await buildManifest(
+        config,
+        servers,
+        version,
+        configPath,
+        (name) => supervisor.fetchEnvKeys(name),
+        (name) => approval.isApproved(name),
+        dropinSpecsByName,
+      );
       const delta = diffManifest(manifest, nextManifest);
       manifest = nextManifest;
       inspector?.setManifest(nextManifest);
