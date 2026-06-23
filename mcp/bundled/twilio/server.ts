@@ -22,6 +22,13 @@ import { emailSend } from "./tools/email/email_send.js";
 import { emailFetch } from "./tools/email/email_fetch.js";
 import { emailSearch } from "./tools/email/email_search.js";
 import { emailTemplatesFetch } from "./tools/email/email_templates_fetch.js";
+import { createSegmentProfileClient } from "./segment-profile-client.js";
+import { makeSegmentTracker } from "./segment-tracker.js";
+import { segmentProfileTraits } from "./tools/segment/segment_profile_traits.js";
+import { segmentProfileEvents } from "./tools/segment/segment_profile_events.js";
+import { segmentProfileExternalIds } from "./tools/segment/segment_profile_external_ids.js";
+import { segmentIdentify } from "./tools/segment/segment_identify.js";
+import { segmentTrack } from "./tools/segment/segment_track.js";
 
 // Default observer for inbound Twilio statusCallback POSTs. Logs every event
 // — individual tools (or future enrichment code) can layer their own
@@ -69,10 +76,19 @@ const pickStatus = (payload: unknown) => pickFirst(payload, ["MessageStatus", "C
 // §"Twilio-bundled auto-fill" rules).
 const TWILIO_KEYS = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"] as const;
 const SENDGRID_KEYS = ["SENDGRID_API_KEY"] as const;
-const allEnvKeys = [...TWILIO_KEYS, ...SENDGRID_KEYS];
+const SEGMENT_READ_KEYS = ["SEGMENT_SPACE_ID", "SEGMENT_PROFILE_PAT"] as const;
+const SEGMENT_WRITE_KEYS = ["SEGMENT_WRITE_KEY"] as const;
+const allEnvKeys = [
+  ...TWILIO_KEYS,
+  ...SENDGRID_KEYS,
+  ...SEGMENT_READ_KEYS,
+  ...SEGMENT_WRITE_KEYS,
+];
 
 const twilioMissing = TWILIO_KEYS.filter((key) => !process.env[key]);
 const sendgridMissing = SENDGRID_KEYS.filter((key) => !process.env[key]);
+const segmentReadMissing = SEGMENT_READ_KEYS.filter((key) => !process.env[key]);
+const segmentWriteMissing = SEGMENT_WRITE_KEYS.filter((key) => !process.env[key]);
 
 const tools: Tool[] = [];
 
@@ -115,6 +131,30 @@ if (sendgridMissing.length === 0) {
   log.warn(
     { missing: sendgridMissing, required: [...SENDGRID_KEYS] },
     "sendgrid tools deferred — awaiting creds-update",
+  );
+}
+
+if (segmentReadMissing.length === 0) {
+  const profile = createSegmentProfileClient();
+  tools.push(
+    segmentProfileTraits(profile),
+    segmentProfileEvents(profile),
+    segmentProfileExternalIds(profile),
+  );
+} else {
+  log.warn(
+    { missing: segmentReadMissing, required: [...SEGMENT_READ_KEYS] },
+    "segment read tools deferred — awaiting creds-update",
+  );
+}
+
+if (segmentWriteMissing.length === 0) {
+  const tracker = makeSegmentTracker();
+  tools.push(segmentIdentify(tracker), segmentTrack(tracker));
+} else {
+  log.warn(
+    { missing: segmentWriteMissing, required: [...SEGMENT_WRITE_KEYS] },
+    "segment write tools deferred — awaiting creds-update",
   );
 }
 
