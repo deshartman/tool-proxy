@@ -36,6 +36,7 @@ import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
 import { resolveAuth } from "./auth.js";
 import { requireEnv } from "./require-env.js";
+import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
 import { envOptional, envString, envNumber } from "../env.js";
 import { resolve as resolvePath } from "node:path";
 
@@ -612,43 +613,21 @@ export async function boot(): Promise<void> {
   }
 
   // v1.3 — emit `mcp-discovered` after register-ack for every customer
-  // drop-in this session. The controller uses each frame for TWO purposes:
-  // (a) look up the MCP in its approval table keyed on (connectorId, mcp)
-  // and replay `mcp-enable` for previously-approved MCPs, and (b) classify
-  // the MCP as Live (approved + seen this session) vs Orphaned (approved +
-  // not seen this session). New MCPs land in the controller's "Pending
-  // approval" lane and stay there until an operator clicks Approve.
-  //
-  // The fan-out announces every drop-in unconditionally — emitDiscovered is
-  // idempotent on the controller side (per docs/MCP-PROTOCOL.md §"v1.3"),
-  // and gating on `approval.isApproved(name)` mid-loop is unsafe: the
-  // controller's mcp-enable replay arrives synchronously between this
-  // function's `await`s and mutates the approved set, causing later
-  // iterations to skip — leaving those drop-ins parked in the controller's
-  // Orphaned lane until the next connector restart. Snapshotting the name
-  // list up front is sufficient because at process boot the approved set
-  // starts empty; if a future code path pre-populates it before this fans
-  // out, switch this to filter the snapshot once before the loop.
+  // drop-in this session. Loop body lives in ./announce-dropins.ts so it's
+  // testable without booting the full process. See that file's header for
+  // the controller's Live-vs-Orphaned classification contract and the race
+  // it pins.
   async function announceDiscoveredDropins(): Promise<void> {
-    const dropinNames = [...dropinSpecsByName.keys()];
-    if (dropinNames.length === 0) return;
-    let announced = 0;
-    for (const name of dropinNames) {
-      try {
-        const envKeys = await supervisor.fetchEnvKeys(name);
-        const conn = servers.get(name);
-        const tools = conn ? await conn.listTools() : [];
-        approval.emitDiscovered({
-          mcp: name,
-          envKeys,
-          tools: tools.map((t) => ({ name: t.name, description: t.description })),
-        });
-        announced += 1;
-      } catch (err) {
-        log.warn({ name, err: err as Error }, `mcp-discovered emission failed for drop-in`);
-      }
+    const result = await announceDropinsLoop({
+      dropinNames: [...dropinSpecsByName.keys()],
+      approval,
+      supervisor,
+      servers,
+      log,
+    });
+    if (result.totalDropins > 0) {
+      log.info(result, `mcp-discovered fan-out complete`);
     }
-    log.info({ announced, totalDropins: dropinNames.length }, `mcp-discovered fan-out complete`);
   }
 
   async function reconnect(reason: string, opts?: { manual?: boolean }): Promise<void> {
