@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
-import { verifySend } from "@mcp/bundled/twilio/tools/verify/verify_send.js";
+import { verifySend } from "@mcp/bundled/twilio/verify/tools/verify_send.js";
 import type { TwilioClient } from "@mcp/bundled/twilio/twilio-client.js";
 import {
   captureRegistration,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { emailFetch } from "@mcp/bundled/twilio/tools/email/email_fetch.js";
+import { emailFetch } from "@mcp/bundled/twilio/email/tools/email_fetch.js";
 import type { SendGridClientProvider } from "@mcp/bundled/twilio/sendgrid-client.js";
 import {
   captureRegistration,

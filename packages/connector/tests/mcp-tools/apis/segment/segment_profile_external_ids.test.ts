@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { segmentProfileExternalIds } from "@mcp/bundled/twilio/tools/segment/segment_profile_external_ids.js";
+import { segmentProfileExternalIds } from "@mcp/bundled/twilio/segment/tools/segment_profile_external_ids.js";
 import type { SegmentProfileClient } from "@mcp/bundled/twilio/segment-profile-client.js";
 import {
   captureRegistration,

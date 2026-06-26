@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { callsFetch } from "@mcp/bundled/twilio/tools/voice/calls_fetch.js";
+import { callsFetch } from "@mcp/bundled/twilio/voice/tools/calls_fetch.js";
 import type { TwilioClient } from "@mcp/bundled/twilio/twilio-client.js";
 import {
   captureRegistration,
