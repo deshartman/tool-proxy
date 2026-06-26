@@ -1,4 +1,4 @@
-import { createMcpHttpServer, createLogger, type Tool } from "@mcp-shim/connector/sdk";
+import { createMcpHttpServer, createLogger, type Tool, type Prompt, type Resource } from "@mcp-shim/connector/sdk";
 import { onStatusCallback } from "./status-callback.js";
 import { createTwilioClient } from "./twilio-client.js";
 import { makeSendGridProvider } from "./sendgrid-client.js";
@@ -16,6 +16,19 @@ import { voiceDial } from "./voice/tools/voice_dial.js";
 import { voicePay } from "./voice/tools/voice_pay.js";
 import { voiceTranscriptionStart } from "./voice/tools/voice_transcription_start.js";
 import { voiceTranscriptionStop } from "./voice/tools/voice_transcription_stop.js";
+import { agentPayStart } from "./voice/tools/agent_pay_start.js";
+import { agentPayCaptureCard } from "./voice/tools/agent_pay_capture_card.js";
+import { agentPayCaptureExp } from "./voice/tools/agent_pay_capture_exp.js";
+import { agentPayCaptureCvc } from "./voice/tools/agent_pay_capture_cvc.js";
+import { agentPayComplete } from "./voice/tools/agent_pay_complete.js";
+import { agentPayStartCapture } from "./voice/prompts/agent_pay_start_capture.js";
+import { agentPayCardNumber } from "./voice/prompts/agent_pay_card_number.js";
+import { agentPayExpiration } from "./voice/prompts/agent_pay_expiration.js";
+import { agentPaySecurityCode } from "./voice/prompts/agent_pay_security_code.js";
+import { agentPayFinish } from "./voice/prompts/agent_pay_finish.js";
+import { agentPayCompletion } from "./voice/prompts/agent_pay_completion.js";
+import { agentPayError } from "./voice/prompts/agent_pay_error.js";
+import { agentPaymentStatus } from "./voice/resources/agent_payment_status.js";
 // Verify
 import { verifySend } from "./verify/tools/verify_send.js";
 import { verifyCheck } from "./verify/tools/verify_check.js";
@@ -97,6 +110,8 @@ const segmentReadMissing = SEGMENT_READ_KEYS.filter((key) => !process.env[key]);
 const segmentWriteMissing = SEGMENT_WRITE_KEYS.filter((key) => !process.env[key]);
 
 const tools: Tool[] = [];
+const prompts: Prompt[] = [];
+const resources: Resource[] = [];
 
 if (twilioMissing.length === 0) {
   const twilio = createTwilioClient();
@@ -113,11 +128,26 @@ if (twilioMissing.length === 0) {
     voicePay(),
     voiceTranscriptionStart(),
     voiceTranscriptionStop(),
+    agentPayStart(twilio),
+    agentPayCaptureCard(twilio),
+    agentPayCaptureExp(twilio),
+    agentPayCaptureCvc(twilio),
+    agentPayComplete(twilio),
     verifySend(twilio),
     verifyCheck(twilio),
     verifyServicesFetch(twilio),
     lookupsFetch(twilio),
   );
+  prompts.push(
+    agentPayStartCapture,
+    agentPayCardNumber,
+    agentPayExpiration,
+    agentPaySecurityCode,
+    agentPayFinish,
+    agentPayCompletion,
+    agentPayError,
+  );
+  resources.push(agentPaymentStatus);
 } else {
   log.warn(
     { missing: twilioMissing, required: [...TWILIO_KEYS] },
@@ -167,5 +197,7 @@ if (segmentWriteMissing.length === 0) {
 await createMcpHttpServer({
   name: "apis",
   tools,
+  prompts,
+  resources,
   envKeys: allEnvKeys,
 });
