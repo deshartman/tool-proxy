@@ -2,38 +2,26 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import type { TwilioClient } from "../../twilio-client.js";
-import { getDefaultStatusCallback, onStatusCallback } from "../../status-callback.js";
-import { recordPaymentEvent } from "../payment-state.js";
+import { getDefaultStatusCallback } from "../../status-callback.js";
 
 // agent_pay_start launches a live-call <Payments> capture session.
 //
 // This is the agent-assisted variant. voice_pay (TwiML <Pay> verb) is the
 // one-shot IVR variant where Twilio runs the whole gather end-to-end. Here
 // the LLM drives capture step by step: start → capture_card → capture_exp →
-// capture_cvc → complete. The agent_payment_status resource surfaces the
-// live masked-PAN state between steps.
-//
-// Twilio's REST PaymentInstance returns only SID + timestamps; the captured
-// fields (masked PAN, token, confirmation code) arrive through the
-// statusCallback. We allocate the connector's default webhook URL and
-// install a listener that mirrors every PaymentSid event into the local
-// state Map.
+// capture_cvc → complete.
 //
 // statusCallback is REQUIRED by the SDK — agent_pay_start always allocates
-// one (the caller cannot override). idempotencyKey is generated per call.
+// the connector's default webhook URL so capture-progress events route back
+// through the existing onStatusCallback fan-out. Tools / procedure code
+// that want to react to capture progress subscribe via the SDK directly.
+// idempotencyKey is generated per call.
 
 const OutputSchema = {
-  paymentSid: z.string().describe("Payments resource SID (PKxxxx) — handle for capture/complete and the resource read."),
+  paymentSid: z.string().describe("Payments resource SID (PKxxxx) — handle for capture/complete tools."),
   callSid: z.string().describe("Echo of the input callSid."),
   status: z.string().describe("Always 'in-progress' after a successful create — capture proceeds via update calls."),
 };
-
-let listenerInstalled = false;
-function ensureListener(): void {
-  if (listenerInstalled) return;
-  listenerInstalled = true;
-  onStatusCallback((event) => recordPaymentEvent(event));
-}
 
 export function agentPayStart(client: TwilioClient): Tool {
   return {
@@ -60,7 +48,6 @@ export function agentPayStart(client: TwilioClient): Tool {
           outputSchema: OutputSchema,
         },
         async ({ callSid, chargeAmount, currency, paymentConnector, paymentMethod, tokenType, description, postalCode, securityCode, validCardTypes, timeout }) => {
-          ensureListener();
           const statusCallback = await getDefaultStatusCallback();
 
           const opts: Record<string, unknown> = {

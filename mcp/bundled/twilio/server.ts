@@ -1,4 +1,4 @@
-import { createMcpHttpServer, createLogger, type Tool, type Prompt, type Resource } from "@mcp-shim/connector/sdk";
+import { createMcpHttpServer, createLogger, type Tool, type Prompt } from "@mcp-shim/connector/sdk";
 import { onStatusCallback } from "./status-callback.js";
 import { createTwilioClient } from "./twilio-client.js";
 import { makeSendGridProvider } from "./sendgrid-client.js";
@@ -28,7 +28,6 @@ import { agentPaySecurityCode } from "./voice/prompts/agent_pay_security_code.js
 import { agentPayFinish } from "./voice/prompts/agent_pay_finish.js";
 import { agentPayCompletion } from "./voice/prompts/agent_pay_completion.js";
 import { agentPayError } from "./voice/prompts/agent_pay_error.js";
-import { agentPaymentStatus } from "./voice/resources/agent_payment_status.js";
 // Verify
 import { verifySend } from "./verify/tools/verify_send.js";
 import { verifyCheck } from "./verify/tools/verify_check.js";
@@ -111,7 +110,6 @@ const segmentWriteMissing = SEGMENT_WRITE_KEYS.filter((key) => !process.env[key]
 
 const tools: Tool[] = [];
 const prompts: Prompt[] = [];
-const resources: Resource[] = [];
 
 if (twilioMissing.length === 0) {
   const twilio = createTwilioClient();
@@ -147,7 +145,6 @@ if (twilioMissing.length === 0) {
     agentPayCompletion,
     agentPayError,
   );
-  resources.push(agentPaymentStatus);
 } else {
   log.warn(
     { missing: twilioMissing, required: [...TWILIO_KEYS] },
@@ -198,6 +195,5 @@ await createMcpHttpServer({
   name: "apis",
   tools,
   prompts,
-  resources,
   envKeys: allEnvKeys,
 });

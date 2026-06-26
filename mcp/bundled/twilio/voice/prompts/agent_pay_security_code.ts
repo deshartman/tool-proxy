@@ -20,11 +20,10 @@ export const agentPaySecurityCode: Prompt = {
             content: {
               type: "text",
               text:
-                `agent_pay_capture_cvc has been called for callSid=${callSid}, paymentSid=${paymentSid}. Twilio is asking the caller for the CVC (3 or 4 digits on the back / front of the card).\n\n` +
+                `agent_pay_capture_cvc has been called for callSid=${callSid}, paymentSid=${paymentSid}. Twilio is asking the caller for the CVC (3 or 4 digits).\n\n` +
                 `- Stay off the line while they enter digits.\n` +
-                `- Poll payment://${callSid}/${paymentSid}/status until securityCode populates (masked).\n` +
                 `- If the caller seems uncertain about the CVC location, you can briefly explain: "It's the 3-digit code on the back of most cards, or the 4-digit code on the front for American Express."\n\n` +
-                `Once securityCode is set, proceed to the agent_pay_finish prompt — the caller confirms before you submit. Do NOT call agent_pay_complete until the caller has explicitly confirmed.`,
+                `Once capture finishes, proceed to the agent_pay_finish prompt — the caller confirms before you submit. Do NOT call agent_pay_complete until the caller has explicitly confirmed.`,
             },
           },
         ],

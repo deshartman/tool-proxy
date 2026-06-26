@@ -20,11 +20,11 @@ export const agentPayExpiration: Prompt = {
             content: {
               type: "text",
               text:
-                `agent_pay_capture_exp has been called for callSid=${callSid}, paymentSid=${paymentSid}. Twilio is asking the caller for the expiration date (MMYY).\n\n` +
+                `agent_pay_capture_exp has been called for callSid=${callSid}, paymentSid=${paymentSid}. Twilio is asking the caller for the expiration date (MMYY, four digits).\n\n` +
                 `- Stay off the line while they enter digits.\n` +
-                `- Poll payment://${callSid}/${paymentSid}/status until expirationDate populates with the four-digit value.\n` +
-                `- If errorType appears (e.g. "invalid-card-number" carried over, or "timeout") restart the relevant capture step.\n\n` +
-                `Once expirationDate is set, proceed to agent_pay_capture_cvc. Use the agent_pay_security_code prompt next.`,
+                `- If the caller asks for help, you can clarify: "Four digits — two for the month, two for the year."\n` +
+                `- If they enter the wrong value, call agent_pay_capture_exp again to retry.\n\n` +
+                `Proceed to agent_pay_capture_cvc once capture finishes. Use the agent_pay_security_code prompt next.`,
             },
           },
         ],

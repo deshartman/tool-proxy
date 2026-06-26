@@ -24,7 +24,7 @@ export const agentPayStartCapture: Prompt = {
                 `2. Call agent_pay_start with callSid="${callSid}", an appropriate chargeAmount (or omit for tokenize-only), and any required paymentConnector / paymentMethod options.\n` +
                 `3. The tool returns a paymentSid. Hold onto it — every subsequent step needs both callSid and paymentSid.\n` +
                 `4. Proceed to agent_pay_capture_card. Use the agent_pay_card_number prompt for what to say during that step.\n\n` +
-                `Throughout the flow, read payment://${callSid}/<paymentSid>/status (the agent_payment_status resource) between steps to see what Twilio has captured so far. Never narrate full digits — only echo what the resource shows (masked).`,
+                `Never narrate full card digits to the caller — only ever the last four. Twilio masks the rest before any callback reaches your tools.`,
             },
           },
         ],
