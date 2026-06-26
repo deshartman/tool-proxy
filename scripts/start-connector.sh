@@ -36,9 +36,34 @@ ENV_FILE="$CONNECTOR_DIR/.env"
 YAML_FILE="$CONNECTOR_DIR/connector.yaml"
 MOCK_DATA_FILE="$ROOT/mock/customers/data.ts"
 
-if [ ! -f "$CONNECTOR_BIN" ]; then
-  echo "[start-connector] connector not built — run: npm run build" >&2
-  exit 1
+# Rebuild if dist/ is missing OR stale relative to source. Without this, a
+# source-only edit (e.g. a fix to src/boot/lifecycle.ts) silently runs the
+# previous build — the connector boots successfully, looks correct, but
+# the change isn't in the running bundle. Caught manually on 2026-06-26.
+#
+# Anchor: tsconfig.tsbuildinfo (rewritten on every tsc -b invocation,
+# including no-op runs). dist/index.js is NOT a reliable anchor because
+# tsc preserves output file mtimes when content is unchanged.
+#
+# `find -quit` short-circuits on the first match so this is cheap on a
+# clean tree.
+TSBUILDINFO="$CONNECTOR_DIR/tsconfig.tsbuildinfo"
+needs_build=0
+if [ ! -f "$CONNECTOR_BIN" ] || [ ! -f "$TSBUILDINFO" ]; then
+  needs_build=1
+else
+  newer=$(find "$CONNECTOR_DIR/src" -type f \( -name '*.ts' -o -name '*.json' \) \
+          -newer "$TSBUILDINFO" -print -quit 2>/dev/null)
+  if [ -z "$newer" ]; then
+    for tsc in "$CONNECTOR_DIR/tsconfig.json" "$ROOT/tsconfig.base.json"; do
+      [ -f "$tsc" ] && [ "$tsc" -nt "$TSBUILDINFO" ] && newer="$tsc" && break
+    done
+  fi
+  [ -n "$newer" ] && needs_build=1
+fi
+if [ "$needs_build" = "1" ]; then
+  echo "[start-connector] building connector (dist/ missing or stale)..."
+  (cd "$CONNECTOR_DIR" && npm run build)
 fi
 if [ ! -f "$ENV_FILE" ]; then
   echo "[start-connector] no $ENV_FILE — copy $ENV_FILE.example and edit" >&2
