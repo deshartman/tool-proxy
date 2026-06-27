@@ -118,6 +118,8 @@ export default echo;
 
 For more depth — env precedence, `Refresh local MCPs`, the third-party-SDK case — see [docs/AUTHOR-LOCAL-MCP.md](../../docs/AUTHOR-LOCAL-MCP.md).
 
+For **bundled multi-service MCPs** (Twilio-shipped, hand-written), prefer a service-first folder layout (`<service>/{tools,prompts,resources}/` under the bundle root) over a flat `tools/` tree — see [`mcp/bundled/twilio/`](../../mcp/bundled/twilio/) for the worked example. Customer drop-ins stay flat.
+
 `MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative (legacy escape hatch; new MCPs should use the drop-in shape).
 
 #### Refresh without a restart
