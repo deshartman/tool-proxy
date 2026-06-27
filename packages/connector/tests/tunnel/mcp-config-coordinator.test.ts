@@ -728,3 +728,231 @@ describe("McpConfigCoordinator — reconnect survival via bind()", () => {
     }
   });
 });
+
+// Pre-spawn creds fetch (TWILIO-MCP-BREAKOUT bug 2).
+//
+// Manual scenario captured 2026-06-28: operator added a standalone
+// `twilio-mcp` (stdio, 21 tools gated on TWILIO_ACCOUNT_SID +
+// TWILIO_AUTH_TOKEN) via the "New 3rd Party MCP" UI. Connector spawned the
+// child immediately and reported `Live · 0 tools` because boot-time
+// requestCredsForAllMcps iterates `servers.keys()` (the connected MCP set)
+// BEFORE the controller-config snapshot lands — so no creds-request ever
+// fires for roster entries, the supervisor's controllerEnv stays empty,
+// and the child's process.env carries no Twilio creds. Subsequent discovery
+// probes hit the empty server and crash with -32601 because McpServer's
+// tools/list handler is only wired on the first registerTool() call.
+//
+// The fix wires a per-tunnel `requestCreds(name, mcpId, envKeys)` callback
+// into the coordinator's bind() shape. addEntry awaits it BEFORE startOne
+// so the supervisor's controllerEnv is populated by the time the spawn
+// fires. Symmetric with the boot-time fan-out for yaml + drop-in entries.
+//
+// The invariants pinned below:
+//   (a) addEntry awaits requestCreds before startOne (ordering pin — if
+//       this regresses, the standalone twilio-mcp boots at 0 tools again).
+//   (b) A new entry from a delta (post-register-ack add, the common operator
+//       path) triggers the same fetch.
+//   (c) updateEntry triggers the fetch in BOTH the rename branch and the
+//       replaceSpec branch (envKeys could change in either; over-fetching
+//       is harmless because creds-response is idempotent).
+//   (d) requestCreds throwing does NOT block the spawn — the warn already
+//       logs, and the child can fail-fast with its own clear error if creds
+//       were genuinely required.
+//   (e) An unbound coordinator (no requestCreds callback supplied to bind)
+//       falls back to the no-op default and addEntry still works — keeps
+//       backward compat for unit tests and any future caller that doesn't
+//       wire creds.
+describe("McpConfigCoordinator — pre-spawn creds fetch (bug 2)", () => {
+  it("(a) addEntry awaits requestCreds BEFORE startOne — ordering pin", async () => {
+    const { coordinator, sent, fake } = buildCoordinator();
+    const callOrder: string[] = [];
+    let credsResolved = false;
+    let resolveCreds: () => void = () => undefined;
+    const credsPromise = new Promise<void>((r) => { resolveCreds = r; });
+
+    // Wrap the fake supervisor's startOne to record when it was called.
+    const origStartOne = fake.started;
+    const sup = (coordinator as unknown as { opts: { supervisor: McpSupervisor } }).opts.supervisor;
+    const origStartOneFn = sup.startOne.bind(sup);
+    (sup as unknown as { startOne: McpSupervisor["startOne"] }).startOne = async (name: string, reason?: string) => {
+      callOrder.push(`startOne:${name}:credsResolved=${credsResolved}`);
+      return origStartOneFn(name, reason ?? "test");
+    };
+
+    coordinator.bind({
+      send: (f) => sent.push(f),
+      requestCreds: async (name, mcpId, envKeys) => {
+        callOrder.push(`requestCreds:${name}:envKeys=[${envKeys.join(",")}]`);
+        await credsPromise;
+        credsResolved = true;
+      },
+    });
+
+    // Build a snapshot for the standalone twilio entry — same shape the
+    // controller produces from its "New 3rd Party MCP" form.
+    const TWILIO_ENTRY: McpConfigEntry = {
+      mcpId: "mcp_twilio_001",
+      name: "twilio",
+      transport: "stdio",
+      command: ["twilio-mcp"],
+      auth: { kind: "none" },
+      envKeys: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"],
+    };
+
+    const applyPromise = coordinator.handleSnapshot({
+      type: "mcp-config-snapshot",
+      generation: 1,
+      servers: [TWILIO_ENTRY],
+    });
+
+    // Microtask flush so the coordinator's awaits queue up. After this,
+    // requestCreds should be in flight but NOT yet resolved → startOne
+    // MUST NOT have been called.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(callOrder).toEqual([
+      "requestCreds:twilio:envKeys=[TWILIO_ACCOUNT_SID,TWILIO_AUTH_TOKEN]",
+    ]);
+    expect(fake.started).toEqual([]);
+
+    // Now let the creds fetch resolve. After applyPromise settles, startOne
+    // MUST have been called AND credsResolved=true at the time of the call.
+    resolveCreds();
+    await applyPromise;
+    expect(callOrder).toEqual([
+      "requestCreds:twilio:envKeys=[TWILIO_ACCOUNT_SID,TWILIO_AUTH_TOKEN]",
+      "startOne:twilio:credsResolved=true",
+    ]);
+    expect(fake.started).toEqual(["twilio"]);
+    expect(origStartOne).toBe(fake.started); // sanity: same array reference
+  });
+
+  it("(b) delta-added entries trigger the same fetch", async () => {
+    const { coordinator, sent, fake } = buildCoordinator();
+    const credsCalls: Array<{ name: string; mcpId: string; envKeys: string[] }> = [];
+
+    coordinator.bind({
+      send: (f) => sent.push(f),
+      requestCreds: async (name, mcpId, envKeys) => {
+        credsCalls.push({ name, mcpId, envKeys });
+      },
+    });
+
+    // Empty snapshot first so lastAppliedGeneration = 1 (delta.gen = 2 below
+    // is exactly one above — no gap-resync triggered).
+    await coordinator.handleSnapshot({ type: "mcp-config-snapshot", generation: 1, servers: [] });
+
+    const ADDED: McpConfigEntry = {
+      mcpId: "mcp_seg_001",
+      name: "segment",
+      transport: "stdio",
+      command: ["segment-mcp"],
+      auth: { kind: "none" },
+      envKeys: ["SEGMENT_WRITE_KEY"],
+    };
+    await coordinator.handleDelta({
+      type: "mcp-config-delta",
+      generation: 2,
+      added: [ADDED],
+    });
+
+    expect(credsCalls).toEqual([
+      { name: "segment", mcpId: "mcp_seg_001", envKeys: ["SEGMENT_WRITE_KEY"] },
+    ]);
+    expect(fake.started).toEqual(["segment"]);
+  });
+
+  it("(c) updateEntry rename + replaceSpec branches both fetch creds", async () => {
+    const { coordinator, sent, fake } = buildCoordinator();
+    const credsCalls: Array<{ name: string; envKeys: string[] }> = [];
+
+    coordinator.bind({
+      send: (f) => sent.push(f),
+      requestCreds: async (name, _mcpId, envKeys) => {
+        credsCalls.push({ name, envKeys });
+      },
+    });
+
+    const INITIAL: McpConfigEntry = {
+      mcpId: "mcp_t_001",
+      name: "twilio-api",
+      transport: "stdio",
+      command: ["twilio-mcp"],
+      auth: { kind: "none" },
+      envKeys: ["TWILIO_ACCOUNT_SID"],
+    };
+    await coordinator.handleSnapshot({ type: "mcp-config-snapshot", generation: 1, servers: [INITIAL] });
+    // initial add → 1 fetch
+    expect(credsCalls).toHaveLength(1);
+
+    // Same name, new command — replaceSpec branch.
+    const REPLACED: McpConfigEntry = { ...INITIAL, command: ["twilio-mcp", "--verbose"] };
+    await coordinator.handleDelta({ type: "mcp-config-delta", generation: 2, updated: [REPLACED] });
+    expect(credsCalls).toHaveLength(2);
+    expect(credsCalls[1]?.name).toBe("twilio-api");
+    expect(fake.replaced.map((r) => r.name)).toEqual(["twilio-api"]);
+
+    // Now a rename — drop+register+startOne branch.
+    const RENAMED: McpConfigEntry = { ...REPLACED, name: "twilio" };
+    await coordinator.handleDelta({ type: "mcp-config-delta", generation: 3, updated: [RENAMED] });
+    expect(credsCalls).toHaveLength(3);
+    expect(credsCalls[2]?.name).toBe("twilio");
+    expect(fake.unregistered).toContain("twilio-api");
+    expect(fake.started).toContain("twilio");
+  });
+
+  it("(d) requestCreds throwing does NOT block the spawn — warn logged, startOne still runs", async () => {
+    const { coordinator, sent, fake, log } = buildCoordinator();
+
+    coordinator.bind({
+      send: (f) => sent.push(f),
+      requestCreds: async () => {
+        throw new Error("controller unreachable");
+      },
+    });
+
+    const ENTRY: McpConfigEntry = {
+      mcpId: "mcp_x_001",
+      name: "broken-creds",
+      transport: "stdio",
+      command: ["some-mcp"],
+      auth: { kind: "none" },
+      envKeys: ["SOME_KEY"],
+    };
+    await coordinator.handleSnapshot({ type: "mcp-config-snapshot", generation: 1, servers: [ENTRY] });
+
+    // Spawn proceeded.
+    expect(fake.started).toEqual(["broken-creds"]);
+    // Warn surfaced for the operator.
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ mcp: "broken-creds", err: "controller unreachable" }),
+      expect.stringContaining("pre-spawn creds fetch failed"),
+    );
+    // Ack is still `started` — the spawn succeeded; the creds may arrive
+    // late via a creds-update push later. (Worst case the child boots with
+    // empty env and registers zero tools — but that's the legacy behaviour
+    // we're recovering from, not a new failure mode.)
+    expect(findAck(sent)).toMatchObject({ perMcp: [{ status: "started" }] });
+  });
+
+  it("(e) an unbound coordinator (no requestCreds callback) still works — backward compat", async () => {
+    // Default behaviour with the constructor's no-op requestCreds — should
+    // be indistinguishable from pre-bug2 behaviour for callers that never
+    // bound a real fetcher (e.g. older test files, any future caller that
+    // only wants the snapshot reconciliation half of the coordinator).
+    const { coordinator, fake, sent } = buildCoordinator();
+    // Note: NO coordinator.bind() — using the constructor's no-op default.
+
+    const ENTRY: McpConfigEntry = {
+      mcpId: "mcp_y_001",
+      name: "unbound-creds",
+      transport: "stdio",
+      command: ["whatever"],
+      auth: { kind: "none" },
+    };
+    await coordinator.handleSnapshot({ type: "mcp-config-snapshot", generation: 1, servers: [ENTRY] });
+
+    expect(fake.started).toEqual(["unbound-creds"]);
+    expect(findAck(sent)).toMatchObject({ perMcp: [{ status: "started" }] });
+  });
+});

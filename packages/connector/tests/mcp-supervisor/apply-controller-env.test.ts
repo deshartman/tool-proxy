@@ -245,3 +245,121 @@ describe("McpSupervisor.applyControllerEnv no-op skip", () => {
     expect(mutSpec.__port).toBeUndefined();
   });
 });
+
+// Stdio entries — the supervisor-merge bug fix 2026-06-28.
+//
+// Two related invariants this group pins:
+//
+//   1. RESTART TRIGGER: a creds-update / session-creds push for a running
+//      stdio MCP MUST trigger restartEntry. Before the fix, the restart
+//      gate was `if (entry.child)` — but stdio entries leave entry.child
+//      unset (the SDK's StdioClientTransport owns the spawn internally),
+//      so the gate was always false and stdio MCPs ignored every creds
+//      rotation until the connector restarted. Now: `if (entry.child ||
+//      entry.connection)`. The connection is the only alive-marker we
+//      have for stdio; either suffices for HTTP/bundled.
+//
+//   2. The bug 2026-06-28 root cause: a controller-config stdio MCP
+//      (e.g. @deshartman/twilio-mcp via "New 3rd Party MCP" UI) booted
+//      with empty process.env because connectStdio built its env from
+//      process.env + spec.env, ignoring controllerEnv. The supervisor
+//      now passes mergedEnv to connectServer for stdio entries — a
+//      change in src/mcp-supervisor.ts startEntry. The transport-level
+//      contract pin lives in tests/servers/connect-dispatch.test.ts;
+//      THIS group pins the supervisor-side restart trigger.
+
+function plantRunningStdioEntry(
+  privates: SupervisorPrivates,
+  name: string,
+  controllerEnv: Record<string, string> = {},
+): { mockClose: ReturnType<typeof vi.fn> } {
+  // Stdio spec — the only thing applyControllerEnv reads is entry.spec.env
+  // (via mergeEnv) and entry.connection (via the restart gate). No child
+  // handle — that's the whole point of the test.
+  const spec = { name, transport: "stdio", command: ["fake-mcp"] } as unknown as McpServerSpec;
+  const mockClose = vi.fn(async () => undefined);
+  privates.entries.set(name, {
+    spec,
+    controllerEnv,
+    child: undefined,
+    connection: { close: mockClose } as unknown as McpServerConnection,
+    status: { credsSource: "none" },
+  });
+  return { mockClose };
+}
+
+describe("McpSupervisor stdio restart trigger (bug 2026-06-28)", () => {
+  let supervisor: McpSupervisor;
+  let privates: SupervisorPrivates;
+
+  beforeEach(() => {
+    ({ supervisor, privates } = buildSupervisor());
+  });
+
+  it("applyControllerEnv triggers restart for a running stdio MCP (entry.connection set, entry.child undefined)", async () => {
+    // The load-bearing assertion. Before the fix, this test would have
+    // returned `restarted: false` because the gate was `entry.child` only.
+    // After: the OR-gate sees entry.connection and fires restartEntry,
+    // which calls stopEntry → connection.close().
+    const { mockClose } = plantRunningStdioEntry(privates, "twilio-api", { TWILIO_ACCOUNT_SID: "AC_old" });
+
+    // The restart will fail at the respawn step (no real child setup), so
+    // wrap in catch and assert the *stop* portion fired — same pattern as
+    // the HTTP restart tests above.
+    await supervisor
+      .applyControllerEnv(
+        "twilio-api",
+        { TWILIO_ACCOUNT_SID: "AC_new", TWILIO_AUTH_TOKEN: "AT_new" },
+        "operator-entered",
+        "creds-update",
+      )
+      .catch(() => undefined);
+
+    // Connection was closed (the stopEntry path for stdio). Before the
+    // fix, connection.close() never fired — the bug we're pinning.
+    expect(mockClose).toHaveBeenCalled();
+    // New controllerEnv stuck (mutation happened before restart attempt).
+    expect(privates.entries.get("twilio-api")?.controllerEnv).toEqual({
+      TWILIO_ACCOUNT_SID: "AC_new",
+      TWILIO_AUTH_TOKEN: "AT_new",
+    });
+  });
+
+  it("applyControllerEnv no-op skip still applies for stdio (empty env from source: 'none')", async () => {
+    // Symmetric with the HTTP path's first test — the empty-payload skip
+    // MUST cover stdio too. A creds-response with empty env shouldn't
+    // kill a running stdio child either.
+    const { mockClose } = plantRunningStdioEntry(privates, "segment", { SEGMENT_WRITE_KEY: "old" });
+
+    const result = await supervisor.applyControllerEnv("segment", {}, "none", "creds-response");
+
+    expect(result).toEqual({ applied: true, restarted: false });
+    expect(mockClose).not.toHaveBeenCalled();
+  });
+
+  it("applyControllerEnv leaves the gate alone when neither child nor connection exists (registered but not yet started)", async () => {
+    // The addEntry → requestCreds → startOne path: applyControllerEnv runs
+    // BEFORE the spawn. entry.connection is undefined at that point. The
+    // OR-gate MUST NOT trigger a restart for a not-yet-running entry —
+    // the env just buffers into controllerEnv for the upcoming spawn.
+    privates.entries.set("pre-spawn", {
+      spec: { name: "pre-spawn", transport: "stdio", command: ["x"] } as unknown as McpServerSpec,
+      controllerEnv: {},
+      child: undefined,
+      connection: undefined,
+      status: { credsSource: "none" },
+    });
+
+    const result = await supervisor.applyControllerEnv(
+      "pre-spawn",
+      { K: "v" },
+      "operator-entered",
+      "creds-response",
+    );
+
+    // Applied (env buffered) but not restarted (nothing to restart yet).
+    expect(result).toEqual({ applied: true, restarted: false });
+    // Buffered correctly so the upcoming spawn picks it up.
+    expect(privates.entries.get("pre-spawn")?.controllerEnv).toEqual({ K: "v" });
+  });
+});

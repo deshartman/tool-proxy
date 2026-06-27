@@ -43,9 +43,29 @@ export interface McpConfigCoordinatorOpts {
 
 // Per-tunnel rebind shape. Only the wire-side hooks change between tunnels —
 // `supervisor` is process-wide and supplied at construction.
+//
+// `requestCreds` is wired to the per-tunnel CredsCoordinator so addEntry can
+// fetch env values from the controller BEFORE the supervisor spawns the child.
+// Without this pre-spawn fetch, controller-config 3rd-party MCPs (e.g. our
+// standalone @deshartman/twilio-mcp added via the "New 3rd Party MCP" UI)
+// boot with an empty process.env, register zero tools, and either crash the
+// connector's discovery probe (-32601 from an empty tools/list) or sit Live
+// with 0 tools until an operator clicks "Reload creds" by hand. Symmetric
+// with the boot-time creds fan-out for yaml + drop-in entries; both paths
+// MUST converge on "env present at spawn time" so children boot once.
+//
+// Awaiting the callback is the load-bearing part — `creds.reload` resolves
+// only after the creds-response lands (or its 6s soft-wait elapses). By the
+// time addEntry calls `supervisor.startOne`, applyControllerEnv has already
+// populated `controllerEnv` so the spawn's merged env contains the creds.
 export interface McpConfigCoordinatorBind {
   send: (frame: TunnelFrame) => void;
   log?: Logger;
+  // Resolves when the controller has replied with creds-response (or the
+  // soft-wait elapsed). The supervisor's controllerEnv is populated by the
+  // response handler before this promise settles, so a startOne() immediately
+  // after returns will spawn the child with the env in place.
+  requestCreds?: (name: string, mcpId: string, envKeys: string[]) => Promise<void>;
 }
 
 interface RosterEntry {
@@ -92,6 +112,9 @@ export class McpConfigCoordinator {
   // Wire-side hooks. Replaced via bind() on every tunnel reconnect.
   private send: (frame: TunnelFrame) => void;
   private log: Logger;
+  // Per-tunnel creds fetch. Bound (and rebound) via bind(); a no-op until the
+  // first bind so addEntry runs sanely in unit tests that don't wire creds.
+  private requestCreds: (name: string, mcpId: string, envKeys: string[]) => Promise<void>;
   // Snapshot-wait timer. Cancelled on bind() so a timer armed for tunnel
   // N can't fire on tunnel N+1.
   private readonly snapshotWaitMs: number;
@@ -101,6 +124,11 @@ export class McpConfigCoordinator {
     this.snapshotWaitMs = opts.snapshotWaitMs ?? 5000;
     this.send = opts.send;
     this.log = opts.log;
+    // No-op until bind() supplies a real fetcher. addEntry treats a missing
+    // creds-response as "no row yet — spawn anyway and rely on dir/.env",
+    // matching the boot fan-out's soft-wait fallback. Unit tests that don't
+    // wire creds get the same behaviour without needing to stub a callback.
+    this.requestCreds = async () => undefined;
   }
 
   // Per-tunnel rebind. Called from the boot pipeline whenever a fresh tunnel
@@ -112,6 +140,11 @@ export class McpConfigCoordinator {
     this.cancelSnapshotWait();
     this.send = b.send;
     if (b.log) this.log = b.log;
+    // requestCreds is rebound for the same reason `send` is: the per-tunnel
+    // CredsCoordinator's `pending` Map is tunnel-scoped, so a callback that
+    // captured a stale tunnel's coordinator would route the response into a
+    // dead Map. Bind() refreshes the closure to the live coordinator.
+    if (b.requestCreds) this.requestCreds = b.requestCreds;
   }
 
   // Called from the boot pipeline right after register-ack. Arms a timer
@@ -285,6 +318,28 @@ export class McpConfigCoordinator {
     // mcpId so the inspector renders the right source badge + correlation
     // id. Yaml entries never come through this path.
     this.opts.supervisor.registerOne(specOrError.spec, { source: "controller-config", mcpId: entry.mcpId });
+    // Pre-spawn creds fetch — see McpConfigCoordinatorBind.requestCreds.
+    // The controller-config path arrives AFTER register-ack, so the boot
+    // fan-out at lifecycle.ts:`requestCredsForAllMcps` has already iterated
+    // `servers.keys()` without this entry. Without a fetch here, the next
+    // `startOne` spawns the child with empty controllerEnv → stdio MCPs
+    // that gate on env vars (e.g. our @deshartman/twilio-mcp) register
+    // zero tools, the connector's discovery probe hits an empty server
+    // and gets back -32601 from McpServer's lazy tools/list handler.
+    //
+    // Errors from the fetch are intentionally swallowed: the soft-wait
+    // already logs a warn, and we want the spawn to proceed even if the
+    // controller has no row for this MCP yet. The child can boot from
+    // dir/.env or fail-fast with a clear "X must be set" error message
+    // — same behaviour as a yaml entry whose creds never arrived.
+    try {
+      await this.requestCreds(entry.name, entry.mcpId, entry.envKeys ?? []);
+    } catch (err) {
+      this.log.warn(
+        { mcp: entry.name, err: (err as Error).message },
+        `pre-spawn creds fetch failed — spawning without controller env`,
+      );
+    }
     try {
       await this.opts.supervisor.startOne(entry.name, "controller-config-add");
       return { status: "started" };
@@ -307,6 +362,18 @@ export class McpConfigCoordinator {
       this.nameToMcpId.delete(prior.name);
       this.opts.supervisor.registerOne(specOrError.spec, { source: "controller-config", mcpId: next.mcpId });
       this.nameToMcpId.set(next.name, next.mcpId);
+      // Same pre-spawn fetch as addEntry — a rename re-spawns the child
+      // under the new name, so the env-at-spawn-time invariant applies
+      // identically. The controller's row is keyed by mcpId, so the
+      // creds-response under the new name is what we want.
+      try {
+        await this.requestCreds(next.name, next.mcpId, next.envKeys ?? []);
+      } catch (err) {
+        this.log.warn(
+          { mcp: next.name, err: (err as Error).message },
+          `pre-rename creds fetch failed — spawning without controller env`,
+        );
+      }
       try {
         await this.opts.supervisor.startOne(next.name, "controller-config-rename");
         this.roster.set(next.mcpId, { mcpId: next.mcpId, name: next.name, config: next });
@@ -315,7 +382,20 @@ export class McpConfigCoordinator {
         return { status: "failed", error: (err as Error).message };
       }
     }
-    // Same name, different spec: replace + restart.
+    // Same name, different spec: replace + restart. The replaceSpec call
+    // restarts the child; we re-fetch creds first so the restart picks up
+    // the latest values (e.g. operator added an envKey, or rotated a value
+    // through the same form). The wire frame's envKeys carries the current
+    // list; the controller's response is idempotent so a refetch when
+    // nothing changed is harmless beyond an extra round-trip.
+    try {
+      await this.requestCreds(next.name, next.mcpId, next.envKeys ?? []);
+    } catch (err) {
+      this.log.warn(
+        { mcp: next.name, err: (err as Error).message },
+        `pre-replace creds fetch failed — restarting without refreshed env`,
+      );
+    }
     try {
       await this.opts.supervisor.replaceSpec(next.name, specOrError.spec, "controller-config-update");
       this.roster.set(next.mcpId, { mcpId: next.mcpId, name: next.name, config: next });

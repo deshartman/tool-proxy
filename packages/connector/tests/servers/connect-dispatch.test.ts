@@ -119,6 +119,61 @@ describe("connectServer dispatch", () => {
     expect(constructed[0].kind).toBe("stdio");
   });
 
+  it("stdio spec WITH env arg → transport sees the supervisor-merged env (controllerEnv path)", async () => {
+    // Bug fix 2026-06-28: stdio MCPs added via the controller UI (3rd-party
+    // roster) booted with empty process.env because connectStdio built its
+    // env internally from process.env + spec.env, ignoring the supervisor's
+    // controllerEnv layer. The fix threads the supervisor's merged env
+    // through connectServer → connectStdio → StdioClientTransport.
+    //
+    // This test pins that contract: when startEntry passes `env`, the
+    // transport MUST receive exactly that env (not process.env, not spec.env
+    // alone). A regression here means controller-supplied creds are silently
+    // dropped on the floor for every stdio MCP.
+    const spec: McpServerSpec = {
+      name: "twilio-api",
+      transport: "stdio",
+      command: ["twilio-mcp"],
+      env: { TWILIO_ACCOUNT_SID: "AC_from_spec" }, // dir/.env layer
+      timeout_ms: 5000,
+    };
+    const merged = {
+      // What the supervisor would build: process.env baseline + spec.env +
+      // controllerEnv winning per-key. controllerEnv wins TWILIO_ACCOUNT_SID.
+      PATH: "/usr/bin",
+      TWILIO_ACCOUNT_SID: "AC_from_controller",
+      TWILIO_AUTH_TOKEN: "AT_from_controller",
+    };
+    await connectServer(spec, merged);
+    expect(constructed).toHaveLength(1);
+    expect(constructed[0].kind).toBe("stdio");
+    // Pin the exact env handed to the SDK transport — no surprises.
+    expect((constructed[0].opts as { env?: Record<string, string> }).env).toEqual(merged);
+  });
+
+  it("stdio spec WITHOUT env arg → legacy fallback (process.env + spec.env) — no controllerEnv flows", async () => {
+    // The legacy shape, kept for callers that don't have a supervisor-built
+    // env (discover.ts, tests). Confirms the spec.env layer applies but
+    // nothing fancier — supervisor callsites MUST pass env explicitly.
+    const spec: McpServerSpec = {
+      name: "x",
+      transport: "stdio",
+      command: ["something"],
+      env: { CUSTOM_KEY: "from_spec" },
+      timeout_ms: 5000,
+    };
+    await connectServer(spec); // No env arg
+    expect(constructed).toHaveLength(1);
+    const passedEnv = (constructed[0].opts as { env?: Record<string, string> }).env;
+    expect(passedEnv).toBeDefined();
+    // spec.env layered on top of process.env — CUSTOM_KEY must be present.
+    expect(passedEnv?.CUSTOM_KEY).toBe("from_spec");
+    // process.env's PATH leaks in (this is the legacy behaviour — supervisor
+    // callers always pass env so this branch only fires for non-supervisor
+    // callsites that want exactly this fallback).
+    expect(passedEnv?.PATH).toBeDefined();
+  });
+
   it("http spec with __transportKind: 'streamable-http' (explicit) → StreamableHTTPClientTransport", async () => {
     // The coordinator only stamps __transportKind for sse / websocket and
     // leaves streamable-http / http as undefined. But pin the behavior
