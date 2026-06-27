@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 //
 // `resolve.alias` mirrors the `paths` block in `tsconfig.base.json` so a
 // test at `packages/connector/tests/mcp-tools/apis/email/email_fetch.test.ts`
-// can write `import { emailFetch } from "@mcp/bundled/twilio/tools/email/email_fetch.js"`
+// can write `import { emailFetch } from "@mcp/bundled/twilio/email/tools/email_fetch.js"`
 // instead of an unreadable `../../../../../../mcp/bundled/...` chain. Vitest
 // resolves these via Vite at test runtime; the matching tsconfig paths give
 // the IDE / `tsc --noEmit` the same understanding. The trailing `.js` extension

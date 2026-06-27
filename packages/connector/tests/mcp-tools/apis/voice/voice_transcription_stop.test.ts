@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { voiceTranscriptionStop } from "@mcp/bundled/twilio/tools/voice/voice_transcription_stop.js";
+import { voiceTranscriptionStop } from "@mcp/bundled/twilio/voice/tools/voice_transcription_stop.js";
 import {
   captureRegistration,
   asZodObject,

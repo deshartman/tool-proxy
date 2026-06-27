@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { segmentIdentify } from "@mcp/bundled/twilio/tools/segment/segment_identify.js";
+import { segmentIdentify } from "@mcp/bundled/twilio/segment/tools/segment_identify.js";
 import type { SegmentTrackerProvider, SegmentAnalytics } from "@mcp/bundled/twilio/segment-tracker.js";
 import {
   captureRegistration,

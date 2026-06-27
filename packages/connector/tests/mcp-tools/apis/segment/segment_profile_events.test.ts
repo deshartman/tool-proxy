@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { segmentProfileEvents } from "@mcp/bundled/twilio/tools/segment/segment_profile_events.js";
+import { segmentProfileEvents } from "@mcp/bundled/twilio/segment/tools/segment_profile_events.js";
 import type { SegmentProfileClient } from "@mcp/bundled/twilio/segment-profile-client.js";
 import {
   captureRegistration,
