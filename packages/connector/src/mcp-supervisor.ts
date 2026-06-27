@@ -254,7 +254,11 @@ export class McpSupervisor {
     // values it'd send anyway") we still want the label to reflect
     // session+controller layering correctly.
     entry.status.credsSource = computeCredsSource(entry);
-    if (entry.child) {
+    // Restart trigger: any currently-running entry. For HTTP/bundled spawns
+    // entry.child is the marker; for stdio entries the SDK owns the child
+    // and entry.connection is the only handle we have. Both signal "child
+    // is alive and needs a respawn to see the new env".
+    if (entry.child || entry.connection) {
       await this.restartEntry(entry, reason);
       return { applied: true, restarted: true };
     }
@@ -333,7 +337,10 @@ export class McpSupervisor {
     entry.status.credsLastUpdated = nowMs();
     entry.status.credsSource = computeCredsSource(entry);
 
-    if (entry.child) {
+    // See the applyControllerEnv twin: stdio entries leave entry.child unset
+    // (the SDK transport owns the spawn), so entry.connection is the only
+    // alive-marker. Either signals "respawn required to pick up env change".
+    if (entry.child || entry.connection) {
       await this.restartEntry(entry, reason);
       return { applied: true, restarted: true, expiresAt };
     }
@@ -360,7 +367,9 @@ export class McpSupervisor {
     entry.status.sessionEnvKeys = undefined;
     entry.status.credsLastUpdated = nowMs();
     entry.status.credsSource = computeCredsSource(entry);
-    if (entry.child) {
+    // Stdio entries restart via entry.connection (no entry.child) — see the
+    // matching note in applyControllerEnv.
+    if (entry.child || entry.connection) {
       await this.restartEntry(entry, reason);
       return true;
     }
@@ -490,18 +499,37 @@ export class McpSupervisor {
   private async startEntry(entry: Entry, reason: string): Promise<void> {
     const spec = entry.spec;
     const isSpawn = isType1Spawn(spec) || isDropinSpec(spec);
+    // Pre-build the four-layer-merged env for stdio entries. Type 1 / drop-in
+    // / bundled spawns run mergeEnv internally inside spawnChild (auto-port
+    // probe, NODE_PATH for drop-ins, port-readiness wait — too spawn-specific
+    // to centralise). HTTP-family Type 2 entries don't consume env (auth via
+    // spec.headers from resolveSpecHeaders). That leaves stdio: the SDK's
+    // StdioClientTransport spawns the binary itself and accepts `env` at
+    // construction time, so we feed it the same merged env spawnChild uses.
+    //
+    // This is the fix for the bug where controller-config stdio MCPs (e.g.
+    // the standalone @deshartman/twilio-mcp added via "New 3rd Party MCP")
+    // booted with empty process.env, ignored their controllerEnv entirely,
+    // and registered zero tools. Before this change, connectStdio built its
+    // env from process.env + spec.env directly — bypassing the supervisor's
+    // four-layer merge. After: every transport sees the same merge.
+    let stdioEnv: Record<string, string> | undefined;
     if (isSpawn) {
       await this.spawnChild(entry);
+    } else if (spec.transport === "stdio") {
+      const sources: Record<string, EnvSource> = {};
+      const merged = this.mergeEnv(entry, sources, {});
+      stdioEnv = filterStringEnv(merged);
+      this.opts.onSpawn?.({ name: spec.name, envSources: sources });
     }
     // W-E3 / W-E4: resolve 3rd-party MCP auth shape into outbound headers.
-    // Only HTTP-family transports — stdio entries pass env to the child
-    // process via the existing per-spec env path. yaml entries leave
-    // spec.auth undefined and the helper is skipped.
+    // Only HTTP-family transports — stdio entries already received the merged
+    // env above. yaml entries leave spec.auth undefined and the helper skips.
     if (spec.transport === "http" && (spec as { auth?: unknown }).auth !== undefined) {
       await this.resolveSpecHeaders(entry);
     }
     try {
-      entry.connection = await connectServer(entry.spec);
+      entry.connection = await connectServer(entry.spec, stdioEnv);
       this.opts.servers.set(spec.name, entry.connection);
       // v1.2 (Workstream D): attach the notification forwarder once per
       // connection. The forwarder is process-wide; per-tunnel send is
@@ -717,6 +745,18 @@ export class McpSupervisor {
 
 function nowMs(): number {
   return Date.now();
+}
+
+// StdioClientTransport requires env values be plain strings. mergeEnv returns
+// NodeJS.ProcessEnv which permits undefined per Node's typings, even though
+// our merge inputs are all `string`. Filter explicitly so the SDK boundary
+// gets a clean Record<string, string>.
+function filterStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
 }
 
 function envEquals(a: Record<string, string>, b: Record<string, string>): boolean {
