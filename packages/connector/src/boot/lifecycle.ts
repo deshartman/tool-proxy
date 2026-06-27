@@ -446,7 +446,19 @@ export async function boot(): Promise<void> {
     // swaps only the wire `send` callback so an in-flight reconcile emits to
     // the *current* tunnel, NOT a stale one. Roster + lastAppliedGeneration
     // survive reconnect — see LIFETIME comment on McpConfigCoordinator.
-    mcpConfig.bind({ send: (frame) => pendingTunnel.send(frame) });
+    //
+    // `requestCreds` is bound to THIS tunnel's CredsCoordinator so addEntry
+    // fetches env values from the controller before the supervisor spawns
+    // the child. Controller-config 3rd-party MCPs (added via the "New 3rd
+    // Party MCP" UI) are always `author: "customer"` — Twilio-bundled
+    // MCPs come from yaml, not the controller roster. See the matching
+    // commentary on McpConfigCoordinatorBind for why pre-spawn fetch is
+    // load-bearing for stdio MCPs that gate tool registration on env.
+    mcpConfig.bind({
+      send: (frame) => pendingTunnel.send(frame),
+      requestCreds: (name, mcpId, envKeys) =>
+        creds.reload(name, "customer", envKeys, mcpId),
+    });
 
     // Local-MCP rescan coordinator — same per-tunnel rebind shape as
     // mcpConfig. Single-flight state survives reconnect by design.
