@@ -47,6 +47,9 @@ __pycache__/
 **/.connector-state.json
 graphify-out/*
 
+# Snapshot tarballs written by scripts/snapshot-crm.sh.
+.local-backups/
+
 # Playwright MCP smoke-test scratch (snapshots + console logs from running
 # the inspector through the Playwright browser MCP during verification).
 .playwright-mcp/
