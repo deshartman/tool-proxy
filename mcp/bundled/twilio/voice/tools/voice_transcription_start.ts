@@ -15,6 +15,7 @@ export function voiceTranscriptionStart(): Tool {
       server.registerTool(
         "voice_transcription_start",
         {
+          title: "Start Call Transcription",
           description:
             "Build a TwiML document that begins real-time transcription on the live call. Returns a <Response> with <Start><Transcription/></Start>. Pair the same `name` with voice_transcription_stop.",
           inputSchema: {

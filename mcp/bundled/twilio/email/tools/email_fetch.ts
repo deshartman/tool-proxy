@@ -17,6 +17,7 @@ export function emailFetch(getClient: SendGridClientProvider): Tool {
       server.registerTool(
         "email_fetch",
         {
+          title: "Fetch Email Activity",
           description:
             "Fetches the full delivery/event timeline for a single SendGrid message id (opens, clicks, bounces, deferrals). Requires a SendGrid Pro plan or above (Email Activity API).",
           inputSchema: {

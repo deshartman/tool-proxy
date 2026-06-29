@@ -26,6 +26,7 @@ export function callsFetch(client: TwilioClient): Tool {
       server.registerTool(
         "calls_fetch",
         {
+          title: "Fetch Call Status",
           description: "Fetches a single call by SID and returns its status, direction, duration, and timing.",
           inputSchema: {
             sid: z.string().describe("Call SID, e.g. CAxxxxxxxx"),

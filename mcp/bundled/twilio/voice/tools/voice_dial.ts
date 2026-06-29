@@ -34,6 +34,7 @@ export function voiceDial(): Tool {
       server.registerTool(
         "voice_dial",
         {
+          title: "Build <Dial> TwiML",
           description:
             "Build a TwiML document that bridges the call to one or more endpoints (PSTN numbers, SIP URIs, Twilio Clients). Children render in order: numbers → sips → clients. Returns a complete <Response>.",
           inputSchema: {

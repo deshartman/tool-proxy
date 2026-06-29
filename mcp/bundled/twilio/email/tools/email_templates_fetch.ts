@@ -17,6 +17,7 @@ export function emailTemplatesFetch(getClient: SendGridClientProvider): Tool {
       server.registerTool(
         "email_templates_fetch",
         {
+          title: "Fetch Email Templates",
           description:
             "Lists SendGrid dynamic templates, or fetches one template (with all versions and HTML/subject) when templateId is set. Use the templateId (d-xxxx) with email_send.templateId for templated sends.",
           inputSchema: {

@@ -27,6 +27,7 @@ export function segmentProfileExternalIds(client: SegmentProfileClient): Tool {
       server.registerTool(
         "segment_profile_external_ids",
         {
+          title: "List Profile External IDs",
           description:
             "Lists every external id linked to a unified profile (phone, email, user_id, anonymous_id, plus any customer-defined collection ids). Identify the profile by any one external id and discover the rest.",
           inputSchema: {

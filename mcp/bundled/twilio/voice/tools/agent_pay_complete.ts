@@ -23,6 +23,7 @@ export function agentPayComplete(client: TwilioClient): Tool {
       server.registerTool(
         "agent_pay_complete",
         {
+          title: "Complete Agent Payment",
           description:
             "Finalize the agent-assisted payment session. Twilio sends captured fields to the Pay Connector; the final token / confirmation code / error lands in agent_payment_status via the statusCallback. INCURS CHARGES when agent_pay_start was launched with a non-zero chargeAmount.",
           inputSchema: {

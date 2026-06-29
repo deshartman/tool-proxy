@@ -14,6 +14,7 @@ export const uuid: Tool = {
     server.registerTool(
       "uuid",
       {
+        title: "Generate UUID",
         description: "Return a freshly-generated random UUID v4.",
         outputSchema: OutputSchema,
       },

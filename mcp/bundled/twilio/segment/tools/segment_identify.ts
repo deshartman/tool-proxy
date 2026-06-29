@@ -14,6 +14,7 @@ export function segmentIdentify(getTracker: SegmentTrackerProvider): Tool {
       server.registerTool(
         "segment_identify",
         {
+          title: "Identify Segment Profile",
           description:
             "Upserts traits onto a Segment profile (`identify` call). Provide exactly one of userId / anonymousId. Awaits delivery before returning so the tool result reflects whether Segment accepted the event.",
           inputSchema: {

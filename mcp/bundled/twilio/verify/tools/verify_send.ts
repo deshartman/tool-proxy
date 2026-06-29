@@ -15,6 +15,7 @@ export function verifySend(client: TwilioClient): Tool {
       server.registerTool(
         "verify_send",
         {
+          title: "Send Verification Code (OTP)",
           description: "Sends a one-time verification code (OTP) to the recipient via the chosen channel. INCURS CHARGES.",
           inputSchema: {
             to: z.string().describe("E.164 phone number for sms/call/whatsapp, or email address for email."),

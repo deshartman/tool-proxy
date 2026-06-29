@@ -30,6 +30,7 @@ export function agentPayStart(client: TwilioClient): Tool {
       server.registerTool(
         "agent_pay_start",
         {
+          title: "Start Agent-Assisted Payment",
           description:
             "Begin a live-call agent-assisted payment capture against the active <Payments> API. Returns a PaymentSid the LLM uses to drive capture steps. Requires a Pay Connector configured on the Twilio account. INCURS CHARGES when chargeAmount > 0; tokenize-only when chargeAmount is omitted.",
           inputSchema: {

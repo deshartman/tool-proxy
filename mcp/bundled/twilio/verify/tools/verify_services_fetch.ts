@@ -20,6 +20,7 @@ export function verifyServicesFetch(client: TwilioClient): Tool {
       server.registerTool(
         "verify_services_fetch",
         {
+          title: "Fetch Verify Service",
           description: "Fetches a Verify Service by SID and returns its code length, lookup config, and channel settings.",
           inputSchema: {
             sid: z.string().describe("Verify Service SID (VAxxxx)."),

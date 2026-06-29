@@ -14,6 +14,7 @@ export function callsCreate(client: TwilioClient): Tool {
       server.registerTool(
         "calls_create",
         {
+          title: "Place Outbound Call",
           description: "Place an outbound voice call. Provide either inline TwiML (twiml) or a webhook URL (url) that returns TwiML. INCURS CHARGES.",
           inputSchema: {
             to: z.string().describe("E.164 destination, e.g. +15551234567"),

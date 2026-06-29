@@ -40,6 +40,7 @@ export function voicePay(): Tool {
       server.registerTool(
         "voice_pay",
         {
+          title: "Build <Pay> TwiML",
           description:
             "Build a TwiML document that securely captures a credit card or ACH payment via PCI-compliant <Pay>. Returns a complete <Response>. CHARGES the card if chargeAmount > 0.",
           inputSchema: {

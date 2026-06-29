@@ -3,6 +3,9 @@
 
 export interface ToolDescriptor {
   name: string;
+  // Optional human-readable display label (MCP spec's top-level `title`).
+  // Falls back to `name` on consumers that don't render it.
+  title?: string;
   description: string;
   inputSchema: unknown;       // JSON Schema, opaque pass-through from MCP
   outputSchema?: unknown;

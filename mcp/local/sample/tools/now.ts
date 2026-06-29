@@ -14,6 +14,7 @@ export const now: Tool = {
     server.registerTool(
       "now",
       {
+        title: "Current Time",
         description: "Return the server's current time as an ISO 8601 timestamp.",
         outputSchema: OutputSchema,
       },

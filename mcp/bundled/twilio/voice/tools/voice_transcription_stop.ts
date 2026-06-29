@@ -15,6 +15,7 @@ export function voiceTranscriptionStop(): Tool {
       server.registerTool(
         "voice_transcription_stop",
         {
+          title: "Stop Call Transcription",
           description:
             "Build a TwiML document that stops a real-time transcription session started via voice_transcription_start. Returns a <Response> with <Stop><Transcription/></Stop>.",
           inputSchema: {

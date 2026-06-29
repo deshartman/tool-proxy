@@ -15,6 +15,7 @@ export function segmentTrack(getTracker: SegmentTrackerProvider): Tool {
       server.registerTool(
         "segment_track",
         {
+          title: "Track Segment Event",
           description:
             "Records an event on a Segment profile (`track` call). Provide exactly one of userId / anonymousId. Awaits delivery before returning so the tool result reflects whether Segment accepted the event.",
           inputSchema: {
