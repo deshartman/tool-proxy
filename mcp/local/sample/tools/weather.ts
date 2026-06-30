@@ -38,7 +38,7 @@ export const weather: Tool = {
     server.registerTool(
       "weather",
       {
-        title: "Check Weather",
+        title: "Sample Get US Weather Forecast",
         description: "US-only forecast via weather.gov. Returns the next-period forecast text for the given lat/lon.",
         inputSchema: {
           lat: z.number().min(-90).max(90),
