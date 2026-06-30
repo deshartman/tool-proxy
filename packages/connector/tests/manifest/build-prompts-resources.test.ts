@@ -76,7 +76,7 @@ describe("buildManifest with prompts + resources", () => {
     connection = makeConnection("demo", "http", client);
 
     const servers = new Map<string, McpServerConnection>([["demo", connection]]);
-    const manifest = await buildManifest(configFor(), servers, "test", "/tmp/connector.yaml");
+    const manifest = await buildManifest(configFor(), servers, "test");
 
     expect(manifest.servers).toHaveLength(1);
     const [server] = manifest.servers;
@@ -101,7 +101,7 @@ describe("buildManifest with prompts + resources", () => {
     connection = makeConnection("demo", "http", client);
 
     const servers = new Map<string, McpServerConnection>([["demo", connection]]);
-    const manifest = await buildManifest(configFor(), servers, "test", "/tmp/connector.yaml");
+    const manifest = await buildManifest(configFor(), servers, "test");
 
     expect(manifest.servers).toHaveLength(1);
     expect(manifest.servers[0].prompts).toBeUndefined();

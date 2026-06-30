@@ -67,8 +67,8 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
 
   // McpServer wires its tools/list handler lazily — only on the first
   // registerTool() call. A creds-gated MCP that registers zero tools (e.g.
-  // mcp/bundled/twilio/ awaiting TWILIO_AUTH_TOKEN over the wire) would
-  // otherwise return -32601 "Method not found" to tools/list, killing the
+  // a Type 1 MCP awaiting its API token over the wire) would otherwise
+  // return -32601 "Method not found" to tools/list, killing the
   // connector's buildManifest at boot. Install an empty-list handler
   // ourselves so the wire response is the normal MCP semantics: "server up,
   // 0 tools right now." The supervisor's creds-update restart re-spawns
