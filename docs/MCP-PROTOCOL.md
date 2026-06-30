@@ -245,15 +245,15 @@ When the controller has no value for an `envKeys`-requested key, the reply MUST 
 
 **Operator deletes the row entirely:** send `creds-update` with `env: {}` and `source: "none"`. The connector applies the empty merge, supervisor restarts, child registers zero tools (in whichever group the deleted row covered).
 
-## No local `.env` for the Twilio bundle (rolling out)
+## No local `.env` — creds-over-the-wire (rolling out)
 
-**Status: live for `mcp/bundled/twilio/` only as of this revision.** Other bundled and customer-authored MCPs still use the `dir/.env` fallback today; they will migrate to the same shape incrementally. The controller-side rules below apply per-MCP, not connector-wide — controllers MUST be prepared for this state on the Twilio bundle right now and on additional MCPs over time.
+**Status: live on Type 2 controller-config MCPs as of 2026-06-30** (including the standalone `@deshartman/twilio-mcp` + `@deshartman/segment-mcp` packages that replaced the prior `mcp/bundled/twilio/` Type 1 bundle). Customer-authored drop-ins and Type 3 bundles still use the `dir/.env` fallback today; they will migrate to the same shape incrementally. The controller-side rules below apply per-MCP, not connector-wide.
 
-The Twilio-bundled MCP no longer reads `mcp/bundled/twilio/.env` for boot validation. All credentials reach the child *only* through the controller's `creds-response` / `creds-update` frames. Implications for controllers:
+Type 2 controller-config MCPs no longer rely on any on-disk `.env` for boot validation. All credentials reach the child *only* through the controller's `creds-response` / `creds-update` frames. Implications for controllers:
 
 - **First-boot path is "creds-request → empty reply → empty manifest → operator fills row → creds-update → restart → full manifest."** A controller MUST NOT assume creds are pre-populated by the connector image; it MUST be prepared to push `creds-update` to a child whose tool list is currently `[]`.
 - **An operator deleting a row MUST emit `creds-update` with `env: {}` and `source: "none"`.** That triggers the supervisor restart that empties the tool list — without the frame, the connector would keep using the stale env until next reconnect.
-- **Customer-authored MCPs and not-yet-migrated bundles still honour `dir/.env`.** The connector's per-spec env precedence (process.env ⊕ dir/.env ⊕ yaml inline ⊕ controllerEnv) is unchanged. Controllers SHOULD treat `dir/.env` as transitional and aim to source every credential through `creds-update` over time.
+- **Customer-authored drop-ins and Type 3 bundles still honour `dir/.env`.** The connector's per-spec env precedence (process.env ⊕ dir/.env ⊕ yaml inline ⊕ controllerEnv) is unchanged. Controllers SHOULD treat `dir/.env` as transitional and aim to source every credential through `creds-update` over time.
 
 ## Backwards compat — older controllers
 
@@ -1136,7 +1136,6 @@ Approval state lives **controller-only**. After every `register-ack`, the contro
 | Customer drop-in | `source: "local"` (`__dropin: true` marker) | **YES** — requires `mcp-enable` |
 | Yaml-listed Type 1 hand-written | `source: "yaml"` | NO — yaml IS the acceptance |
 | Bundled Type 3 (Twilio Python venvs) | `source: "yaml"` (with `bundled:` resolver) | NO — Twilio ships in image |
-| Bundled Type 1 hand-written (`mcp/bundled/twilio/`) | `source: "yaml"` | NO — Twilio ships in image |
 | 3rd-party Type 2 (controller-pushed) | `source: "controller-config"` | NO — already operator-authored |
 
 The gate predicate on the connector side is exactly `author === "customer"` AND `source === "local"`. Anything else flows through unchanged.

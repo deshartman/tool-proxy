@@ -1,4 +1,3 @@
-import { dirname, resolve } from "node:path";
 import type { ConnectorConfig } from "../config.js";
 import { authorOf } from "../config.js";
 import { isDropinSpec } from "../dropin.js";
@@ -19,10 +18,6 @@ import type {
 // Trust boundary is per-MCP-server, not per-capability — every discovered
 // item is advertised verbatim.
 //
-// configPath is the absolute path to the loaded yaml — passed through so
-// authorOf() can resolve relative `dir:` entries against the yaml's
-// location and decide twilio-vs-customer per server.
-//
 // dropinSpecsByName lets buildManifest tell drop-in entries apart from
 // hand-written Type 1 entries with the same yaml `dir:`. Both share
 // transport: "http" + dir on the supervisor side; only the spec carries
@@ -33,7 +28,6 @@ export async function buildManifest(
   config: ConnectorConfig,
   servers: Map<string, McpServerConnection>,
   version: string,
-  configPath: string,
   // INSPECTOR-CREDS-VISIBILITY (W-S7): optional async hook for resolving
   // an MCP's aggregate envKeys union. Wired by lifecycle.ts to the
   // supervisor's `fetchEnvKeys`. Optional so tests / older boot paths
@@ -51,7 +45,6 @@ export async function buildManifest(
   // Boot wiring threads through `discoverDropins()` output keyed by name.
   dropinSpecsByName?: Map<string, unknown>,
 ): Promise<ToolManifest> {
-  const yamlDir = dirname(resolve(configPath));
   const specByName = new Map(config.mcp_servers.map((server) => [server.name, server]));
 
   const allEntries: Array<ServerDescriptor | undefined> = await Promise.all(
@@ -66,7 +59,7 @@ export async function buildManifest(
       if (isDropin && isApproved && !isApproved(server.name)) {
         return undefined;
       }
-      return buildServerDescriptor(server, specByName, yamlDir, envKeysFor);
+      return buildServerDescriptor(server, specByName, envKeysFor);
     }),
   );
 
@@ -104,7 +97,6 @@ export function dropinSpecsToMap(specs: Iterable<unknown>): Map<string, unknown>
 async function buildServerDescriptor(
   server: McpServerConnection,
   specByName: Map<string, import("../config.js").McpServerSpec>,
-  yamlDir: string,
   envKeysFor?: (name: string) => Promise<string[]>,
 ): Promise<ServerDescriptor> {
   const tools = await server.listTools();
@@ -112,7 +104,7 @@ async function buildServerDescriptor(
   // spec should always exist — servers come from the same config — but
   // default to "customer" if the lookup misses rather than erroring;
   // this is a tagging concern, not load-bearing for dispatch.
-  const author = spec ? authorOf(spec, yamlDir) : "customer";
+  const author = spec ? authorOf(spec) : "customer";
 
   const caps = server.capabilities;
 

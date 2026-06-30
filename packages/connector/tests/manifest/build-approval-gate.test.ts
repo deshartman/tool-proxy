@@ -76,7 +76,6 @@ describe("buildManifest approval gate (v1.3)", () => {
       sampleConfig,
       servers,
       "test",
-      "/tmp/connector.yaml",
       undefined,
       (name) => name !== "crm", // crm is unapproved
       dropinMap,
@@ -98,7 +97,6 @@ describe("buildManifest approval gate (v1.3)", () => {
       } as unknown as ConnectorConfig,
       servers,
       "test",
-      "/tmp/connector.yaml",
       undefined,
       () => true,
       dropinMap,
@@ -125,7 +123,6 @@ describe("buildManifest approval gate (v1.3)", () => {
       sampleConfig,
       servers,
       "test",
-      "/tmp/connector.yaml",
       undefined,
       () => false,
       dropinMap,
@@ -145,7 +142,6 @@ describe("buildManifest approval gate (v1.3)", () => {
       sampleConfig,
       servers,
       "test",
-      "/tmp/connector.yaml",
       undefined,
       undefined, // omitted
       dropinMap,
@@ -164,7 +160,6 @@ describe("buildManifest approval gate (v1.3)", () => {
       sampleConfig,
       servers,
       "test",
-      "/tmp/connector.yaml",
       undefined,
       () => false, // would gate everything if classified as drop-in
       undefined,   // but no specs are classified

@@ -38,7 +38,6 @@ import { resolveAuth } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
 import { envOptional, envString, envNumber } from "../env.js";
-import { resolve as resolvePath } from "node:path";
 
 const log = createLogger("connector");
 // Adapter for downstream callbacks that take `(msg: string) => void`.
@@ -308,7 +307,6 @@ export async function boot(): Promise<void> {
     config,
     servers,
     version,
-    configPath,
     (name) => supervisor.fetchEnvKeys(name),
     (name) => approval.isApproved(name),
     dropinSpecsByName,
@@ -594,9 +592,8 @@ export async function boot(): Promise<void> {
     name: string,
     mcpConfig?: McpConfigCoordinator,
   ): { mcp: string; mcpId?: string; author: string; envKeys: string[] } | undefined {
-    const yamlDir = configPath ? resolvePath(configPath, "..") : process.cwd();
     const spec = config.mcp_servers.find((s) => s.name === name);
-    const author = spec ? authorOf(spec, yamlDir) : "customer";
+    const author = spec ? authorOf(spec) : "customer";
     if (!servers.has(name)) return undefined;
     const mcpId = mcpConfig?.mcpIdFor(name);
     return { mcp: name, ...(mcpId ? { mcpId } : {}), author, envKeys: [] };
@@ -609,11 +606,10 @@ export async function boot(): Promise<void> {
     creds: CredsCoordinator,
     mcpConfig: McpConfigCoordinator,
   ): Promise<void> {
-    const yamlDir = configPath ? resolvePath(configPath, "..") : process.cwd();
     const requests = await Promise.all(
       [...servers.keys()].map(async (name) => {
         const spec = config.mcp_servers.find((s) => s.name === name);
-        const author = spec ? authorOf(spec, yamlDir) : "customer";
+        const author = spec ? authorOf(spec) : "customer";
         const envKeys = await supervisor.fetchEnvKeys(name);
         const mcpId = mcpConfig.mcpIdFor(name);
         return { mcp: name, ...(mcpId ? { mcpId } : {}), author, envKeys };
@@ -692,7 +688,6 @@ export async function boot(): Promise<void> {
         config,
         servers,
         version,
-        configPath,
         (name) => supervisor.fetchEnvKeys(name),
         (name) => approval.isApproved(name),
         dropinSpecsByName,
@@ -726,7 +721,6 @@ export async function boot(): Promise<void> {
         config,
         servers,
         version,
-        configPath,
         (name) => supervisor.fetchEnvKeys(name),
         (name) => approval.isApproved(name),
         dropinSpecsByName,
