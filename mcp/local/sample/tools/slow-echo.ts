@@ -15,7 +15,7 @@ export const slowEcho: Tool = {
     server.registerTool(
       "slow_echo",
       {
-        title: "Slow Echo",
+        title: "Sample Echo with Delay",
         description: "Sleep for sleep_ms (default 6000), then echo text. Use to test tool_timeout_ms.",
         inputSchema: {
           text: z.string(),
