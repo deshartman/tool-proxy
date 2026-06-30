@@ -8,7 +8,7 @@ The earlier PoC (in-shim LLM agent, `can_answer` / `ask_procedure`) is preserved
 
 1. Reads `connector.yaml` (yaml-listed bundled / hand-written MCPs) AND auto-discovers customer-authored drop-in folders under `${MCP_DROPIN_DIR}/<name>/`:
    - **Type 1 (customer-authored, drop-in shape — default).** Folder under `mcp/local/<name>/{tools,prompts,resources}/*.ts`. No yaml entry, no `server.ts`. The drop-in scanner finds the folder; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) spawns a per-folder subprocess.
-   - **Type 1 (hand-written, legacy escape hatch).** Yaml entry with `transport: http` + `dir:` (no `endpoint`). The connector spawns `tsx <dir>/server.ts` as a child. Used by `mcp/bundled/twilio/` (Twilio-authored Type 1 with the `twilio` SDK in its own `package.json`).
+   - **Type 1 (hand-written, legacy escape hatch).** Yaml entry with `transport: http` + `dir:` (no `endpoint`). The connector spawns `tsx <dir>/server.ts` as a child. No in-repo MCP uses this shape today; it stays available for a future Type 1 MCP that needs to ship its own `package.json` (e.g. a third-party SDK that can't hoist to the workspace).
    - **Type 2 — connect to existing 3rd-party MCP.** Pushed via the controller UI (NOT the yaml) as `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) v1.1.
 2. Connects to each, runs `tools/list` to discover their tools.
 3. Builds a **`ToolManifest`** by aggregating every discovered tool. Trust boundary is per-MCP-server: pick which servers run, get every tool they expose.
@@ -42,8 +42,6 @@ The WS handshake is gated by per-tunnel auth that the controller mints. Before b
 
 - **Twilio Auth Token** or **Twilio API Key** → controller mints a long-lived `ts_<...>` bearer, shown once. Paste it into `TUNNEL_AUTH_TOKEN`.
 - **OAuth 2.0 (client_credentials)** → controller mints a `client_id` + `client_secret`. Paste them into `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`, and set `OAUTH_TOKEN_URL` to the URL the UI shows. The connector mints a fresh 1h JWT against that endpoint on each reconnect (and refreshes <60s before expiry mid-session).
-
-> The bundled Twilio MCP under [`mcp/bundled/twilio/`](../../mcp/bundled/twilio/) is AuthToken-only at the bundle-env layer. If you pick the **Twilio API Key** row type above for the tunnel handshake, the bundled MCP still needs `TWILIO_AUTH_TOKEN` — either via the controller's auto-fill (mint an Auth Token row alongside it) or pasted directly into `mcp/bundled/twilio/.env`.
 
 ```bash
 # from repo root
@@ -118,7 +116,7 @@ export default echo;
 
 For more depth — env precedence, `Refresh local MCPs`, the third-party-SDK case — see [docs/AUTHOR-LOCAL-MCP.md](../../docs/AUTHOR-LOCAL-MCP.md).
 
-For **bundled multi-service MCPs** (Twilio-shipped, hand-written), prefer a service-first folder layout (`<service>/{tools,prompts,resources}/` under the bundle root) over a flat `tools/` tree — see [`mcp/bundled/twilio/`](../../mcp/bundled/twilio/) for the worked example. Customer drop-ins stay flat.
+For **bundled multi-service MCPs** (Twilio-shipped, hand-written), prefer a service-first folder layout (`<service>/{tools,prompts,resources}/` under the bundle root) over a flat `tools/` tree. Customer drop-ins stay flat.
 
 `MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative (legacy escape hatch; new MCPs should use the drop-in shape).
 
@@ -143,7 +141,7 @@ This gate applies only to drop-ins (folders under `${MCP_DROPIN_DIR}` that auto-
 
 If your tool needs env values (API keys, DB URLs, anything secret), declare them via `envKeys: string[]` on each `Tool` and let the controller push them down at runtime. After `register-ack`, the connector sends a `creds-request` per MCP with the de-duped union of every tool's `envKeys`; the controller stores the values in its existing UI / DB and replies with a `creds-response`. Operator edits trigger a `creds-update` push and the supervisor restarts the child with the new env. Today's `mcp/<type>/<name>/.env` files keep working as a fallback (controller-supplied env wins on conflict).
 
-**Conditional tool registration** — when an MCP has hard creds requirements (e.g. `mcp/bundled/twilio/`), gate `tool` registration on env presence at the **server level**, NOT inside individual tools:
+**Conditional tool registration** — when an MCP has hard creds requirements, gate `tool` registration on env presence at the **server level**, NOT inside individual tools:
 
 ```ts
 // mcp/bundled/<name>/server.ts (sketch)
