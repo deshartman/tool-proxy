@@ -31,6 +31,7 @@ export function segmentProfileEvents(client: SegmentProfileClient): Tool {
       server.registerTool(
         "segment_profile_events",
         {
+          title: "Fetch Profile Events",
           description:
             "Fetches recent events for a unified profile (track calls, page views, etc). Identify the profile by any external id; page with `cursor`.",
           inputSchema: {

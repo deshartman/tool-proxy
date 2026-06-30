@@ -19,6 +19,7 @@ export function contentTemplatesFetch(client: TwilioClient): Tool {
       server.registerTool(
         "content_templates_fetch",
         {
+          title: "Fetch Content Template",
           description: "Fetches a Content template (HXxxxx) by SID and returns its variables, types, and friendly name. Use the SID with messages_create.contentSid for templated WhatsApp/RCS sends.",
           inputSchema: {
             sid: z.string().describe("Content template SID, e.g. HXxxxxxxxx"),

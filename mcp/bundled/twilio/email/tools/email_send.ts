@@ -20,6 +20,7 @@ export function emailSend(getClient: SendGridClientProvider): Tool {
       server.registerTool(
         "email_send",
         {
+          title: "Send Email",
           description:
             "Send an email via SendGrid. Supports plain/HTML body or a dynamic template (templateId, prefix d-…) with placeholder data, plus optional cc/bcc and base64 attachments. INCURS CHARGES.",
           inputSchema: {

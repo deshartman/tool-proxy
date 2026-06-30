@@ -16,6 +16,7 @@ export function lookupsFetch(client: TwilioClient): Tool {
       server.registerTool(
         "lookups_fetch",
         {
+          title: "Look Up Phone Number",
           description: "Validates a phone number and returns its country, national format, and whether it is a real, reachable number.",
           inputSchema: {
             phone_number: z.string().describe("E.164 number, e.g. +15551234567"),

@@ -23,6 +23,7 @@ export function messagesFetch(client: TwilioClient): Tool {
       server.registerTool(
         "messages_fetch",
         {
+          title: "Fetch Message Status",
           description: "Fetches a single message by its SID and returns its status, sender, recipient, body, and any error details.",
           inputSchema: {
             sid: z.string().describe("Message SID, e.g. SMxxxxxxxx or MMxxxxxxxx"),

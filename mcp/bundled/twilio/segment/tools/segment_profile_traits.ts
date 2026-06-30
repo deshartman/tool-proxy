@@ -23,6 +23,7 @@ export function segmentProfileTraits(client: SegmentProfileClient): Tool {
       server.registerTool(
         "segment_profile_traits",
         {
+          title: "Fetch Profile Traits",
           description:
             "Fetches the latest value of every trait Segment knows about a unified profile. Identify the profile by any external id (phone, email, user_id, anonymous_id).",
           inputSchema: {

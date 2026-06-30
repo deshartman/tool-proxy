@@ -23,6 +23,7 @@ export function agentPayCaptureCard(client: TwilioClient): Tool {
       server.registerTool(
         "agent_pay_capture_card",
         {
+          title: "Capture Card Number",
           description:
             "Advance the agent-assisted payment session into card-number capture. Twilio plays a prompt to the caller and collects digits. Poll agent_payment_status (resource) to see the masked PAN populate.",
           inputSchema: {

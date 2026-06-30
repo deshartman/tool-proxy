@@ -27,6 +27,7 @@ export function messagesCreate(client: TwilioClient): Tool {
       server.registerTool(
         "messages_create",
         {
+          title: "Send SMS / WhatsApp / RCS",
           description:
             "Send a message via SMS, WhatsApp, or RCS. The connector prepends the channel prefix to to/from. For templated WhatsApp/RCS sends, set contentSid (and contentVariables for placeholders). INCURS CHARGES.",
           inputSchema: {

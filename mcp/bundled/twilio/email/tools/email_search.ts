@@ -13,6 +13,7 @@ export function emailSearch(getClient: SendGridClientProvider): Tool {
       server.registerTool(
         "email_search",
         {
+          title: "Search Email Activity",
           description:
             'Search SendGrid message activity. The query is a SendGrid filter expression with double-quoted values, e.g. \'to_email="user@example.com" AND status="delivered"\'. Requires a SendGrid Pro plan or above (Email Activity API).',
           inputSchema: {

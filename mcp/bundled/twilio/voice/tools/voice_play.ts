@@ -15,6 +15,7 @@ export function voicePlay(): Tool {
       server.registerTool(
         "voice_play",
         {
+          title: "Build <Play> TwiML",
           description:
             "Build a TwiML document that plays an audio file or DTMF tones. Returns a complete <Response> ready to pass to calls_create.twiml or a webhook.",
           inputSchema: {

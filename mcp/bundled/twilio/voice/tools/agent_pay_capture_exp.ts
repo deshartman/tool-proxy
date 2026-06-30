@@ -16,6 +16,7 @@ export function agentPayCaptureExp(client: TwilioClient): Tool {
       server.registerTool(
         "agent_pay_capture_exp",
         {
+          title: "Capture Expiration Date",
           description:
             "Advance the agent-assisted payment session into expiration-date capture. Caller enters MMYY digits; poll agent_payment_status for the captured value.",
           inputSchema: {

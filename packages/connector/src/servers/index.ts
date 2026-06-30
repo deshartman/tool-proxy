@@ -23,6 +23,7 @@ import type {
 // Raw tool from a local MCP server, before being shaped into a ToolDescriptor.
 export interface DiscoveredTool {
   name: string;
+  title?: string;
   description: string;
   inputSchema: unknown;
   outputSchema?: unknown;
@@ -110,6 +111,7 @@ export function makeConnection(
       const result = await client.listTools();
       return result.tools.map((tool) => ({
         name: tool.name,
+        title: tool.title ?? tool.annotations?.title,
         description: tool.description ?? "",
         inputSchema: tool.inputSchema,
         outputSchema: tool.outputSchema,
@@ -197,11 +199,12 @@ function stripUndefined<T extends object>(input: Record<string, unknown>): T {
 
 // Helper: shape a DiscoveredTool into a ToolDescriptor with the allowed flag set.
 export function toDescriptor(tool: DiscoveredTool, allowed: boolean): ToolDescriptor {
-  return {
+  return stripUndefined<ToolDescriptor>({
     name: tool.name,
+    title: tool.title,
     description: tool.description,
     inputSchema: tool.inputSchema,
     outputSchema: tool.outputSchema,
     allowed,
-  };
+  });
 }

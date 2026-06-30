@@ -24,6 +24,7 @@ export function messagingServicesFetch(client: TwilioClient): Tool {
       server.registerTool(
         "messaging_services_fetch",
         {
+          title: "Fetch Messaging Service",
           description: "Fetches a Messaging Service by SID and returns its sender pool config, fallback URL, and feature flags.",
           inputSchema: {
             sid: z.string().describe("Messaging Service SID, e.g. MGxxxxxxxx"),

@@ -16,6 +16,7 @@ export function agentPayCaptureCvc(client: TwilioClient): Tool {
       server.registerTool(
         "agent_pay_capture_cvc",
         {
+          title: "Capture Security Code (CVC)",
           description:
             "Advance the agent-assisted payment session into CVC / security-code capture. Caller enters the 3-4 digit code; poll agent_payment_status to see the masked value.",
           inputSchema: {

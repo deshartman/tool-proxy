@@ -17,6 +17,7 @@ export function voiceSay(): Tool {
       server.registerTool(
         "voice_say",
         {
+          title: "Build <Say> TwiML",
           description:
             "Build a TwiML document with a single <Say> verb. Returns a complete <Response> ready to pass to calls_create.twiml or to a webhook response.",
           inputSchema: {

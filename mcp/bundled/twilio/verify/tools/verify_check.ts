@@ -17,6 +17,7 @@ export function verifyCheck(client: TwilioClient): Tool {
       server.registerTool(
         "verify_check",
         {
+          title: "Check Verification Code (OTP)",
           description: "Validates a one-time verification code (OTP) submitted by the user. Returns status='approved' on success.",
           inputSchema: {
             to: z.string().describe("The same to value used in verify_send (E.164 phone or email)."),
