@@ -225,11 +225,11 @@ npm install <sdk>
 
 That creates a local `package.json` + `node_modules` inside the folder. The SDK stays out of the workspace hoist (deliberate — keeps drop-in MCPs from accidentally importing each other's deps). The connector's start-up loop installs them once on first boot.
 
-The Twilio bundle at [`mcp/bundled/twilio/`](../mcp/bundled/twilio/) is the live example of this shape.
+No in-repo MCP currently uses the third-party-SDK shape; the prior `mcp/bundled/twilio/` bundle did before it was retired in favor of the standalone `@deshartman/twilio-mcp` npm package loaded as a Type 2 controller-config entry.
 
 ## Authoring rules to know
 
-These are pinned by tests at [packages/connector/tests/mcp-tools/](../packages/connector/tests/mcp-tools/) and validated at boot by [src/manifest/validate.ts](../packages/connector/src/manifest/validate.ts):
+These are validated at boot by [src/manifest/validate.ts](../packages/connector/src/manifest/validate.ts):
 
 1. **Each file default-exports a `Tool` / `Prompt` / `Resource` object.** Named exports work too — the runner picks the first one matching the matching shape.
 2. **Tools we author declare `outputSchema`.** Lets controller-side procedure authors write `{{ hydrate:<server>.<tool>.<field> }}` and have it type-checked.
