@@ -56,19 +56,6 @@ mcp_servers:
   # it can still be listed here with `transport: http` + `dir:`. The yaml
   # entry wins over drop-in discovery for the same folder name.
 
-  # Twilio-authored Type 1 living under mcp/bundled/. "Bundled" describes
-  # who ships it (Twilio, pre-installed in the connector image); the wire
-  # shape is still Type 1 — connector spawns server.ts as an HTTP child.
-  # Requires TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN in mcp/bundled/twilio/.env
-  # — boot fails-fast otherwise. Comment out to disable.
-  #
-  # Server name is `apis` (not `twilio`) so the cloud-side qualifier
-  # ${author}.${serverName}.${toolName} reads `twilio.apis.messages_create`
-  # → flattens to `twilio_apis_messages_create` on OpenAI without stutter.
-  - name: apis
-    transport: http
-    dir: ../../mcp/bundled/twilio
-
   # Type 2 (3rd-party MCPs) come from the controller UI, not the yaml — see
   # docs/MCP-PROTOCOL.md §"v1.1 — 3rd-party MCP roster (controller-driven)".
   # Operator clicks "New 3rd Party MCP" in the controller; entry is pushed
