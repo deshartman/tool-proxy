@@ -317,6 +317,8 @@ h2 {
 .tool-row.selected { border-color: var(--accent); background: rgba(88, 166, 255, 0.1); }
 .tool-row .verdict { font-family: -apple-system, sans-serif; font-size: 0.7rem; }
 .tool-row .verdict.ready { color: var(--green); }
+.tool-row .tool-label { display: inline-flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
+.tool-row .tool-name.muted { font-size: 0.75rem; color: var(--muted); }
 
 /* Webhooks */
 #webhooks-list { list-style: none; margin: 0; padding: 0; }
@@ -495,6 +497,7 @@ h2 {
   font-size: 0.85rem;
 }
 .tool-card-head .name { color: var(--accent); }
+.tool-card-head .name-qualified { font-family: var(--mono); font-size: 0.78rem; margin-left: 0.6rem; color: var(--muted); }
 .tool-card-head .verdict { font-family: -apple-system, sans-serif; font-size: 0.7rem; }
 .tool-card-head .verdict.ready { color: var(--green); }
 .tool-card pre {

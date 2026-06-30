@@ -46,6 +46,7 @@ _bootstrap_task: asyncio.Task[Any] | None = None
 def _register_tool_for(product: "products.Product") -> Tool:
     return Tool(
         name=f"{product.id}{REGISTER_SUFFIX}",
+        title=product.register_tool_title,
         description=product.register_tool_description,
         inputSchema=product.register_input_schema,
     )
@@ -55,6 +56,7 @@ def _generic_tools() -> list[Tool]:
     return [
         Tool(
             name="knowledge_query",
+            title="Query Knowledge",
             description=(
                 "Vector lookup against an indexed source. Returns top-K "
                 "chunks with citations. Pure retrieval — no fetching or "
@@ -75,6 +77,7 @@ def _generic_tools() -> list[Tool]:
         ),
         Tool(
             name="sources_refresh",
+            title="Refresh Source",
             description=(
                 "Re-fetch a source, diff against the existing index, and "
                 "re-embed only changed chunks. Reader is selected from "
@@ -97,6 +100,7 @@ def _generic_tools() -> list[Tool]:
         ),
         Tool(
             name="sources_fetch",
+            title="List Sources",
             description=(
                 "List every registered source with its kind, status, and "
                 "last error if any. Failed sources (boot-time auto-register "
