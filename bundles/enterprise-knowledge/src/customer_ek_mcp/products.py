@@ -45,6 +45,12 @@ class Product:
     """Stable product identifier. Stored as ek_sources.kind. Used as the
     register-tool-name prefix and as the install-extra name."""
 
+    register_tool_title: str
+    """Human-readable display label for the <id>_register tool. Surfaced
+    via MCP's top-level Tool.title and used by the controller's tool
+    picker to group EK products visually (parallel to the 'Sample <Action>'
+    / 'CRM <Action>' convention used by the drop-ins)."""
+
     register_tool_description: str
     """Human-readable text shown in the MCP tool list. Per-product because
     'fetch a Google Drive folder' reads very differently from 'index a
@@ -100,6 +106,7 @@ def _build_local_product() -> Product:
 
     return Product(
         id="local",
+        register_tool_title="Register Source: Local Files",
         register_tool_description=(
             "Index a local file or directory. Path can be absolute "
             "(/path/to/folder) or a file:// URL. Directories are recursed."
@@ -122,6 +129,7 @@ def _build_gdrive_product() -> Product:
 
     return Product(
         id="gdrive",
+        register_tool_title="Register Source: Google Drive",
         register_tool_description=(
             "Index a Google Drive folder. URL is the full "
             "https://drive.google.com/drive/folders/<id> form copied "

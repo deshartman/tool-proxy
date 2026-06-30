@@ -269,6 +269,16 @@ function renderToolShape(tool) {
   T('punct', '{');
   NL();
 
+  if (tool.title) {
+    SP(2);
+    T('key', 'title');
+    T('punct', ':');
+    T(null, ' ');
+    T('string', jsonStr(tool.title));
+    T('punct', ',');
+    NL();
+  }
+
   SP(2);
   T('key', 'description');
   T('punct', ':');
@@ -466,8 +476,11 @@ function buildToolRow(serverName, t) {
   const awaiting = isMcpAwaitingConfig(serverName);
   const verdictClass = awaiting ? 'awaiting' : 'ready';
   const verdictLabel = awaiting ? 'Awaiting config' : 'Ready';
+  const labelHtml = t.title
+    ? `<span class="tool-label"><span class="tool-title">${escapeHtml(t.title)}</span><span class="tool-name muted">${escapeHtml(t.name)}</span></span>`
+    : `<span class="tool-label"><span class="tool-name">${escapeHtml(t.name)}</span></span>`;
   row.innerHTML = `
-    <span>${escapeHtml(t.name)}</span>
+    ${labelHtml}
     <span class="verdict ${verdictClass}">${verdictLabel}</span>
   `;
   row.addEventListener('click', () => {
@@ -673,16 +686,20 @@ function applySelectionHighlight() {
 }
 
 function buildToolDetail(sel) {
-  elDetailTitle.textContent = `${sel.serverName}.${sel.tool.name}`;
+  const qualified = `${sel.serverName}.${sel.tool.name}`;
+  elDetailTitle.textContent = sel.tool.title ? `${sel.tool.title} · ${qualified}` : qualified;
   const card = document.createElement('div');
   card.className = 'tool-card selected';
   // W-S8: mirror the verdict downgrade in the right-pane card head.
   const awaiting = isMcpAwaitingConfig(sel.serverName);
   const verdictClass = awaiting ? 'awaiting' : 'ready';
   const verdictLabel = awaiting ? 'Awaiting config' : 'Ready';
+  const headName = sel.tool.title
+    ? `<span class="name">${escapeHtml(sel.tool.title)}</span><span class="name-qualified muted">${escapeHtml(qualified)}</span>`
+    : `<span class="name">${escapeHtml(qualified)}</span>`;
   card.innerHTML = `
     <div class="tool-card-head">
-      <span class="name">${escapeHtml(sel.serverName)}.${escapeHtml(sel.tool.name)}</span>
+      ${headName}
       <span class="verdict ${verdictClass}">${verdictLabel}</span>
     </div>
     <pre>${renderToolShape(sel.tool)}</pre>
@@ -1013,10 +1030,11 @@ function renderRpcDetail(payload) {
   if ('method' in payload) {
     const params = payload.params ?? {};
     const toolName = typeof params.name === 'string' ? params.name : null;
+    const toolRowHtml = renderRpcToolKv(toolName);
     box.innerHTML = `
       <div class="kv"><span class="k">method</span><code class="v">${escapeHtml(payload.method)}</code></div>
       <div class="kv"><span class="k">id</span><code class="v">${escapeHtml(String(payload.id ?? ''))}</code></div>
-      ${toolName ? `<div class="kv"><span class="k">tool</span><code class="v">${escapeHtml(toolName)}</code></div>` : ''}
+      ${toolRowHtml}
       ${params.arguments === undefined ? '' : `<div class="kv block"><span class="k">arguments</span><pre class="v">${escapeHtml(JSON.stringify(params.arguments, null, 2))}</pre></div>`}
     `;
     return box;
@@ -1041,11 +1059,34 @@ function renderRpcDetail(payload) {
   return null;
 }
 
+function lookupToolTitle(qualified) {
+  if (!lastManifest || typeof qualified !== 'string') return null;
+  const dot = qualified.indexOf('.');
+  if (dot < 0) return null;
+  const serverName = qualified.slice(0, dot);
+  const toolName = qualified.slice(dot + 1);
+  const server = lastManifest.servers?.find((s) => s.name === serverName);
+  const tool = server?.tools?.find((t) => t.name === toolName);
+  return tool?.title ?? null;
+}
+
+function renderRpcToolKv(toolName) {
+  if (!toolName) return '';
+  const title = lookupToolTitle(toolName);
+  const valueHtml = title
+    ? `${escapeHtml(toolName)} <span class="muted">· ${escapeHtml(title)}</span>`
+    : escapeHtml(toolName);
+  return `<div class="kv"><span class="k">tool</span><code class="v">${valueHtml}</code></div>`;
+}
+
 function summarizeRpcFrame(p) {
   if (!p || typeof p !== 'object') return 'rpc';
   if ('method' in p) {
     const params = p.params;
-    const name = params && typeof params === 'object' && 'name' in params ? `(${params.name})` : '';
+    const toolName = params && typeof params === 'object' && typeof params.name === 'string' ? params.name : null;
+    const title = toolName ? lookupToolTitle(toolName) : null;
+    let name = '';
+    if (toolName) name = title ? `(${toolName} · ${title})` : `(${toolName})`;
     return `${p.method}${name} id=${p.id}`;
   }
   if ('result' in p) return `result id=${p.id}`;
