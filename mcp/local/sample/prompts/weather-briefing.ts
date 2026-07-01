@@ -18,7 +18,7 @@ export const weatherBriefing: Prompt = {
       {
         description: "Compose a short weather briefing for a US location, framing the latest forecast against the current time.",
         argsSchema: {
-          location: z.string().describe("US city or ZIP code, e.g. \"Boulder, CO\" or \"80301\"."),
+          location: z.string().describe("City name, optionally with state or country to disambiguate (e.g. \"Boulder, CO\" or \"Paris, France\"). Weather data is US-only."),
         },
       },
       ({ location }) => ({
@@ -28,6 +28,8 @@ export const weatherBriefing: Prompt = {
             content: {
               type: "text",
               text: `Use the sample-mcp-server.weather tool to fetch the forecast for "${location}". `
+                + `The tool takes a city name; if it returns an error listing multiple matches or "No location found", `
+                + `ask the user which country or state they meant (e.g. "Portland, OR" vs "Portland, ME") and retry. `
                 + `Use sample-mcp-server.now to anchor the result to the current server time. `
                 + `Compose a one-paragraph briefing (no bullet list) that calls out the temperature trend `
                 + `and any precipitation in the next 24 hours. Cite the issue time of the forecast verbatim.`,
