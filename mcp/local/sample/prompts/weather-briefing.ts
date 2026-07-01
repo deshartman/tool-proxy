@@ -16,9 +16,9 @@ export const weatherBriefing: Prompt = {
     server.registerPrompt(
       "weather_briefing",
       {
-        description: "Compose a short weather briefing for a US location, framing the latest forecast against the current time.",
+        description: "Compose a short weather briefing for an Australian location, framing the latest forecast against the current time.",
         argsSchema: {
-          location: z.string().describe("City name, optionally with state or country to disambiguate (e.g. \"Boulder, CO\" or \"Paris, France\"). Weather data is US-only."),
+          location: z.string().describe("Australian city name, optionally with state to disambiguate (e.g. \"Sydney\" or \"Perth, WA\"). Weather data is AU-only."),
         },
       },
       ({ location }) => ({
@@ -28,11 +28,11 @@ export const weatherBriefing: Prompt = {
             content: {
               type: "text",
               text: `Use the sample-mcp-server.weather tool to fetch the forecast for "${location}". `
-                + `The tool takes a city name; if it returns an error listing multiple matches or "No location found", `
-                + `ask the user which country or state they meant (e.g. "Portland, OR" vs "Portland, ME") and retry. `
+                + `The tool takes an Australian city name; if it returns "No Australian location found", `
+                + `ask the user which state they meant (e.g. "Perth, WA" vs "Perth, TAS") and retry. `
                 + `Use sample-mcp-server.now to anchor the result to the current server time. `
                 + `Compose a one-paragraph briefing (no bullet list) that calls out the temperature trend `
-                + `and any precipitation in the next 24 hours. Cite the issue time of the forecast verbatim.`,
+                + `and any precipitation in the next 24 hours.`,
             },
           },
         ],
