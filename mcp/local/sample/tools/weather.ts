@@ -3,11 +3,13 @@ import type { Tool } from "@mcp-shim/connector/sdk";
 
 // Public, key-less Australian weather. Two-step now that we accept a city name:
 //   1. geocode city -> {lat, lon} (Open-Meteo geocoding, AU-filtered)
-//   2. Open-Meteo forecast API returns daily + current conditions for that
-//      lat/lon; we surface today's summary.
-// 2s budget per HTTP call: 2 sequential calls * 2s = 4s stays under the
-// connector's default tool_timeout_ms of 5000.
-const REQ_TIMEOUT_MS = 2000;
+//   2. Norwegian Met Institute (api.met.no) hourly forecast — we roll up
+//      today's entries (Sydney-local) into min/max/precip/summary. Switched
+//      from Open-Meteo's api.open-meteo.com after a 2026-07 outage on that
+//      host; met.no is public-sector infra with SLAs.
+// 3s budget per HTTP call: 2 sequential * 3s = 6s under a raised tool
+// budget (met.no often responds in <1s; the ceiling is only for stalls).
+const REQ_TIMEOUT_MS = 3000;
 const USER_AGENT = "mcp-shim-sample (https://github.com/twilio/mcp-shim)";
 
 async function fetchJson(url: string): Promise<unknown> {
@@ -40,31 +42,58 @@ async function geocodeCity(city: string): Promise<{ lat: number; lon: number; la
   return { lat: pick.latitude, lon: pick.longitude, label: [pick.name, pick.admin1].filter(Boolean).join(", ") };
 }
 
-// Weather-code lookup for Open-Meteo's WMO codes. Only the common ones —
-// unknown codes fall back to "code N".
-const WMO_CODES: Record<number, string> = {
-  0: "Clear sky",
-  1: "Mainly clear",
-  2: "Partly cloudy",
-  3: "Overcast",
-  45: "Fog",
-  48: "Depositing rime fog",
-  51: "Light drizzle",
-  53: "Moderate drizzle",
-  55: "Dense drizzle",
-  61: "Light rain",
-  63: "Moderate rain",
-  65: "Heavy rain",
-  71: "Light snow",
-  73: "Moderate snow",
-  75: "Heavy snow",
-  80: "Rain showers",
-  81: "Moderate rain showers",
-  82: "Violent rain showers",
-  95: "Thunderstorm",
-  96: "Thunderstorm with hail",
-  99: "Thunderstorm with heavy hail",
+// met.no symbol_code -> human-readable summary. Codes come with _day / _night
+// / _polartwilight suffixes that we strip at the lookup site, so this table
+// keys off the bare stem. Unknown stems fall back to the raw code.
+const SYMBOL_SUMMARIES: Record<string, string> = {
+  clearsky: "Clear sky",
+  fair: "Fair",
+  partlycloudy: "Partly cloudy",
+  cloudy: "Cloudy",
+  fog: "Fog",
+  lightrain: "Light rain",
+  rain: "Rain",
+  heavyrain: "Heavy rain",
+  lightrainshowers: "Light rain showers",
+  rainshowers: "Rain showers",
+  heavyrainshowers: "Heavy rain showers",
+  lightsleet: "Light sleet",
+  sleet: "Sleet",
+  heavysleet: "Heavy sleet",
+  lightsnow: "Light snow",
+  snow: "Snow",
+  heavysnow: "Heavy snow",
+  lightsnowshowers: "Light snow showers",
+  snowshowers: "Snow showers",
+  heavysnowshowers: "Heavy snow showers",
+  lightrainandthunder: "Light rain and thunder",
+  rainandthunder: "Rain and thunder",
+  heavyrainandthunder: "Heavy rain and thunder",
 };
+
+function summariseSymbol(code: string): string {
+  // Strip _day / _night / _polartwilight suffix.
+  const stem = code.replace(/_(day|night|polartwilight)$/, "");
+  return SYMBOL_SUMMARIES[stem] ?? code;
+}
+
+// Sydney-local calendar date for a UTC ISO timestamp. AEST is UTC+10 with
+// no DST (state-wide half the year — Perth is +8, Sydney +10/+11). For a
+// demo tool one fixed offset (+10) is close enough; a production tool would
+// use Intl.DateTimeFormat with the resolved location's tz.
+function sydneyDate(isoUtc: string): string {
+  const t = new Date(isoUtc).getTime() + 10 * 3600 * 1000;
+  return new Date(t).toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+interface MetNoTimeseriesEntry {
+  time: string;
+  data: {
+    instant: { details: { air_temperature?: number } };
+    next_1_hours?: { summary?: { symbol_code?: string }; details?: { precipitation_amount?: number } };
+    next_6_hours?: { summary?: { symbol_code?: string }; details?: { precipitation_amount?: number } };
+  };
+}
 
 // Bucket A (JSON-shaped) per OUTPUT-SCHEMA.md — projection-friendly fields
 // for today's forecast. The handler still returns a human-readable
@@ -94,38 +123,50 @@ export const weather: Tool = {
       async ({ city }) => {
         const { lat, lon, label } = await geocodeCity(city);
         const forecast = await fetchJson(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
-          + `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum`
-          + `&timezone=Australia%2FSydney&forecast_days=1`,
-        ) as {
-          daily?: {
-            weather_code?: number[];
-            temperature_2m_max?: number[];
-            temperature_2m_min?: number[];
-            precipitation_sum?: number[];
-          };
-        };
-        const daily = forecast?.daily;
-        const code = daily?.weather_code?.[0];
-        const tmax = daily?.temperature_2m_max?.[0];
-        const tmin = daily?.temperature_2m_min?.[0];
-        const precip = daily?.precipitation_sum?.[0];
-        if (code === undefined || tmax === undefined || tmin === undefined || precip === undefined) {
-          throw new Error(`Open-Meteo returned no daily forecast for "${label}"`);
+          `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}`,
+        ) as { properties?: { timeseries?: MetNoTimeseriesEntry[] } };
+
+        const series = forecast?.properties?.timeseries ?? [];
+        if (series.length === 0) {
+          throw new Error(`met.no returned no timeseries for "${label}"`);
         }
-        const summary = WMO_CODES[code] ?? `code ${code}`;
+        // Roll up today's Sydney-local hours: min/max instant.air_temperature,
+        // sum of next_1_hours.details.precipitation_amount. Symbol comes from
+        // the first entry that has a next_6_hours summary today.
+        const today = sydneyDate(series[0].time);
+        const todaysEntries = series.filter((e) => sydneyDate(e.time) === today);
+        if (todaysEntries.length === 0) {
+          throw new Error(`met.no returned no entries for today (${today}) at "${label}"`);
+        }
+        const temps = todaysEntries
+          .map((e) => e.data.instant.details.air_temperature)
+          .filter((t): t is number => typeof t === "number");
+        const precip = todaysEntries
+          .map((e) => e.data.next_1_hours?.details?.precipitation_amount ?? 0)
+          .reduce((a, b) => a + b, 0);
+        const symbolCode =
+          todaysEntries.find((e) => e.data.next_6_hours?.summary?.symbol_code)?.data.next_6_hours
+            ?.summary?.symbol_code
+          ?? todaysEntries[0].data.next_1_hours?.summary?.symbol_code
+          ?? "unknown";
+        if (temps.length === 0) {
+          throw new Error(`met.no returned no temperature readings for today at "${label}"`);
+        }
+        const tmin = Math.min(...temps);
+        const tmax = Math.max(...temps);
+        const summary = summariseSymbol(symbolCode);
         const data = {
           location: label,
           summary,
-          tempMinC: tmin,
-          tempMaxC: tmax,
-          precipitationMm: precip,
+          tempMinC: Number(tmin.toFixed(1)),
+          tempMaxC: Number(tmax.toFixed(1)),
+          precipitationMm: Number(precip.toFixed(1)),
         };
         return {
           structuredContent: data,
           content: [{
             type: "text",
-            text: `${label}: ${summary}, ${tmin}–${tmax}°C, ${precip}mm precipitation.`,
+            text: `${label}: ${summary}, ${data.tempMinC}–${data.tempMaxC}°C, ${data.precipitationMm}mm precipitation.`,
           }],
         };
       },
