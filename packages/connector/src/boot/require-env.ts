@@ -4,12 +4,18 @@
 // boot-fail-fix-reboot-repeat across three different scattered errors.
 //
 // Required env vars at boot:
-//   * CONNECTOR_CONFIG     — path to connector.yaml (the boot anchor)
+//   * CONNECTOR_CONFIG     — path to connector.yaml (defaults to ./connector.yaml)
 //   * CONTROLLER_URL       — interpolated into yaml; absent → yaml load throws
 //   * CONNECTOR_NAME       — interpolated into yaml; absent → yaml load throws
 //   * Auth posture (one of):
 //       - TUNNEL_AUTH_TOKEN   (static-bearer)
 //       - OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL  (OAuth2)
+//
+// CONNECTOR_CONFIG defaults to `./connector.yaml` (resolved from CWD). Same
+// with `.env`: `import "dotenv/config"` at the entrypoint reads from CWD. So a
+// customer running `npx mcp-connector start` from their project directory
+// picks up `.env` + `connector.yaml` next to their `package.json` with no
+// flags. Override CONNECTOR_CONFIG only when the yaml lives elsewhere.
 //
 // The auth posture check is the interesting one. We surface it as an
 // "incomplete posture" rather than three separate "X is required" lines so
@@ -29,31 +35,32 @@ interface MissingEnvFinding {
 }
 
 export function requireEnv(env: NodeJS.ProcessEnv = process.env): void {
-  const findings: MissingEnvFinding[] = [];
-
-  // 1. Boot anchor — without this, we can't even load yaml.
+  // Apply the CONNECTOR_CONFIG default before any downstream code reads it.
+  // Mutating process.env here means every subsequent `envOptional("CONNECTOR_CONFIG")`
+  // sees the default; skipping this and adding fallback logic at each call
+  // site would fan the default across the codebase.
   if (!envOptional("CONNECTOR_CONFIG", env)) {
-    findings.push({
-      message: "  CONNECTOR_CONFIG is required (path to connector.yaml). Set in packages/connector/.env or pass --config <path>.",
-    });
+    env.CONNECTOR_CONFIG = "./connector.yaml";
   }
 
-  // 2. YAML interpolation inputs. Required because connector.yaml.example
-  // uses ${CONTROLLER_URL} and ${CONNECTOR_NAME} with no defaults — the
+  const findings: MissingEnvFinding[] = [];
+
+  // YAML interpolation inputs. Required because connector.yaml.example uses
+  // ${CONTROLLER_URL} and ${CONNECTOR_NAME} with no defaults — the
   // interpolator would throw a less actionable error than a single
   // consolidated preflight.
   if (!envOptional("CONTROLLER_URL", env)) {
     findings.push({
-      message: "  CONTROLLER_URL is required (HTTPS root of the controller, e.g. https://controller.example.com). Set in packages/connector/.env.",
+      message: "  CONTROLLER_URL is required (HTTPS root of the controller, e.g. https://controller.example.com). Set in .env.",
     });
   }
   if (!envOptional("CONNECTOR_NAME", env)) {
     findings.push({
-      message: "  CONNECTOR_NAME is required (must match the controller-side Tunnel Security row name, case-sensitive). Set in packages/connector/.env.",
+      message: "  CONNECTOR_NAME is required (must match the controller-side Tunnel Security row name, case-sensitive). Set in .env.",
     });
   }
 
-  // 3. Auth posture. Exactly one of:
+  // Auth posture. Exactly one of:
   //   - TUNNEL_AUTH_TOKEN
   //   - OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL
   // OAUTH_CLIENT_ID presence is the trigger — if it's set, the other two
@@ -71,13 +78,13 @@ export function requireEnv(env: NodeJS.ProcessEnv = process.env): void {
     if (!oauthTokenUrl) missingOauth.push("OAUTH_TOKEN_URL");
     if (missingOauth.length > 0) {
       findings.push({
-        message: `  Auth posture incomplete: OAUTH_CLIENT_ID is set, so ${missingOauth.join(" and ")} ${missingOauth.length === 1 ? "is" : "are"} also required. See packages/connector/.env.example for the OAuth2 posture.`,
+        message: `  Auth posture incomplete: OAUTH_CLIENT_ID is set, so ${missingOauth.join(" and ")} ${missingOauth.length === 1 ? "is" : "are"} also required. See .env.example for the OAuth2 posture.`,
       });
     }
   } else if (!tunnelAuthToken) {
     // Neither posture started — report both options so the admin can pick.
     findings.push({
-      message: "  Auth posture missing: set either TUNNEL_AUTH_TOKEN (static-bearer posture) OR OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL (OAuth2 posture). See packages/connector/.env.example.",
+      message: "  Auth posture missing: set either TUNNEL_AUTH_TOKEN (static-bearer posture) OR OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL (OAuth2 posture). See .env.example.",
     });
   }
 
@@ -88,7 +95,7 @@ export function requireEnv(env: NodeJS.ProcessEnv = process.env): void {
     "",
     ...findings.map((finding) => finding.message),
     "",
-    "See packages/connector/.env.example for the full template.",
+    "See .env.example (bundled with the package) for the full template, or run 'mcp-connector init' to scaffold a fresh .env in the current directory.",
   ];
   throw new Error(lines.join("\n"));
 }

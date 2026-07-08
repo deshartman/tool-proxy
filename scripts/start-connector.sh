@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Boots a single connector. The connector itself spawns Type 1 (customer-
 # authored) MCP children via tsx and dials Type 2 (external) MCP servers as
-# declared in packages/connector/connector.yaml. There's no per-pairing
-# loop any more.
+# declared in ./connector.yaml (at the repo root — mirrors the customer's
+# post-`npm i` layout).
 #
-# To add an MCP, edit packages/connector/connector.yaml — see the example
-# file for the two patterns (Type 1 / Type 2).
+# To add an MCP, edit ./connector.yaml — see packages/connector/connector.yaml.example
+# for the two patterns (Type 1 / Type 2).
 
 set -euo pipefail
 
@@ -32,8 +32,12 @@ sleep 1
 
 CONNECTOR_DIR="$ROOT/packages/connector"
 CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
-ENV_FILE="$CONNECTOR_DIR/.env"
-YAML_FILE="$CONNECTOR_DIR/connector.yaml"
+# Live config lives at the repo root — mirrors the customer's post-`npm i`
+# layout where `.env` and `connector.yaml` sit next to `node_modules/`, not
+# inside it. The *.example templates ship inside packages/connector/ and are
+# the source of truth `init` copies from.
+ENV_FILE="$ROOT/.env"
+YAML_FILE="$ROOT/connector.yaml"
 MOCK_DATA_FILE="$ROOT/mock/customers/data.ts"
 
 # Rebuild if dist/ is missing OR stale relative to source. Without this, a
@@ -66,11 +70,11 @@ if [ "$needs_build" = "1" ]; then
   (cd "$CONNECTOR_DIR" && npm run build)
 fi
 if [ ! -f "$ENV_FILE" ]; then
-  echo "[start-connector] no $ENV_FILE — copy $ENV_FILE.example and edit" >&2
+  echo "[start-connector] no $ENV_FILE — copy $CONNECTOR_DIR/.env.example to $ENV_FILE and edit" >&2
   exit 1
 fi
 if [ ! -f "$YAML_FILE" ]; then
-  echo "[start-connector] no $YAML_FILE — copy $YAML_FILE.example and edit" >&2
+  echo "[start-connector] no $YAML_FILE — copy $CONNECTOR_DIR/connector.yaml.example to $YAML_FILE and edit" >&2
   exit 1
 fi
 if [ ! -f "$MOCK_DATA_FILE" ]; then

@@ -20,7 +20,8 @@
 #     in the entry's `dir:`. No code, no `pip install`. Bundle source
 #     lives in the sibling repo `mcp-shim-bundled/`.
 #
-# Vars like ${CONTROLLER_URL} are interpolated from packages/connector/.env.
+# Vars like ${CONTROLLER_URL} are interpolated from .env (in the same
+# directory as this yaml — loaded by dotenv/config from CWD at startup).
 # The connector identifies itself by `name` on first connect; the controller
 # mints a registrationToken in response which the connector persists in
 # .connector-state.json (gitignored) for subsequent reconnects.
@@ -69,7 +70,7 @@ mcp_servers:
   # the bundle pinned (see step 3 of LLAMA-INDEX.md).
   # - name: enterprise_knowledge
   #   bundled: enterprise-knowledge
-  #   dir: ../../mcp/bundled/enterprise-knowledge
+  #   dir: ./mcp/bundled/enterprise-knowledge
   #   timeout_ms: 600000   # ingest is slow at save time; runtime queries are fast
 
 policy:

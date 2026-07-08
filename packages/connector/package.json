@@ -14,6 +14,13 @@
       "default": "./dist/sdk/index.js"
     }
   },
+  "files": [
+    "dist",
+    "public",
+    ".env.example",
+    "connector.yaml.example",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -b && node scripts/postbuild.mjs",
     "test": "vitest run --root ../.. --passWithNoTests",

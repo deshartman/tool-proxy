@@ -1,5 +1,6 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, relative, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -86,16 +87,64 @@ then writes the YAML.
     const yamlText = renderYaml(controllerUrl, name, servers, dirname(outputPath));
     writeFileSync(outputPath, yamlText, "utf8");
 
+    // Scaffold .env next to the yaml, copying the shipped .env.example (so a
+    // customer running `npx mcp-connector init` gets a real template to edit
+    // without having to hunt inside node_modules/). Skip if .env already
+    // exists — we don't overwrite the customer's edits.
+    const envPath = resolve(dirname(outputPath), ".env");
+    const envCreated = scaffoldEnv(envPath);
+
     console.log(`\nWrote ${outputPath}`);
+    if (envCreated) console.log(`Wrote ${envPath} (from bundled .env.example)`);
+    else console.log(`Skipped ${envPath} (already exists — not overwritten)`);
     console.log(`\nNext steps:`);
-    console.log(`  1. In your .env (next to the yaml), set:`);
+    console.log(`  1. Edit ${envPath} and set at least:`);
     console.log(`       CONTROLLER_URL=${controllerUrl}`);
     console.log(`       TUNNEL_AUTH_TOKEN=${randomBytes(32).toString("base64url")}`);
-    console.log(`  2. For each Type 1 entry, add tools/*.ts + server.ts under its dir.`);
-    console.log(`  3. Start: node packages/connector/dist/index.js start --config ${flags.output}`);
+    console.log(`  2. For each Type 1 entry, add tools/*.ts under its dir.`);
+    const startCmd = flags.output === "connector.yaml"
+      ? "mcp-connector start"
+      : `mcp-connector start --config ${flags.output}`;
+    console.log(`  3. Start: ${startCmd}`);
   } finally {
     rl.close();
   }
+}
+
+// Resolve the shipped .env.example. Two locations, tried in order:
+//   1. `../.env.example` (sibling of `dist/`) — the ship location. Where
+//      `packages/connector/.env.example` sits after postbuild, and where
+//      `node_modules/@mcp-shim/connector/.env.example` sits post-publish.
+//   2. `../../../.env.example` (repo root) — the source-of-truth. Dev
+//      pre-postbuild only; a customer would never hit this because their
+//      package tree has no such ancestor.
+// The fallback exists so tests can run without a preceding `npm run build`.
+export function findShippedEnvExample(
+  moduleUrl: string = import.meta.url
+): string | null {
+  const here = fileURLToPath(moduleUrl);
+  const shipLocation = resolve(dirname(here), "..", ".env.example");
+  if (existsSync(shipLocation)) return shipLocation;
+  const sourceLocation = resolve(dirname(here), "..", "..", "..", ".env.example");
+  if (existsSync(sourceLocation)) return sourceLocation;
+  return null;
+}
+
+export function scaffoldEnv(
+  destPath: string,
+  moduleUrl: string = import.meta.url
+): boolean {
+  if (existsSync(destPath)) return false;
+  const src = findShippedEnvExample(moduleUrl);
+  if (!src) {
+    console.warn(
+      "  (warning: could not locate bundled .env.example — skipped scaffolding .env)"
+    );
+    return false;
+  }
+  const contents = readFileSync(src, "utf8");
+  writeFileSync(destPath, contents, "utf8");
+  return true;
 }
 
 async function ask(rl: ReturnType<typeof createInterface>, label: string, fallback: string): Promise<string> {

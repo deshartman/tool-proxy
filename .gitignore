@@ -15,7 +15,9 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
-# Env files. Never commit; templates are *.env.example.
+# Env files. Never commit; templates are *.env.example (source-of-truth at
+# the repo root; postbuild.mjs copies them into packages/connector/ so they
+# ship in the npm tarball).
 .env
 *.env
 !.env.example
@@ -24,10 +26,19 @@ __pycache__/
 .DS_Store
 
 # Connector live config — customer-authored copy of connector.yaml.example.
-# Lives at packages/connector/connector.yaml. Gitignored; only the *.example
-# template ships.
+# Lives at the repo root (dev) or the customer's project root (post `npm i`);
+# resolved from CWD by the connector. Gitignored; only the *.example template
+# ships.
 **/connector.yaml
 !**/connector.yaml.example
+
+# The packages/connector/ copies of the templates are BUILD ARTIFACTS
+# written by scripts/postbuild.mjs — the tracked source lives at the repo
+# root. These rules must come AFTER the un-ignore lines above (git respects
+# the last matching rule), otherwise the templates would be tracked in two
+# places and drift.
+packages/connector/.env.example
+packages/connector/connector.yaml.example
 
 # EK bundle's declarative source list — customer-authored copy of
 # sources.yaml.example. Lives at mcp/bundled/enterprise-knowledge/sources.yaml.

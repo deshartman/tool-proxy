@@ -64,7 +64,7 @@ scripts/
   build-image.sh              builds the multi-arch OCI image
 ```
 
-`packages/connector/connector.yaml` is the **single** source of truth: one entry per MCP. There is no per-folder `connector.yaml` any more. Per-folder `.env` files under `mcp/<type>/<name>/` carry only that MCP's own credentials and are loaded into that child's process — they don't leak across MCPs.
+`connector.yaml` (at the repo root) is the **single** source of truth: one entry per MCP. There is no per-folder `connector.yaml` any more. Per-folder `.env` files under `mcp/<type>/<name>/` carry only that MCP's own credentials and are loaded into that child's process — they don't leak across MCPs.
 
 ## Quick start (development)
 
@@ -82,10 +82,13 @@ Click Save. The controller shows the minted credentials once — copy.
 npm install
 npm run build
 
-# Connector-level config: one yaml, one .env.
-cp packages/connector/connector.yaml.example packages/connector/connector.yaml
-cp packages/connector/.env.example packages/connector/.env
-# edit packages/connector/.env. Always:
+# Connector-level config lives at the repo root — same shape a customer
+# gets post `npm i @mcp-shim/connector`. Templates live here too as the
+# tracked source-of-truth; postbuild.mjs copies them into
+# packages/connector/ so they ship in the npm tarball.
+cp connector.yaml.example connector.yaml
+cp .env.example .env
+# edit .env. Always:
 #   CONTROLLER_URL=https://your-controller.example.com
 #   CONNECTOR_NAME=<exact Name from the Tunnel Security row>
 # then EITHER (Twilio Auth Token / API Key row):
@@ -98,7 +101,7 @@ cp packages/connector/.env.example packages/connector/.env
 ./scripts/start-connector.sh
 ```
 
-That's it — the connector spawns each Type 1 child via `tsx` (no build), dials each Type 2 entry, and surfaces them all in the inspector at <http://localhost:9090/>. The WS upgrade carries `Authorization: Bearer <bearer>` plus `X-Connector-Name: <CONNECTOR_NAME>`; the controller looks up the row by name and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). On the **first** run, after the WS is up, the connector also registers a `connectors` row using `tunnel.name` and persists the controller-issued `registrationToken` to `packages/connector/.connector-state.json`. Subsequent restarts reconnect by both the handshake credential and the registration token.
+That's it — the connector spawns each Type 1 child via `tsx` (no build), dials each Type 2 entry, and surfaces them all in the inspector at <http://localhost:9090/>. The WS upgrade carries `Authorization: Bearer <bearer>` plus `X-Connector-Name: <CONNECTOR_NAME>`; the controller looks up the row by name and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). On the **first** run, after the WS is up, the connector also registers a `connectors` row using `tunnel.name` and persists the controller-issued `registrationToken` to `./.connector-state.json`. Subsequent restarts reconnect by both the handshake credential and the registration token.
 
 Rotate the bearer via **Rotate Secret** on the row's detail page; the previous secret stays valid for 24h so connectors can roll without coordinated downtime.
 
@@ -110,7 +113,7 @@ Rotate the bearer via **Rotate Secret** on the row's detail page; the previous s
 mkdir -p mcp/local/my-mcp/tools
 # write mcp/local/my-mcp/tools/<tool>.ts files (Tool interface from @mcp-shim/connector/sdk)
 # write mcp/local/my-mcp/server.ts: createMcpHttpServer({name, tools})
-# add an entry to packages/connector/connector.yaml:
+# add an entry to connector.yaml (at the repo root):
 #   - name: my-mcp
 #     transport: http
 #     dir: ../../mcp/local/my-mcp

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { defaultStatePath, readState, writeState, clearRegistrationToken } from "../../src/state.js";
 
@@ -37,26 +37,23 @@ describe("defaultStatePath() — CONNECTOR_STATE_PATH dispatch", () => {
 
     const path = defaultStatePath();
 
-    // Default is "packages/connector/.connector-state.json" — resolved
-    // against process.cwd() into an absolute path. The exact string depends
-    // on where vitest is run from; assert the shape rather than the
-    // literal.
+    // Default is ".connector-state.json" resolved against process.cwd() —
+    // matches the customer's post-`npm i` layout where the state file sits
+    // next to their `.env` and `connector.yaml`, not inside node_modules/.
     expect(isAbsolute(path)).toBe(true);
-    expect(path).toContain(`packages${sep}connector${sep}.connector-state.json`);
+    expect(path).toBe(resolve(".connector-state.json"));
   });
 
   it("an empty-string CONNECTOR_STATE_PATH falls back to the default (treats blank-line .env as 'unset')", () => {
     // The connector-wide rule (env.ts): empty-string env var == not set.
     // An admin who writes `CONNECTOR_STATE_PATH=` in .env gets the
-    // documented default, not a silent state-file relocation to cwd.
-    // Pre-fix this case asserted the broken behavior (resolve("") == cwd);
-    // post-fix it affirms the corrected behavior.
+    // documented default, not a silent state-file relocation to cwd's root.
     vi.stubEnv("CONNECTOR_STATE_PATH", "");
 
     const path = defaultStatePath();
 
     expect(isAbsolute(path)).toBe(true);
-    expect(path).toContain(`packages${sep}connector${sep}.connector-state.json`);
+    expect(path).toBe(resolve(".connector-state.json"));
   });
 
   it("an absolute CONNECTOR_STATE_PATH is used verbatim", () => {
