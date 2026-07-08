@@ -7,9 +7,10 @@ import { envString } from "./env.js";
 // fields (rotated tokens, last-known connectorId) can be added here without
 // changing the customer-visible config surface.
 //
-// The file lives next to packages/connector/.env so dev workflows that source
-// .env also see the state directory. Gitignored. Customer never edits it
-// directly — clearing it forces a re-mint.
+// The file lives in CWD — next to the customer's `.env` and `connector.yaml`.
+// Gitignored. Customer never edits it directly — clearing it forces a re-mint.
+// Override via CONNECTOR_STATE_PATH if you need a different location (e.g. a
+// mounted volume in a container).
 
 export interface ConnectorState {
   /** Persisted token from the controller's register-ack. Used as the identity
@@ -17,7 +18,7 @@ export interface ConnectorState {
   registrationToken?: string;
 }
 
-const DEFAULT_PATH = "packages/connector/.connector-state.json";
+const DEFAULT_PATH = ".connector-state.json";
 
 export function defaultStatePath(): string {
   return resolve(envString("CONNECTOR_STATE_PATH", DEFAULT_PATH));

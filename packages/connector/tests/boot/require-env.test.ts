@@ -36,13 +36,6 @@ describe("requireEnv — happy paths", () => {
 });
 
 describe("requireEnv — individual missing keys", () => {
-  it("throws naming CONNECTOR_CONFIG when missing", () => {
-    const env = { ...ALL_REQUIRED };
-    delete env.CONNECTOR_CONFIG;
-
-    expect(() => requireEnv(env)).toThrow(/CONNECTOR_CONFIG is required/);
-  });
-
   it("throws naming CONTROLLER_URL when missing", () => {
     const env = { ...ALL_REQUIRED };
     delete env.CONTROLLER_URL;
@@ -60,14 +53,38 @@ describe("requireEnv — individual missing keys", () => {
     // enough that the error message names it.
     expect(() => requireEnv(env)).toThrow(/case-sensitive/);
   });
+});
 
-  it("treats empty-string CONNECTOR_CONFIG as missing (admin's blank-line .env)", () => {
-    // The connector-wide rule: "" == not set. requireEnv must follow it
-    // so a blank-line override doesn't slip past the preflight and crash
-    // later in yaml load.
+describe("requireEnv — CONNECTOR_CONFIG default", () => {
+  // The customer runs `npx mcp-connector start` from their project directory
+  // where `.env` and `connector.yaml` live at the top level. requireEnv fills
+  // in the ./connector.yaml default so they don't need to remember to pass
+  // --config on every invocation.
+
+  it("sets CONNECTOR_CONFIG to ./connector.yaml when unset", () => {
+    const env = { ...ALL_REQUIRED };
+    delete env.CONNECTOR_CONFIG;
+
+    requireEnv(env);
+
+    expect(env.CONNECTOR_CONFIG).toBe("./connector.yaml");
+  });
+
+  it("sets CONNECTOR_CONFIG to ./connector.yaml when empty-string (blank-line .env)", () => {
+    // Empty-string == unset per envOptional's connector-wide semantics.
     const env = { ...ALL_REQUIRED, CONNECTOR_CONFIG: "" };
 
-    expect(() => requireEnv(env)).toThrow(/CONNECTOR_CONFIG is required/);
+    requireEnv(env);
+
+    expect(env.CONNECTOR_CONFIG).toBe("./connector.yaml");
+  });
+
+  it("leaves an explicit CONNECTOR_CONFIG value untouched", () => {
+    const env = { ...ALL_REQUIRED, CONNECTOR_CONFIG: "/custom/path/config.yaml" };
+
+    requireEnv(env);
+
+    expect(env.CONNECTOR_CONFIG).toBe("/custom/path/config.yaml");
   });
 });
 
@@ -140,7 +157,10 @@ describe("requireEnv — multiple missing keys reported together", () => {
 
     // Single throw, every problem visible. This is the whole point of
     // having a preflight — admin fixes one .env, not three.
-    expect(error.message).toContain("CONNECTOR_CONFIG");
+    // CONNECTOR_CONFIG isn't listed because it defaults to ./connector.yaml;
+    // if the file doesn't exist, loadConfig throws a separate error naming
+    // the resolved path — that's more actionable than a "missing" message
+    // in the preflight.
     expect(error.message).toContain("CONTROLLER_URL");
     expect(error.message).toContain("CONNECTOR_NAME");
     expect(error.message).toContain("Auth posture missing");
@@ -154,12 +174,15 @@ describe("requireEnv — multiple missing keys reported together", () => {
     expect(error.message).toMatch(/^Connector boot failed: env config incomplete/);
   });
 
-  it("the consolidated error closes by pointing at .env.example", () => {
+  it("the consolidated error closes by pointing at .env.example and 'mcp-connector init'", () => {
     const env: NodeJS.ProcessEnv = {};
 
     const error = captureError(() => requireEnv(env));
 
-    expect(error.message).toMatch(/packages\/connector\/\.env\.example/);
+    // Customer-facing hint: name the shipped template, and offer the init
+    // subcommand as the "I don't have a template on disk" shortcut.
+    expect(error.message).toMatch(/\.env\.example/);
+    expect(error.message).toMatch(/mcp-connector init/);
   });
 });
 
