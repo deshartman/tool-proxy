@@ -7,29 +7,21 @@ requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Twilio" }]
 
-# Default deps assume the production lockdown shape: OpenAI embedder, no
-# unsanctioned outbound. Customers picking EK_EMBEDDER=local must
-# explicitly install the [local] extra below — keeps llama-index-embeddings
-# -huggingface (and its huggingface-hub / transformers / sentence-transformers
-# transitive deps) out of the venv when the deployment isn't going to use them.
+# Default deps: Ollama sidecar embedder. The model runs in a separate
+# container (see docker-compose.dev.yml); the bundle only needs the HTTP
+# adapter. No cloud API keys, no outbound embedding calls, no heavyweight
+# in-process ML deps.
 dependencies = [
   "mcp>=1.2.0",
   "pydantic>=2.7",
   "pyyaml>=6.0",
   "llama-index-core>=0.11,<0.13",
   "llama-index-vector-stores-postgres>=0.2",
-  "llama-index-embeddings-openai>=0.2",
+  "llama-index-embeddings-ollama>=0.2",
   "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]
-# Install with `uv pip install -e .[local]` (or `pip install customer-ek-mcp
-# [local]`) when EK_EMBEDDER=local. Required only for that path; OpenAI
-# deployments must NOT install this to keep huggingface.co out of the
-# bundle's reachable network surface.
-local = [
-  "llama-index-embeddings-huggingface>=0.3",
-]
 
 # Google Drive reader. Install with `uv pip install -e .[gdrive]` when
 # any sources.yaml entry points at a Drive folder. Same lockdown

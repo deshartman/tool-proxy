@@ -12,6 +12,10 @@ Boot-time auto-register: just before `stdio_server()` opens, we run
 EK_SOURCES_YAML is set) and calls `storage.register_source` for each
 entry. Per-source failures are persisted to ek_sources with
 status='failed' and surface to the Controller via sources_fetch.
+
+Boot-time warm-up: a background task pulls the Ollama embedding model so
+that first query isn't blocked on a ~1min download. Non-blocking; if the
+warm-up fails, the first real call will retry the pull.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from typing import Any
 
@@ -41,6 +46,75 @@ server: Server = Server(name="enterprise-knowledge", version=__version__)
 # know there are entries to register; stays alive for the lifetime of the
 # bundle process.
 _bootstrap_task: asyncio.Task[Any] | None = None
+
+# Same for the Ollama warm-up task — holds a reference so the event loop
+# doesn't GC it before completion.
+_warmup_task: asyncio.Task[Any] | None = None
+
+
+def _warmup_ollama() -> None:
+    """Fire-and-forget warm-up: ensure the Ollama embedding model is available.
+
+    Runs in a background thread so boot isn't blocked. First checks if the
+    model is already present (via /api/tags); if not, pulls it. Subsequent
+    boots are hot-cache hits with no network traffic.
+
+    Corporate/TLS-inspection environments: Pre-populate the model cache on a
+    machine with internet access, then mount it at the sidecar's /root/.ollama.
+    The warm-up detects the cached model and skips the pull entirely.
+
+    Wire contract: POST /api/pull with stream=false makes Ollama hold
+    the connection open silently until the pull completes, then return
+    a single {"status":"success"} body. Matches the controller-side
+    warmUpOllamaModel() shape (AgenticProcedure feat/embeddings-self-
+    hosted). Streaming mode was rejected because urllib's socket-read
+    timeout would fire on gaps between progress lines under slow
+    network conditions.
+    """
+    import urllib.request
+    import urllib.error
+
+    base_url = os.environ.get("OLLAMA_URL", "http://embedding:11434").rstrip("/")
+    model = os.environ.get("EK_OLLAMA_MODEL", "").strip() or "nomic-embed-text"
+
+    # Check if model already exists (handles corporate TLS-inspection envs
+    # where registry.ollama.ai is unreachable but cache is pre-populated)
+    try:
+        tags_url = f"{base_url}/api/tags"
+        req = urllib.request.Request(tags_url, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            tags_data = json.loads(resp.read().decode("utf-8"))
+            model_names = [m.get("name", "") for m in tags_data.get("models", [])]
+            # Model tags are "name:tag" (e.g., "nomic-embed-text:latest")
+            if any(m.startswith(f"{model}:") for m in model_names):
+                logger.info("ollama model %s already present, skipping warm-up", model)
+                return
+    except Exception:
+        # Tags check failed; proceed to pull attempt anyway
+        pass
+
+    # Model not found locally; attempt pull (this will fail in air-gap envs
+    # without pre-populated cache — logged as warning, not fatal)
+    url = f"{base_url}/api/pull"
+    payload = json.dumps({"model": model, "stream": False}).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        # 600s ceiling — a 274MB pull on a slow (~5 Mbps) link takes
+        # ~7 min; anything past that is almost certainly a wedged pull
+        # and the operator should investigate the sidecar directly.
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            resp.read()
+        logger.info("ollama warm-up completed for model=%s", model)
+    except urllib.error.HTTPError as e:
+        logger.warning("ollama warm-up HTTP error %s: %s", e.code, e.reason)
+    except Exception as e:
+        logger.warning("ollama warm-up failed: %s", e)
 
 
 def _register_tool_for(product: "products.Product") -> Tool:
@@ -156,6 +230,11 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
 
 async def _run() -> None:
+    # Start Ollama warm-up in background (fire-and-forget). Non-blocking;
+    # first query waits if this hasn't finished yet.
+    global _warmup_task
+    _warmup_task = asyncio.create_task(asyncio.to_thread(_warmup_ollama))
+
     # Validate sources.yaml synchronously — a malformed file or a missing
     # EK_SOURCES_YAML target should fail boot fast, before stdio_server()
     # opens, so the connector spawner readiness probe surfaces the error.

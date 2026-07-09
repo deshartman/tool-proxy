@@ -31,27 +31,17 @@ from dataclasses import dataclass
 from llama_index.core.embeddings import BaseEmbedding
 
 
-# ── Per-provider model defaults ───────────────────────────────────────
-# Used when EK_EMBED_MODEL is unset for the chosen provider.
-
-DEFAULT_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
-DEFAULT_OPENAI_MODEL = "text-embedding-3-small"
-
-# ── Per-(provider, model) embedding dimensions ────────────────────────
+# ── Per-(provider, model) embedding dimensions ─────────────────────────
 # pgvector tables are created with a fixed dim at register time, so we
-# need to know this number BEFORE the first embed call. We hardcode the
-# common cases rather than probing the model — probing for HF means
-# loading 130MB before knowing the dim, and probing for OpenAI means a
-# real API call at boot just to size a column.
+# need to know this number BEFORE the first embed call.
 #
-# Add new entries here when adding new model defaults above.
+# Add new entries here when adding support for new Ollama models.
 
 EMBED_DIMS: dict[tuple[str, str], int] = {
-    ("local", "BAAI/bge-small-en-v1.5"): 384,
-    ("openai", "text-embedding-3-small"): 1536,
-    ("openai", "text-embedding-3-large"): 3072,
-    ("openai", "text-embedding-ada-002"): 1536,
+    ("ollama", "nomic-embed-text"): 768,
 }
+
+DEFAULT_OLLAMA_MODEL = "nomic-embed-text"
 
 
 @dataclass(frozen=True)
@@ -71,88 +61,35 @@ def _embed_dim(provider: str, model: str) -> int:
         ) from exc
 
 
-def _load_local() -> LoadedEmbedder:
-    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+def _load_ollama() -> LoadedEmbedder:
+    from llama_index.embeddings.ollama import OllamaEmbedding
 
-    model_name = os.environ.get("EK_EMBED_MODEL", "").strip() or DEFAULT_LOCAL_MODEL
+    base_url = os.environ.get("OLLAMA_URL", "http://embedding:11434").rstrip("/")
+    model_name = os.environ.get("EK_OLLAMA_MODEL", "").strip() or DEFAULT_OLLAMA_MODEL
     return LoadedEmbedder(
-        model=HuggingFaceEmbedding(model_name=model_name),
-        signature=f"local:{model_name}",
-        embed_dim=_embed_dim("local", model_name),
-    )
-
-
-# Pinned OpenAI API endpoint. The openai SDK silently honors OPENAI_BASE_URL
-# (and OPENAI_API_BASE) in process env, which would let an attacker — or an
-# accidentally-misconfigured deployment — redirect every embedding call to
-# arbitrary host. We refuse to boot if the env tries to override it.
-OPENAI_API_BASE_PINNED = "https://api.openai.com/v1"
-
-# Env vars that, if any are set when EK_EMBEDDER=openai, indicate a likely
-# operator misconfiguration (two providers' creds left in the same .env).
-# We refuse to boot rather than silently honoring whichever one happens to
-# win the dispatch.
-_AZURE_ENV_VARS = (
-    "AZURE_OPENAI_API_KEY",
-    "AZURE_OPENAI_ENDPOINT",
-    "AZURE_OPENAI_API_VERSION",
-)
-
-
-def _load_openai() -> LoadedEmbedder:
-    from llama_index.embeddings.openai import OpenAIEmbedding
-
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError(
-            "EK_EMBEDDER=openai requires OPENAI_API_KEY. Set it in "
-            "mcp/bundled/enterprise-knowledge/.env (see .env.example)."
-        )
-
-    for var in ("OPENAI_BASE_URL", "OPENAI_API_BASE"):
-        override = os.environ.get(var, "").strip()
-        if override and override.rstrip("/") != OPENAI_API_BASE_PINNED.rstrip("/"):
-            raise RuntimeError(
-                f"EK_EMBEDDER=openai refuses to honor {var}={override!r}. "
-                f"This bundle pins egress to {OPENAI_API_BASE_PINNED}. "
-                f"Unset {var} in mcp/bundled/enterprise-knowledge/.env, "
-                f"or pick EK_EMBEDDER=azure_openai when it lands."
-            )
-
-    leaked = [v for v in _AZURE_ENV_VARS if os.environ.get(v, "").strip()]
-    if leaked:
-        raise RuntimeError(
-            f"EK_EMBEDDER=openai but Azure env vars are also set: {leaked}. "
-            f"Two providers' creds in one .env is almost always a "
-            f"misconfiguration. Pick one provider and remove the other "
-            f"block from mcp/bundled/enterprise-knowledge/.env."
-        )
-
-    model_name = os.environ.get("EK_EMBED_MODEL", "").strip() or DEFAULT_OPENAI_MODEL
-    return LoadedEmbedder(
-        model=OpenAIEmbedding(
-            model=model_name,
-            api_key=api_key,
-            api_base=OPENAI_API_BASE_PINNED,
-        ),
-        signature=f"openai:{model_name}",
-        embed_dim=_embed_dim("openai", model_name),
+        model=OllamaEmbedding(model_name=model_name, base_url=base_url),
+        signature=f"ollama:{model_name}",
+        embed_dim=_embed_dim("ollama", model_name),
     )
 
 
 def load_embedder() -> LoadedEmbedder:
-    provider = os.environ.get("EK_EMBEDDER", "local").strip().lower()
-    if provider == "local":
-        return _load_local()
-    if provider == "openai":
-        return _load_openai()
-    if provider == "azure_openai":
-        raise NotImplementedError(
-            "EK_EMBEDDER=azure_openai is documented in .env.example but not "
-            "yet wired. Use 'openai' or 'local' for now; Azure lands in a "
-            "follow-up."
+    """Return the configured embedder (Ollama sidecar only)."""
+    provider = os.environ.get("EK_EMBEDDER", "ollama").strip().lower()
+
+    if provider == "ollama":
+        return _load_ollama()
+
+    # Removed providers — provide clear migration hints
+    if provider in ("local", "openai", "azure_openai"):
+        raise RuntimeError(
+            f"EK_EMBEDDER={provider!r} was removed. The bundle now uses "
+            f"Ollama exclusively. Set EK_EMBEDDER=ollama and ensure the "
+            f"Ollama sidecar is running (see docs/deploy/embedding-sidecar.md). "
+            f"Re-index existing sources with sources_refresh(force=true)."
         )
+
     raise RuntimeError(
-        f"unknown EK_EMBEDDER={provider!r}. Supported: local, openai "
-        f"(azure_openai planned)."
+        f"unknown EK_EMBEDDER={provider!r}. Supported: ollama. "
+        f"(The 'local', 'openai', and 'azure_openai' providers were removed.)"
     )

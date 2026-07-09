@@ -65,6 +65,11 @@ graphify-out/*
 # the inspector through the Playwright browser MCP during verification).
 .playwright-mcp/
 
+# Ollama embedding sidecar model cache (dev only). Mount this as a volume
+# in docker-compose.dev.yml so the ~274MB model weights survive container
+# restarts. Production deployments pre-populate or use baked images.
+.ollama-cache/
+
 # Local-only test drop-in. Files live under mcp/local/crm/ when needed for
 # manual smoke-testing against the mock customer service; not tracked in
 # the repo (decision 2026-06-23 — kept as test scaffolding only).
