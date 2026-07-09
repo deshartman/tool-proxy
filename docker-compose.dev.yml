@@ -19,5 +19,19 @@ services:
       timeout: 3s
       retries: 10
 
+  embedding:
+    image: ollama/ollama:latest
+    container_name: mcp-shim-embedding
+    ports:
+      - '${EMBEDDING_HOST_PORT:-11434}:11434'
+    volumes:
+      - ${EMBEDDING_CACHE_DIR:-./.ollama-cache}:/root/.ollama
+    healthcheck:
+      test: ['CMD-SHELL', 'ollama list >/dev/null 2>&1 || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
 volumes:
   ek-postgres-data:

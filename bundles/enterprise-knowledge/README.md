@@ -6,7 +6,12 @@ This is a [Type 3 bundle](../../CLAUDE.md): customers consume it as a single yam
 
 ## Status
 
-Stub backend — the four MCP tools are wired and runnable end-to-end via stdio, but the backend is in-process placeholder data. Real LlamaIndex backend (VectorStoreIndex + pgvector or Chroma + a local embedder) lands in a follow-up.
+Production-ready. LlamaIndex backend with pgvector and Ollama embedding sidecar.
+
+## Prerequisites
+
+1. **Postgres with pgvector** — see `EK_PGVECTOR_DSN` below.
+2. **Ollama embedding sidecar** — required for embeddings. See [docs/deploy/embedding-sidecar.md](../../docs/deploy/embedding-sidecar.md) for deployment shapes (Docker Compose, Kubernetes, Fly.io).
 
 ## Tools
 
@@ -57,16 +62,24 @@ Step 2 ignores all configuration — the stub backend has nothing to configure. 
 
 | Variable | Purpose |
 |---|---|
-| `EK_VECTOR_STORE` | `pgvector` (default) or `chroma` |
-| `EK_PGVECTOR_DSN` | Postgres connection string when `EK_VECTOR_STORE=pgvector` |
-| `EK_CHROMA_PATH` | Filesystem path when `EK_VECTOR_STORE=chroma` |
-| `EK_EMBED_MODEL` | HuggingFace model id; defaults to `BAAI/bge-small-en-v1.5` (local) |
+| `EK_EMBEDDER` | Must be `ollama` (only supported embedder) |
+| `OLLAMA_URL` | Ollama sidecar URL; default `http://embedding:11434` |
+| `EK_PGVECTOR_DSN` | Postgres connection string for vector store |
+| `EK_OLLAMA_MODEL` | Model name; default `nomic-embed-text` (768-dim) |
 
-See [.env.example](.env.example) for the full list.
+See [.env.example](../../mcp/bundled/enterprise-knowledge/.env.example) for the full list.
+
+## Provisioning the Embedding Sidecar
+
+The bundle requires an Ollama sidecar for generating embeddings. See [docs/deploy/embedding-sidecar.md](../../docs/deploy/embedding-sidecar.md) for:
+- Docker Compose (single-host)
+- Kubernetes (Deployment + Service + PVC)
+- Fly.io (separate app with persistent volume)
+- Air-gap / offline deployments (pre-populated model)
 
 ## Provisioning Postgres (for the pgvector backend)
 
-When `EK_VECTOR_STORE=pgvector` (the production default), the bundle expects a Postgres 14+ instance reachable from the connector container with the `pgvector` extension installed.
+The bundle expects a Postgres 14+ instance reachable from the connector container with the `pgvector` extension installed.
 
 Sidecar Postgres in Docker Compose:
 
@@ -100,6 +113,19 @@ volumes:
 
 The `pgvector` extension is created automatically by the bundle on first run via the migrations in [`migrations/`](migrations/).
 
+## Migration from older embedders
+
+The `local` (HuggingFace on-host) and `openai` (OpenAI API) embedders were
+removed. If you have sources indexed with these providers, queries will fail
+with an embedder-mismatch error. Re-index affected sources:
+
+```json
+{ "source_id": "src_...", "force": true }
+```
+
+The `sources_refresh` tool drops the old table, creates a new one at 768-dim,
+and re-embeds all chunks.
+
 ## Vector store choice
 
 Default is **pgvector**. Reasons:
@@ -112,9 +138,14 @@ Alternative: **Chroma** (file-based, zero external service). Set `EK_VECTOR_STOR
 
 ## Dependencies
 
-Step 2 (this skeleton): `mcp`, `pydantic`. That's it.
+Core: `mcp`, `pydantic`.
 
-Step 4 adds: `llama-index-core`, `llama-index-vector-stores-postgres`, `llama-index-vector-stores-chroma`, `llama-index-embeddings-huggingface`, `llama-index-readers-web`, `psycopg`, `chromadb`. Held under the `[llamaindex]` extra in [pyproject.toml](pyproject.toml) for now so the stub stays installable without LlamaIndex weight.
+LlamaIndex stack: `llama-index-core`, `llama-index-vector-stores-postgres`,
+`llama-index-embeddings-ollama`, `psycopg`. The Ollama embedder communicates
+with the sidecar over HTTP — no cloud API keys, no in-process ML weight.
+
+Optional extras:
+- `[gdrive]` — Google Drive reader (`llama-index-readers-google`)
 
 ## GDrive OAuth user setup
 

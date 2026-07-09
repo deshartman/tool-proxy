@@ -231,8 +231,8 @@ def query(source_id: str, query_text: str, k: int) -> dict[str, Any]:
         raise RuntimeError(
             f"embedder mismatch on source {source_id!r}: indexed with "
             f"{meta.embedder_signature!r}, current embedder is "
-            f"{_embedder.signature!r}. Re-index with sources_refresh "
-            f"(force=true), or restore the original EK_EMBEDDER setting."
+            f"{_embedder.signature!r}. The 'local' and 'openai' embedders were "
+            f"removed; re-index with sources_refresh(force=true)."
         )
 
     vector_store = _vector_store(source_id)
@@ -326,9 +326,10 @@ def _refresh_locked(meta: "metadata.SourceMeta", *, force: bool) -> dict[str, An
     if meta.embedder_signature and meta.embedder_signature != _embedder.signature:
         raise RuntimeError(
             f"embedder mismatch on source {meta.source_id!r}: indexed with "
-            f"{meta.embedder_signature!r}, current embedder is "
-            f"{_embedder.signature!r}. Re-run sources_refresh with "
-            f"force=true to re-index under the current embedder."
+            f"{meta.embedder_signature!r} (dim={meta.embed_dim}), current embedder is "
+            f"{_embedder.signature!r} (dim={_embedder.embed_dim}). "
+            f"The 'local' and 'openai' embedders were removed; re-index with "
+            f"sources_refresh(force=true)."
         )
 
     documents, _ = readers.pick_reader(meta.url, kind=meta.kind)
