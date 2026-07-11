@@ -772,6 +772,20 @@ async function bootFromEnv(): Promise<void> {
 
 async function bootFromDb(): Promise<void> {
   requireEnv();
+
+  // WARN once for any legacy per-controller env var still present. These
+  // belonged to `env` mode; under `db` mode they're silently ignored, which
+  // makes a "why isn't my rotated bearer taking effect?" support ticket
+  // very easy to misread. Naming each stray var in the log is the cheap
+  // signal that steers the operator to the inspector UI. Only fires in
+  // `db` mode — `bootFromEnv` REQUIRES these vars, so warning there would
+  // be nonsense.
+  for (const name of ["CONTROLLER_URL", "CONNECTOR_NAME", "TUNNEL_AUTH_TOKEN", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET", "OAUTH_TOKEN_URL"]) {
+    if (envOptional(name)) {
+      log.warn(`legacy per-controller env var '${name}' present but ignored (CONNECTOR_CREDS_SOURCE=db); remove from .env`);
+    }
+  }
+
   await initSodium();
   const masterKey = resolveMasterKey();
   const store = await ConfigStore.open(masterKey);
