@@ -102,6 +102,25 @@ cp .env.example .env
 ./scripts/start-connector.sh
 ```
 
+### Migrating from env mode
+
+If you previously ran the connector in `env` mode, you have a `.connector-state.json` on disk carrying the `registrationToken` the controller minted for your `mcp-tunnel` connectors row. Under `db` mode `bootFromDb` doesn't read that file (D11 says delete it after the first successful register-ack, not import it) — so the first register frame under `db` mode carries no token, the controller sees "you already have a connector called `<name>`" and rejects with `code: "organisation_has_connector"`. The connector suppresses auto-reconnect and you're stuck.
+
+Recovery is a one-shot seed of the legacy token into the DB row:
+
+```bash
+# From the repo root, with .env loaded (POSTGRES_URL + CONNECTOR_KEY_FILE):
+node scripts/migrate-registration-token.mjs
+```
+
+The script:
+1. Reads `.connector-state.json` from CWD.
+2. Refuses if the DB row already has a sealed token (nothing to migrate).
+3. Otherwise seals the token with your master key and writes it into `controllers.registration_token_ct`.
+4. Prints a hint to click **Reconnect** in the inspector.
+
+On the next successful register-ack the connector deletes `.connector-state.json` automatically (per D11); the migration is one-shot. Alternatively, if you don't have `.connector-state.json` or don't care to preserve the existing controller row, delete the row in the controller UI (**Settings → MCP Tunnel → delete**) and click **Force re-registration** in the inspector — the controller mints a fresh row + token.
+
 ### Under the hood — WS handshake (both modes)
 
 The WS upgrade sends `Authorization: Bearer <bearer>` plus `X-Connector-Name: <name>`. The controller looks up the `tunnel_security_configs` row by `(tenant_id, name)` and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). Mismatch / missing header / unknown name → HTTP 401, no socket.
