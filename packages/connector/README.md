@@ -38,20 +38,58 @@ Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector sp
 
 ## Quick start (development)
 
-The WS handshake is gated by per-tunnel auth that the controller mints. Before booting, create a row in the controller UI: **Tools → Connectors → Tunnel Security → New Tunnel Security**. Pick a Name (this becomes `CONNECTOR_NAME` — case-sensitive). Pick a security type and paste credentials:
+The WS handshake is gated by per-tunnel auth that the controller mints. Before booting, create a row in the controller UI: **Tools → Connectors → Tunnel Security → New Tunnel Security**. Pick a Name (this becomes the connector's identity claim — case-sensitive). Pick a security type and paste credentials:
 
-- **Twilio Auth Token** or **Twilio API Key** → controller mints a long-lived `ts_<...>` bearer, shown once. Paste it into `TUNNEL_AUTH_TOKEN`.
-- **OAuth 2.0 (client_credentials)** → controller mints a `client_id` + `client_secret`. Paste them into `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET`, and set `OAUTH_TOKEN_URL` to the URL the UI shows. The connector mints a fresh 1h JWT against that endpoint on each reconnect (and refreshes <60s before expiry mid-session).
+- **Twilio Auth Token** or **Twilio API Key** → controller mints a long-lived `ts_<...>` bearer, shown once.
+- **OAuth 2.0 (client_credentials)** → controller mints a `client_id` + `client_secret`, plus the OAuth token URL. The connector mints a fresh 1h JWT against that endpoint on each reconnect (and refreshes <60s before expiry mid-session).
+
+### Configure tunnel creds — two modes
+
+The connector chooses how to load tunnel creds via **`CONNECTOR_CREDS_SOURCE`** (default `"db"`). The two modes are mutually exclusive at boot:
+
+#### Mode 1: `db` (default, recommended)
+
+Tunnel identity lives in a Postgres row, sealed at rest. The operator pastes creds via the inspector UI — no shell edits, no restart on rotation.
 
 ```bash
 # from repo root
 npm install
 npm run build
 
-# Connector-level config — one yaml lists every MCP, one .env carries the tunnel bearer.
-cp packages/connector/connector.yaml.example packages/connector/connector.yaml
-cp packages/connector/.env.example packages/connector/.env
+# Provision Postgres (or reuse an existing instance — the connector's
+# tables live in a dedicated `mcp_connector` schema, safe to coexist).
+docker run --rm -d --name pg -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16-alpine
+
+# Mint the 32-byte master key that seals row secrets at rest.
+mkdir -p .local && head -c 32 /dev/urandom > .local/master.key && chmod 0600 .local/master.key
+
+# Point the connector at Postgres + the key file.
+cp .env.example .env
 # edit .env:
+#   CONNECTOR_CREDS_SOURCE=db          (or omit — this is the default)
+#   POSTGRES_URL=postgres://postgres:dev@localhost:5432/postgres
+#   CONNECTOR_KEY_FILE=./.local/master.key
+
+# Copy the yaml example — mcp_servers + policy blocks only (the tunnel:
+# block is ignored under db mode; leave it in place harmless, or delete).
+cp connector.yaml.example connector.yaml
+
+./scripts/start-connector.sh
+```
+
+First boot: schema created, empty `controllers` table, connector logs `"no controller row; waiting for inspector configuration at http://127.0.0.1:9090/"` and holds. Open the inspector at http://127.0.0.1:9090/, click **Configure tunnel** in the top-left panel, paste the row Name + Controller URL + bearer/OAuth secret, hit **Save & connect**. The connector seals the values, upserts the row, dials the tunnel, waits for register-ack. Success → the readout flips to the configured state showing `SET` / `BOUND (LEN=N)` badges (never the values themselves). Failure → a red 409 banner inline in the modal; row is rolled back on INSERT so you can retry cleanly.
+
+Rotate later via **Edit** on the same panel — leave the password field blank to keep the existing sealed value; fill it to replace. **Force re-registration** clears the current `registrationToken` and redials (equivalent to `rm .connector-state.json` under env mode).
+
+#### Mode 2: `env` (legacy, being removed after `db` is proven)
+
+Tunnel identity in `.env` + `connector.yaml`'s `tunnel:` block + `.connector-state.json`. Preserved as a rollback lane; **new deployments should use `db` mode.**
+
+```bash
+cp connector.yaml.example connector.yaml
+cp .env.example .env
+# edit .env:
+#   CONNECTOR_CREDS_SOURCE=env
 #   CONTROLLER_URL=https://your-controller.example.com
 #   CONNECTOR_NAME=<exact Name from the Tunnel Security row>
 # then ONE of:
@@ -64,9 +102,11 @@ cp packages/connector/.env.example packages/connector/.env
 ./scripts/start-connector.sh
 ```
 
-The WS upgrade sends `Authorization: Bearer <bearer>` plus `X-Connector-Name: <CONNECTOR_NAME>`. The controller looks up the `tunnel_security_configs` row by `(tenant_id, name)` and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). Mismatch / missing header / unknown name → HTTP 401, no socket.
+### Under the hood — WS handshake (both modes)
 
-Once the WS is up, the connector also registers a `connectors` row using `tunnel.name` and persists the controller-issued `registrationToken` to `packages/connector/.connector-state.json`. Subsequent boots reconnect by token. Clear the state file to mint fresh — note that the Tunnel Security row is independent of the connectors row, so you don't need to recreate the bearer for that.
+The WS upgrade sends `Authorization: Bearer <bearer>` plus `X-Connector-Name: <name>`. The controller looks up the `tunnel_security_configs` row by `(tenant_id, name)` and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). Mismatch / missing header / unknown name → HTTP 401, no socket.
+
+Once the WS is up, the connector registers a `connectors` row using the configured name and persists the controller-issued `registrationToken`. Under `db` mode the token lives in `controllers.registration_token_ct` (sealed); under `env` mode it lives in `packages/connector/.connector-state.json`. Subsequent boots reconnect by token; clearing the store (or clicking **Force re-registration** in db mode) forces a fresh mint — note that the Tunnel Security row is independent of the connectors row, so you don't need to recreate the bearer for that.
 
 Rotate via the row's **Rotate Secret** (long-lived bearer) or by issuing a new client secret (OAuth2); previous credentials stay valid 24h so the connector can roll without coordinated downtime.
 
@@ -74,6 +114,7 @@ Rotate via the row's **Rotate Secret** (long-lived bearer) or by issuing a new c
 
 The connector serves an **inspector UI at http://localhost:9090/** showing:
 - live WS state (connecting / open / closed)
+- **Tunnel panel** (top of the left column, `db` mode only — under `env` mode the panel renders a legacy banner instead). Under `db` mode: empty state (no row) → "Configure tunnel" CTA + modal form; configured state → non-secret readout (Controller URL / Connector name / Environment / Auth mode / `SET` or `NOT SET` badge for the bearer or OAuth secret / `BOUND (LEN=N)` badge for the registration token / relative time since last connect) with **Edit** and **Force re-registration** buttons. Cleartext secrets never appear in any DOM path — the readout uses presence badges + length only.
 - the current `ToolManifest` and an "Available Tools" list (every discovered tool is Ready)
 - per-MCP **MCP Status** — process state, creds source (`controller (operator-entered)` / `controller (twilio-tunnel-row)` / `dir/.env` / `none`), restart count + last reason, tools count. Two per-MCP buttons: **Reload creds** (force a `creds-request` for that MCP and restart on response) and **Restart**.
 - every frame in/out (register, register-ack, rpc, heartbeat, manifest-delta, webhook-*, creds-*)
