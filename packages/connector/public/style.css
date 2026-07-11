@@ -713,3 +713,203 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* ─── Tunnel panel (Step 9b) ─────────────────────────────────────
+   The Tunnel panel lives at the top of #left-col in DB mode. It has
+   three sub-views mutually toggled via [hidden]: env-mode banner
+   (when the routes 404 under CONNECTOR_CREDS_SOURCE=env), empty
+   state ("Configure tunnel" CTA), and configured readout (dl of
+   non-secret fields + Edit / Force-reregister buttons).
+   No cleartext secrets are ever rendered — the readout uses "set"
+   / "not set" badges instead of the value. See §"Write-only for
+   secrets" in .claude/plans/ENV-TO-DB.md. */
+.tunnel-mode-badge {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: transparent;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tunnel-env-mode { padding: 0.5rem 0 0.25rem; font-size: 0.85rem; line-height: 1.5; }
+.tunnel-env-mode code {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--accent);
+}
+.tunnel-empty { padding: 0.5rem 0; }
+.tunnel-empty p { margin: 0 0 0.75rem; }
+.tunnel-primary-btn {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.9rem;
+  background: var(--accent);
+  color: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.tunnel-primary-btn:hover { filter: brightness(1.1); }
+.tunnel-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.tunnel-readout {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 0.75rem;
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.85rem;
+}
+.tunnel-readout dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  align-self: center;
+}
+.tunnel-readout dd { margin: 0; font-family: var(--mono); font-size: 0.85rem; word-break: break-all; }
+.tunnel-readout code { font-family: var(--mono); color: var(--accent); }
+.tunnel-badge {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid;
+}
+.tunnel-badge.set    { color: var(--green);  border-color: var(--green);  background: rgba(40, 200, 120, 0.08); }
+.tunnel-badge.unset  { color: var(--muted);  border-color: var(--border); background: transparent; }
+.tunnel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+.tunnel-actions button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tunnel-actions button:hover { border-color: var(--accent); }
+.tunnel-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.tunnel-action-status {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  border: 1px solid;
+}
+.tunnel-action-status.ok  { color: var(--green);  border-color: var(--green);  background: rgba(40, 200, 120, 0.08); }
+.tunnel-action-status.err { color: var(--red);    border-color: var(--red);    background: rgba(248, 81, 73, 0.08); }
+
+/* Modal ─────────────────────────────────────────────────────────
+   Full-viewport dim overlay with a centered panel. Clicking outside
+   the panel or the Cancel button closes it. Elements with
+   data-close="1" trigger the close (see JS handler). */
+.tunnel-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Explicit override — the `hidden` HTML attribute normally applies
+   display:none, but display:flex above wins the cascade. Same trick
+   applied to .tunnel-authmode-fields below and any element that sets
+   its own display value. */
+.tunnel-modal[hidden] { display: none; }
+.tunnel-authmode-fields[hidden] { display: none; }
+.tunnel-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+.tunnel-modal-panel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem 1.5rem;
+  min-width: 420px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  z-index: 101;
+}
+.tunnel-modal-panel h3 { margin: 0 0 1rem; font-size: 1rem; }
+.tunnel-modal-panel form { display: flex; flex-direction: column; gap: 0.75rem; }
+.tunnel-field { display: flex; flex-direction: column; gap: 0.2rem; }
+.tunnel-field > span {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tunnel-field input {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.55rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.tunnel-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tunnel-field small { font-size: 0.72rem; }
+.tunnel-authmode {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.tunnel-authmode legend {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0.35rem;
+}
+.tunnel-authmode label { font-size: 0.85rem; display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+.tunnel-authmode-fields { display: flex; flex-direction: column; gap: 0.6rem; }
+.tunnel-actions button[disabled] { opacity: 0.5; cursor: not-allowed; }
+.tunnel-form-error {
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--red);
+  border: 1px solid var(--red);
+  background: rgba(248, 81, 73, 0.08);
+}
+.tunnel-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+.tunnel-form-actions button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.9rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tunnel-form-actions button:hover { border-color: var(--accent); }

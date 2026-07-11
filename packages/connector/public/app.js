@@ -1549,4 +1549,308 @@ document.querySelectorAll('.collapsible').forEach((sec) => {
   });
 });
 
+// ─── Tunnel panel (Step 9b) ─────────────────────────────────────
+// Renders the top-of-left-col Tunnel panel that lets operators configure
+// / edit / force-reregister the controller tunnel from the inspector UI.
+// Backend: /internal/tunnel/* routes (wired only under CONNECTOR_CREDS_SOURCE=db).
+//
+// State is fetched with GET /internal/tunnel/config on init and re-fetched
+// after every successful mutation. A 404 on that route means the connector
+// is running under env mode — the panel renders a legacy banner instead
+// of the form.
+//
+// Never renders decrypted secrets — the readout uses presence badges
+// (set / not set), matching §"Write-only for secrets" in the plan.
+
+const elTunnelLoading    = document.getElementById('tunnel-loading');
+const elTunnelEnvMode    = document.getElementById('tunnel-env-mode');
+const elTunnelEmpty      = document.getElementById('tunnel-empty');
+const elTunnelConfigured = document.getElementById('tunnel-configured');
+const elTunnelModeBadge  = document.getElementById('tunnel-mode-badge');
+const elTunnelConfigureBtn = document.getElementById('tunnel-configure-btn');
+const elTunnelEditBtn      = document.getElementById('tunnel-edit-btn');
+const elTunnelForceBtn     = document.getElementById('tunnel-force-btn');
+const elTunnelActionStatus = document.getElementById('tunnel-action-status');
+const elTunnelRUrl       = document.getElementById('tunnel-r-url');
+const elTunnelRName      = document.getElementById('tunnel-r-name');
+const elTunnelREnv       = document.getElementById('tunnel-r-env');
+const elTunnelRMode      = document.getElementById('tunnel-r-mode');
+const elTunnelRBearerLabel = document.getElementById('tunnel-r-bearer-label');
+const elTunnelRBearer    = document.getElementById('tunnel-r-bearer');
+const elTunnelRReg       = document.getElementById('tunnel-r-reg');
+const elTunnelRConnected = document.getElementById('tunnel-r-connected');
+const elTunnelRDiscLabel = document.getElementById('tunnel-r-disc-label');
+const elTunnelRDisc      = document.getElementById('tunnel-r-disc');
+
+const elTunnelModal      = document.getElementById('tunnel-modal');
+const elTunnelModalTitle = document.getElementById('tunnel-modal-title');
+const elTunnelForm       = document.getElementById('tunnel-form');
+const elTunnelFormError  = document.getElementById('tunnel-form-error');
+const elTunnelFormSubmit = document.getElementById('tunnel-form-submit');
+const elTunnelStaticFields = document.getElementById('tunnel-static-fields');
+const elTunnelOauthFields  = document.getElementById('tunnel-oauth-fields');
+const elTunnelTokenHint    = document.getElementById('tunnel-token-hint');
+const elTunnelSecretHint   = document.getElementById('tunnel-secret-hint');
+
+// null → not fetched yet; false → env mode; null-configured → empty; object → row summary
+let tunnelState = { mode: 'loading', row: null };
+
+function showTunnelView(view) {
+  elTunnelLoading.hidden    = view !== 'loading';
+  elTunnelEnvMode.hidden    = view !== 'env-mode';
+  elTunnelEmpty.hidden      = view !== 'empty';
+  elTunnelConfigured.hidden = view !== 'configured';
+  elTunnelModeBadge.hidden  = view === 'loading';
+  if (view === 'env-mode') { elTunnelModeBadge.textContent = 'env mode'; }
+  else if (view === 'empty' || view === 'configured') { elTunnelModeBadge.textContent = 'db mode'; }
+}
+
+function setTunnelActionStatus(text, ok) {
+  if (!text) { elTunnelActionStatus.hidden = true; return; }
+  elTunnelActionStatus.hidden = false;
+  elTunnelActionStatus.textContent = text;
+  elTunnelActionStatus.className = 'tunnel-action-status ' + (ok ? 'ok' : 'err');
+}
+
+function relativeTime(iso) {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const secs = Math.max(0, Math.floor((now - then) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return new Date(iso).toLocaleString();
+}
+
+function renderTunnelConfigured(row) {
+  elTunnelRUrl.textContent = row.controllerUrl;
+  elTunnelRName.textContent = row.connectorName;
+  elTunnelREnv.textContent = row.environment || '—';
+  elTunnelRMode.textContent = row.authMode;
+
+  // Auth-mode-conditional badge label
+  if (row.authMode === 'static-bearer') {
+    elTunnelRBearerLabel.textContent = 'Bearer';
+    elTunnelRBearer.textContent = row.hasTunnelAuthToken ? 'set' : 'not set';
+    elTunnelRBearer.className = 'tunnel-badge ' + (row.hasTunnelAuthToken ? 'set' : 'unset');
+  } else {
+    elTunnelRBearerLabel.textContent = 'OAuth secret';
+    elTunnelRBearer.textContent = row.hasOauthClientSecret ? 'set' : 'not set';
+    elTunnelRBearer.className = 'tunnel-badge ' + (row.hasOauthClientSecret ? 'set' : 'unset');
+  }
+
+  if (row.hasRegistrationToken) {
+    elTunnelRReg.textContent = `bound (len=${row.registrationTokenLen ?? '?'})`;
+    elTunnelRReg.className = 'tunnel-badge set';
+  } else {
+    elTunnelRReg.textContent = 'not registered';
+    elTunnelRReg.className = 'tunnel-badge unset';
+  }
+
+  elTunnelRConnected.textContent = relativeTime(row.lastConnectedAt);
+
+  if (row.lastDisconnectReason) {
+    elTunnelRDiscLabel.hidden = false;
+    elTunnelRDisc.hidden = false;
+    elTunnelRDisc.textContent = row.lastDisconnectReason;
+  } else {
+    elTunnelRDiscLabel.hidden = true;
+    elTunnelRDisc.hidden = true;
+  }
+}
+
+async function fetchTunnelConfig() {
+  try {
+    const resp = await fetch('/internal/tunnel/config');
+    if (resp.status === 404) {
+      tunnelState = { mode: 'env', row: null };
+      showTunnelView('env-mode');
+      return;
+    }
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      tunnelState = { mode: 'error', row: null };
+      showTunnelView('empty');
+      setTunnelActionStatus(body.error || `HTTP ${resp.status}`, false);
+      return;
+    }
+    if (!body.configured) {
+      tunnelState = { mode: 'empty', row: null };
+      showTunnelView('empty');
+      return;
+    }
+    tunnelState = { mode: 'configured', row: body.row };
+    renderTunnelConfigured(body.row);
+    showTunnelView('configured');
+  } catch (err) {
+    tunnelState = { mode: 'error', row: null };
+    showTunnelView('empty');
+    setTunnelActionStatus(String(err.message || err), false);
+  }
+}
+
+// Modal open/close ────────────────────────────────────────────
+function openTunnelModal(mode /* 'configure' | 'edit' */) {
+  elTunnelModalTitle.textContent = mode === 'edit' ? 'Edit tunnel' : 'Configure tunnel';
+  elTunnelFormSubmit.textContent = mode === 'edit' ? 'Save & reconnect' : 'Save & connect';
+  elTunnelFormError.hidden = true;
+  elTunnelForm.reset();
+
+  const editing = mode === 'edit' && tunnelState.row;
+  if (editing) {
+    const r = tunnelState.row;
+    elTunnelForm.name.value = r.name;
+    elTunnelForm.controllerUrl.value = r.controllerUrl;
+    elTunnelForm.connectorName.value = r.connectorName;
+    elTunnelForm.environment.value = r.environment ?? '';
+    const modeRadio = elTunnelForm.querySelector(`input[name="authMode"][value="${r.authMode}"]`);
+    if (modeRadio) modeRadio.checked = true;
+    if (r.authMode === 'oauth2-cc') {
+      elTunnelForm.oauthClientId.value = r.oauthClientId ?? '';
+      elTunnelForm.oauthTokenUrl.value = r.oauthTokenUrl ?? '';
+    }
+    // Show "leave blank to keep existing" hints when a secret is already set
+    elTunnelTokenHint.hidden = !r.hasTunnelAuthToken;
+    elTunnelSecretHint.hidden = !r.hasOauthClientSecret;
+  } else {
+    elTunnelTokenHint.hidden = true;
+    elTunnelSecretHint.hidden = true;
+  }
+  applyAuthModeToggle();
+  elTunnelModal.hidden = false;
+  // Focus the first input for keyboard workflow
+  const first = elTunnelForm.querySelector('input[name="name"]');
+  if (first) setTimeout(() => first.focus(), 0);
+}
+
+function closeTunnelModal() {
+  elTunnelModal.hidden = true;
+  elTunnelForm.reset();
+  elTunnelFormError.hidden = true;
+}
+
+elTunnelModal.addEventListener('click', (e) => {
+  if (e.target?.dataset?.close === '1') closeTunnelModal();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !elTunnelModal.hidden) closeTunnelModal();
+});
+
+// Auth-mode radio toggles which fieldset is visible
+function applyAuthModeToggle() {
+  const mode = elTunnelForm.authMode.value;
+  elTunnelStaticFields.hidden = mode !== 'static-bearer';
+  elTunnelOauthFields.hidden  = mode !== 'oauth2-cc';
+}
+elTunnelForm.querySelectorAll('input[name="authMode"]').forEach((r) => {
+  r.addEventListener('change', applyAuthModeToggle);
+});
+
+// Buttons ─────────────────────────────────────────────────────
+elTunnelConfigureBtn?.addEventListener('click', () => openTunnelModal('configure'));
+elTunnelEditBtn?.addEventListener('click', () => openTunnelModal('edit'));
+elTunnelForceBtn?.addEventListener('click', () => void handleForceReregister());
+
+async function handleForceReregister() {
+  if (!confirm('Force re-registration? This clears the current registration token and redials the tunnel — the controller will mint a fresh one on next register-ack.')) return;
+  elTunnelForceBtn.disabled = true;
+  elTunnelEditBtn.disabled = true;
+  setTunnelActionStatus('re-registering…', true);
+  try {
+    const resp = await fetch('/internal/tunnel/force-reregister', { method: 'POST' });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      setTunnelActionStatus(body.error || `HTTP ${resp.status}`, false);
+    } else {
+      setTunnelActionStatus('re-registration triggered', true);
+      await fetchTunnelConfig();
+    }
+  } catch (err) {
+    setTunnelActionStatus(String(err.message || err), false);
+  } finally {
+    elTunnelForceBtn.disabled = false;
+    elTunnelEditBtn.disabled = false;
+  }
+}
+
+// Form submit ─────────────────────────────────────────────────
+elTunnelForm.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  elTunnelFormError.hidden = true;
+
+  const fd = new FormData(elTunnelForm);
+  const authMode = String(fd.get('authMode') || 'static-bearer');
+  const payload = {
+    name: String(fd.get('name') || '').trim(),
+    controllerUrl: String(fd.get('controllerUrl') || '').trim(),
+    connectorName: String(fd.get('connectorName') || '').trim(),
+    environment: String(fd.get('environment') || '').trim() || null,
+    authMode,
+  };
+
+  const editing = tunnelState.mode === 'configured' && tunnelState.row;
+
+  if (authMode === 'static-bearer') {
+    const token = String(fd.get('tunnelAuthToken') || '');
+    // Edit mode + blank token + existing secret → skip so server keeps sealed value.
+    // First-configure with a blank token is a validation error surfaced by the server.
+    if (token) payload.tunnelAuthToken = token;
+    else if (!editing || !tunnelState.row?.hasTunnelAuthToken) {
+      elTunnelFormError.textContent = 'Tunnel auth token is required for the static-bearer posture.';
+      elTunnelFormError.hidden = false;
+      return;
+    }
+  } else {
+    const clientId = String(fd.get('oauthClientId') || '').trim();
+    const clientSecret = String(fd.get('oauthClientSecret') || '');
+    const tokenUrl = String(fd.get('oauthTokenUrl') || '').trim();
+    if (!clientId || !tokenUrl) {
+      elTunnelFormError.textContent = 'OAuth Client ID and Token URL are required.';
+      elTunnelFormError.hidden = false;
+      return;
+    }
+    payload.oauthClientId = clientId;
+    payload.oauthTokenUrl = tokenUrl;
+    if (clientSecret) payload.oauthClientSecret = clientSecret;
+    else if (!editing || !tunnelState.row?.hasOauthClientSecret) {
+      elTunnelFormError.textContent = 'OAuth Client Secret is required.';
+      elTunnelFormError.hidden = false;
+      return;
+    }
+  }
+
+  elTunnelFormSubmit.disabled = true;
+  const originalLabel = elTunnelFormSubmit.textContent;
+  elTunnelFormSubmit.textContent = editing ? 'Saving & reconnecting…' : 'Saving & connecting…';
+
+  try {
+    const resp = await fetch('/internal/tunnel/creds', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      elTunnelFormError.textContent = body.error || `HTTP ${resp.status}`;
+      elTunnelFormError.hidden = false;
+      return;
+    }
+    // Success
+    closeTunnelModal();
+    setTunnelActionStatus(editing ? 'reconnected with new credentials' : 'connected', true);
+    await fetchTunnelConfig();
+  } catch (err) {
+    elTunnelFormError.textContent = String(err.message || err);
+    elTunnelFormError.hidden = false;
+  } finally {
+    elTunnelFormSubmit.disabled = false;
+    elTunnelFormSubmit.textContent = originalLabel;
+  }
+});
+
+// Boot ────────────────────────────────────────────────────────
+void fetchTunnelConfig();
+
 connectSse();
