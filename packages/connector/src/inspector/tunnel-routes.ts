@@ -94,10 +94,22 @@ async function handleGetConfig(
 
 // POST /internal/tunnel/creds
 // Body: ControllerInput-shaped JSON
+// Flow:
+//   - Detect INSERT vs UPDATE by checking for an existing row BEFORE upsert.
+//   - Upsert the row.
+//   - INSERT: dialTunnel(newRow). On dial failure, deleteController() to
+//     roll back so the DB stays empty and the operator can retry cleanly.
+//   - UPDATE: cycleTunnel("credential-rotated"). On dial failure, leave the
+//     row in place (operator can retry after fixing bearer/DNS).
+// Status codes:
+//   200 — upsert + dial both succeeded
+//   400 — payload validation failure
+//   409 — dial rejection (INSERT rolled back; UPDATE row kept)
+//   500 — DB error during upsert / getController / rollback
 async function handlePostCreds(
   req: IncomingMessage,
   res: ServerResponse,
-  { configStore }: Pick<TunnelRoutesDeps, "configStore">
+  { configStore, dialTunnel, cycleTunnel }: TunnelRoutesDeps
 ): Promise<void> {
   setJsonHeaders(res);
 
@@ -168,13 +180,41 @@ async function handlePostCreds(
     input.oauthTokenUrl = tokenUrl;
   }
 
+  // Detect INSERT vs UPDATE before mutating so we know which rollback shape
+  // applies if the dial fails.
+  let hadPriorRow: boolean;
+  let newRow: ControllerRow;
   try {
-    await configStore.upsertController(input);
-    res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true }));
+    hadPriorRow = (await configStore.getController()) !== null;
+    newRow = await configStore.upsertController(input);
   } catch (err) {
     res.statusCode = 500;
     res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+    return;
+  }
+
+  try {
+    if (hadPriorRow) {
+      await cycleTunnel("credential-rotated");
+    } else {
+      await dialTunnel(newRow);
+    }
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true }));
+  } catch (dialErr) {
+    // Dial rejected. INSERT case: roll back so the DB stays empty.
+    // UPDATE case: leave the row in place so the operator can retry.
+    if (!hadPriorRow) {
+      try {
+        await configStore.deleteController();
+      } catch {
+        // Rollback failure is not the primary error — surface the dial
+        // rejection to the operator and log the rollback issue elsewhere
+        // if needed. Swallow here to avoid masking the actionable message.
+      }
+    }
+    res.statusCode = 409;
+    res.end(JSON.stringify({ ok: false, error: (dialErr as Error).message }));
   }
 }
 

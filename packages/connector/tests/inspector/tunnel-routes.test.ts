@@ -195,7 +195,7 @@ describe("tunnel routes", () => {
   });
 
   describe("POST /internal/tunnel/creds", () => {
-    it("upserts controller row and returns {ok: true} on valid payload", async () => {
+    it("INSERT: dials tunnel after upsert and returns {ok: true}", async () => {
       const mockRow: ControllerRow = {
         id: "new-id",
         name: "new-controller",
@@ -216,14 +216,15 @@ describe("tunnel routes", () => {
       };
 
       const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),  // INSERT: no prior row
         upsertController: vi.fn().mockResolvedValue(mockRow),
+        deleteController: vi.fn(),
       } as unknown as ConfigStore;
 
-      const routes = createTunnelRoutes({
-        configStore: mockStore,
-        dialTunnel: vi.fn().mockResolvedValue(undefined),
-        cycleTunnel: vi.fn().mockResolvedValue(undefined),
-      });
+      const dialTunnel = vi.fn().mockResolvedValue(undefined);
+      const cycleTunnel = vi.fn().mockResolvedValue(undefined);
+
+      const routes = createTunnelRoutes({ configStore: mockStore, dialTunnel, cycleTunnel });
 
       const payload: ControllerInput = {
         name: "new-controller",
@@ -241,11 +242,67 @@ describe("tunnel routes", () => {
       await routes.handlePostCreds(req, res);
 
       expect(res._status).toBe(200);
-      const body = JSON.parse(res._body);
-      expect(body.ok).toBe(true);
+      expect(JSON.parse(res._body).ok).toBe(true);
+      // INSERT path: dialTunnel is called with the new row; cycleTunnel is NOT called
+      expect(dialTunnel).toHaveBeenCalledWith(mockRow);
+      expect(cycleTunnel).not.toHaveBeenCalled();
     });
 
-    it("accepts valid OAuth2 payload", async () => {
+    it("UPDATE: cycles tunnel after upsert and returns {ok: true}", async () => {
+      const priorRow: ControllerRow = {
+        id: "existing-id",
+        name: "old-controller",
+        controllerUrl: "https://old.example.com",
+        connectorName: "old-connector",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "old-token",
+        oauthClientId: null,
+        oauthClientSecret: null,
+        oauthTokenUrl: null,
+        registrationToken: "reg-token",
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastConnectedAt: null,
+        lastDisconnectReason: null,
+      };
+      const updatedRow: ControllerRow = { ...priorRow, tunnelAuthToken: "new-token" };
+
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(priorRow),  // UPDATE: prior row exists
+        upsertController: vi.fn().mockResolvedValue(updatedRow),
+        deleteController: vi.fn(),
+      } as unknown as ConfigStore;
+
+      const dialTunnel = vi.fn().mockResolvedValue(undefined);
+      const cycleTunnel = vi.fn().mockResolvedValue(undefined);
+
+      const routes = createTunnelRoutes({ configStore: mockStore, dialTunnel, cycleTunnel });
+
+      const payload: ControllerInput = {
+        name: "old-controller",
+        controllerUrl: "https://old.example.com",
+        connectorName: "old-connector",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "new-token",
+      };
+
+      const req = mockRequest("POST", payload);
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(200);
+      expect(JSON.parse(res._body).ok).toBe(true);
+      // UPDATE path: cycleTunnel is called with "credential-rotated"; dialTunnel is NOT called
+      expect(cycleTunnel).toHaveBeenCalledWith("credential-rotated");
+      expect(dialTunnel).not.toHaveBeenCalled();
+    });
+
+    it("accepts valid OAuth2 payload (INSERT case, dials tunnel)", async () => {
       const mockRow: ControllerRow = {
         id: "oauth-id",
         name: "oauth-controller",
@@ -266,14 +323,15 @@ describe("tunnel routes", () => {
       };
 
       const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),
         upsertController: vi.fn().mockResolvedValue(mockRow),
+        deleteController: vi.fn(),
       } as unknown as ConfigStore;
 
-      const routes = createTunnelRoutes({
-        configStore: mockStore,
-        dialTunnel: vi.fn().mockResolvedValue(undefined),
-        cycleTunnel: vi.fn().mockResolvedValue(undefined),
-      });
+      const dialTunnel = vi.fn().mockResolvedValue(undefined);
+      const cycleTunnel = vi.fn().mockResolvedValue(undefined);
+
+      const routes = createTunnelRoutes({ configStore: mockStore, dialTunnel, cycleTunnel });
 
       const payload: ControllerInput = {
         name: "oauth-controller",
@@ -294,6 +352,107 @@ describe("tunnel routes", () => {
 
       expect(res._status).toBe(200);
       expect(JSON.parse(res._body).ok).toBe(true);
+      expect(dialTunnel).toHaveBeenCalledWith(mockRow);
+    });
+
+    it("INSERT: on dial rejection, rolls back the row and returns 409", async () => {
+      const mockRow: ControllerRow = {
+        id: "new-id",
+        name: "bad-controller",
+        controllerUrl: "https://bad.example.com",
+        connectorName: "bad-connector",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "bad-token",
+        oauthClientId: null,
+        oauthClientSecret: null,
+        oauthTokenUrl: null,
+        registrationToken: null,
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastConnectedAt: null,
+        lastDisconnectReason: null,
+      };
+
+      const deleteController = vi.fn().mockResolvedValue(true);
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),  // INSERT case
+        upsertController: vi.fn().mockResolvedValue(mockRow),
+        deleteController,
+      } as unknown as ConfigStore;
+
+      const dialTunnel = vi.fn().mockRejectedValueOnce(new Error("bearer rejected"));
+      const cycleTunnel = vi.fn();
+
+      const routes = createTunnelRoutes({ configStore: mockStore, dialTunnel, cycleTunnel });
+
+      const req = mockRequest("POST", {
+        name: "bad-controller",
+        controllerUrl: "https://bad.example.com",
+        connectorName: "bad-connector",
+        authMode: "static-bearer",
+        tunnelAuthToken: "bad-token",
+      });
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(409);
+      expect(JSON.parse(res._body).error).toContain("bearer rejected");
+      // INSERT rollback: deleteController was invoked
+      expect(deleteController).toHaveBeenCalledTimes(1);
+    });
+
+    it("UPDATE: on dial rejection, keeps the row and returns 409", async () => {
+      const priorRow: ControllerRow = {
+        id: "existing-id",
+        name: "controller",
+        controllerUrl: "https://a.example.com",
+        connectorName: "connector",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "old-token",
+        oauthClientId: null,
+        oauthClientSecret: null,
+        oauthTokenUrl: null,
+        registrationToken: null,
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastConnectedAt: null,
+        lastDisconnectReason: null,
+      };
+
+      const deleteController = vi.fn();
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(priorRow),  // UPDATE case
+        upsertController: vi.fn().mockResolvedValue({ ...priorRow, tunnelAuthToken: "new-token" }),
+        deleteController,
+      } as unknown as ConfigStore;
+
+      const dialTunnel = vi.fn();
+      const cycleTunnel = vi.fn().mockRejectedValueOnce(new Error("controller unreachable"));
+
+      const routes = createTunnelRoutes({ configStore: mockStore, dialTunnel, cycleTunnel });
+
+      const req = mockRequest("POST", {
+        name: "controller",
+        controllerUrl: "https://a.example.com",
+        connectorName: "connector",
+        authMode: "static-bearer",
+        tunnelAuthToken: "new-token",
+      });
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(409);
+      expect(JSON.parse(res._body).error).toContain("controller unreachable");
+      // UPDATE path: row is NOT rolled back
+      expect(deleteController).not.toHaveBeenCalled();
     });
 
     it("returns 400 on malformed JSON", async () => {
@@ -413,9 +572,11 @@ describe("tunnel routes", () => {
       expect(body.error).toContain("oauthClientId, oauthClientSecret, and oauthTokenUrl are required");
     });
 
-    it("returns 500 on DB error", async () => {
+    it("returns 500 on DB error during upsert", async () => {
       const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),
         upsertController: vi.fn().mockRejectedValue(new Error("DB write failed")),
+        deleteController: vi.fn(),
       } as unknown as ConfigStore;
 
       const routes = createTunnelRoutes({
