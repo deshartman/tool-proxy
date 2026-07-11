@@ -76,4 +76,54 @@ describe("logger redact (W-S6)", () => {
     expect(blob).toContain("7100");
     expect(blob).toContain("yaml");
   });
+
+  // Step 11 additions — tunnel-cred field names carried on the decrypted
+  // ControllerRow. `authToken` was already redacted; these three sit on
+  // the row under distinct exact keys and each needs its own path entry.
+  it("redacts tunnel-cred field names (tunnelAuthToken, oauthClientSecret, registrationToken)", () => {
+    const log = createLogger("redact-test");
+    log.info({
+      row: {
+        tunnelAuthToken: "tok_tunnel_secret",
+        oauthClientSecret: "tok_oauth_secret",
+        registrationToken: "tok_reg_secret",
+      },
+    }, "controller row loaded");
+    const blob = captured.join("");
+    expect(blob).not.toContain("tok_tunnel_secret");
+    expect(blob).not.toContain("tok_oauth_secret");
+    expect(blob).not.toContain("tok_reg_secret");
+    // Sanity: the log line still arrived.
+    expect(blob).toContain("controller row loaded");
+  });
+
+  it("redacts encrypted-column names when raw pg rows are logged", () => {
+    const log = createLogger("redact-test");
+    // Simulate an accidental `log.info({rows}, ...)` after a raw pg query.
+    // The BYTEA columns come through as Buffers; serialized as objects. If
+    // someone ever logs the raw row we want the ct bytes redacted too.
+    log.info({
+      row: {
+        tunnel_auth_token_ct: "raw_bytea_bytes_tunnel",
+        oauth_client_secret_ct: "raw_bytea_bytes_oauth",
+        registration_token_ct: "raw_bytea_bytes_reg",
+      },
+    }, "raw pg row");
+    const blob = captured.join("");
+    expect(blob).not.toContain("raw_bytea_bytes_tunnel");
+    expect(blob).not.toContain("raw_bytea_bytes_oauth");
+    expect(blob).not.toContain("raw_bytea_bytes_reg");
+  });
+
+  it("redacts master-key bytes when resolveMasterKey struct is logged", () => {
+    const log = createLogger("redact-test");
+    log.info({
+      masterKey: { bytes: "raw_32_master_key_bytes", fingerprint: "sha256:abc123" },
+    }, "master key resolved");
+    const blob = captured.join("");
+    expect(blob).not.toContain("raw_32_master_key_bytes");
+    // Fingerprint is not secret — sha256 of the key is already leakable via
+    // encryption_meta and gets logged intentionally on the mismatch error.
+    expect(blob).toContain("sha256:abc123");
+  });
 });
