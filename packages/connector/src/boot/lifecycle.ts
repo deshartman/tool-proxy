@@ -41,6 +41,7 @@ import { resolveCredsSource } from "./creds-source.js";
 import { ConfigStore, type ControllerRow } from "../config-store/index.js";
 import { initSodium } from "../config-store/seal.js";
 import { resolveMasterKey } from "../config-store/master-key.js";
+import { createTunnelRoutes } from "../inspector/tunnel-routes.js";
 import { envOptional, envString, envNumber } from "../env.js";
 import { unlinkSync } from "node:fs";
 
@@ -828,6 +829,21 @@ async function bootFromDb(): Promise<void> {
   if (inspector) {
     inspector.onReconnect = () => { void reconnect("inspector requested", { manual: true }); };
     startInspector(inspectorPort, inspector);
+
+    // Wire tunnel routes for DB mode — allows inspector UI to configure tunnel
+    inspector.wireTunnelRoutes(createTunnelRoutes({
+      configStore: store,
+      dialTunnel: async (r) => {
+        // Update shared references with fresh values from the row
+        row = r;
+        auth = resolveAuthFromRow(r);
+        tunnelDialUrl = r.controllerUrl;
+        await connectTunnelDb("inspector-dial");
+      },
+      cycleTunnel: async (reason) => {
+        await reconnect(reason, { manual: true });
+      },
+    }));
   }
 
   // Discover drop-in MCPs
@@ -957,7 +973,7 @@ async function bootFromDb(): Promise<void> {
     return;
   }
 
-  const auth = resolveAuthFromRow(row);
+  let auth = resolveAuthFromRow(row);
   const registrationToken = row.registrationToken ?? undefined;
   const identityStatus = registrationToken
     ? `reconnect (token len=${registrationToken.length})`
@@ -967,7 +983,7 @@ async function bootFromDb(): Promise<void> {
     `config loaded`,
   );
 
-  const tunnelDialUrl = row.controllerUrl;
+  let tunnelDialUrl = row.controllerUrl;
 
   if (inspector) {
     inspector.setIdentity(

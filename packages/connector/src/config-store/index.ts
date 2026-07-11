@@ -166,5 +166,10 @@ export class ConfigStore {
     );
   }
 
+  async deleteController(): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM ${this.schema}.controllers`);
+    return (rowCount ?? 0) > 0;
+  }
+
   async close(): Promise<void> { await this.pool.end(); }
 }

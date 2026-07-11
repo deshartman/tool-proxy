@@ -293,4 +293,35 @@ describe("ConfigStore", () => {
       expect(updated!.registrationToken).toBeNull();
     });
   });
+
+  describe("deleteController()", () => {
+    it("removes the row and subsequent getController() returns null", async () => {
+      const input: ControllerInput = {
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "token",
+      };
+
+      // Create a row first
+      await store.upsertController(input);
+      const row = await store.getController();
+      expect(row).not.toBeNull();
+
+      // Delete the row
+      const deleted = await store.deleteController();
+      expect(deleted).toBe(true);
+
+      // Verify it's gone
+      const afterDelete = await store.getController();
+      expect(afterDelete).toBeNull();
+    });
+
+    it("returns false when no row exists", async () => {
+      const deleted = await store.deleteController();
+      expect(deleted).toBe(false);
+    });
+  });
 });

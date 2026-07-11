@@ -1,0 +1,539 @@
+import { describe, it, expect, vi } from "vitest";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createTunnelRoutes, type TunnelConfigSummary } from "../../src/inspector/tunnel-routes.js";
+import type { ConfigStore, ControllerInput, ControllerRow } from "../../src/config-store/index.js";
+
+function mockRequest(method: string, body?: unknown): IncomingMessage {
+  const req = {
+    method,
+    url: "/internal/tunnel/config",
+    headers: {},
+    on: vi.fn(),
+    [Symbol.asyncIterator]: async function* () {
+      if (body !== undefined) {
+        const buf = Buffer.from(JSON.stringify(body), "utf8");
+        yield buf;
+      }
+    },
+  } as unknown as IncomingMessage;
+  return req;
+}
+
+function mockResponse(): ServerResponse & { _status: number; _body: string } {
+  const res = {
+    _status: 0,
+    _body: "",
+    statusCode: 0,
+    setHeader: vi.fn(),
+    end: function (body?: string) {
+      this._body = body ?? "";
+      this._status = this.statusCode;
+    },
+    write: vi.fn(),
+    flushHeaders: vi.fn(),
+  } as unknown as ServerResponse & { _status: number; _body: string };
+  return res;
+}
+
+describe("tunnel routes", () => {
+  describe("GET /internal/tunnel/config", () => {
+    it("returns {configured: false} when no row exists", async () => {
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("GET");
+      const res = mockResponse();
+
+      await routes.handleGetConfig(req, res);
+
+      expect(res._status).toBe(200);
+      expect(JSON.parse(res._body)).toEqual({ configured: false });
+    });
+
+    it("returns TunnelConfigSummary with hasTunnelAuthToken: true for static-bearer row", async () => {
+      const mockRow: ControllerRow = {
+        id: "test-id-123",
+        name: "test-controller",
+        controllerUrl: "https://controller.example.com",
+        connectorName: "test-connector",
+        environment: "dev",
+        authMode: "static-bearer",
+        tunnelAuthToken: "ts_secret_token",  // This should NOT appear in response
+        oauthClientId: null,
+        oauthClientSecret: null,
+        oauthTokenUrl: null,
+        registrationToken: "reg_token_123",  // This should NOT appear in response
+        enabled: true,
+        createdAt: new Date("2026-01-01"),
+        updatedAt: new Date("2026-01-02"),
+        lastConnectedAt: new Date("2026-01-03"),
+        lastDisconnectReason: null,
+      };
+
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(mockRow),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("GET");
+      const res = mockResponse();
+
+      await routes.handleGetConfig(req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.configured).toBe(true);
+      expect(body.row).toBeDefined();
+
+      const summary: TunnelConfigSummary = body.row;
+      expect(summary.id).toBe("test-id-123");
+      expect(summary.name).toBe("test-controller");
+      expect(summary.authMode).toBe("static-bearer");
+      expect(summary.hasTunnelAuthToken).toBe(true);
+      expect(summary.hasOauthClientSecret).toBe(false);
+      expect(summary.oauthClientId).toBeNull();
+      expect(summary.oauthTokenUrl).toBeNull();
+      expect(summary.hasRegistrationToken).toBe(true);
+      expect(summary.registrationTokenLen).toBe(13); // "reg_token_123".length
+      expect(summary.enabled).toBe(true);
+
+      // Secrets should NOT be in the response
+      expect(summary).not.toHaveProperty("tunnelAuthToken");
+      expect(summary).not.toHaveProperty("registrationToken");
+      expect(summary).not.toHaveProperty("oauthClientSecret");
+
+      // Dates should be ISO strings
+      expect(typeof summary.createdAt).toBe("string");
+      expect(typeof summary.updatedAt).toBe("string");
+    });
+
+    it("returns TunnelConfigSummary with hasOauthClientSecret: true for oauth2-cc row", async () => {
+      const mockRow: ControllerRow = {
+        id: "oauth-id-456",
+        name: "oauth-controller",
+        controllerUrl: "https://oauth-controller.example.com",
+        connectorName: "oauth-connector",
+        environment: "prod",
+        authMode: "oauth2-cc",
+        tunnelAuthToken: null,
+        oauthClientId: "my-client-id",
+        oauthClientSecret: "my-secret",  // This should NOT appear in response
+        oauthTokenUrl: "https://auth.example.com/token",
+        registrationToken: null,
+        enabled: true,
+        createdAt: new Date("2026-02-01"),
+        updatedAt: new Date("2026-02-02"),
+        lastConnectedAt: null,
+        lastDisconnectReason: "timeout",
+      };
+
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(mockRow),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("GET");
+      const res = mockResponse();
+
+      await routes.handleGetConfig(req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      const summary: TunnelConfigSummary = body.row;
+
+      expect(summary.authMode).toBe("oauth2-cc");
+      expect(summary.hasTunnelAuthToken).toBe(false);
+      expect(summary.hasOauthClientSecret).toBe(true);
+      expect(summary.oauthClientId).toBe("my-client-id");
+      expect(summary.oauthTokenUrl).toBe("https://auth.example.com/token");
+      expect(summary.hasRegistrationToken).toBe(false);
+      expect(summary.lastConnectedAt).toBeNull();
+      expect(summary.lastDisconnectReason).toBe("timeout");
+
+      // Secrets should NOT appear
+      expect(summary).not.toHaveProperty("oauthClientSecret");
+    });
+
+    it("returns 500 on DB error", async () => {
+      const mockStore = {
+        getController: vi.fn().mockRejectedValue(new Error("connection lost")),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("GET");
+      const res = mockResponse();
+
+      await routes.handleGetConfig(req, res);
+
+      expect(res._status).toBe(500);
+      const body = JSON.parse(res._body);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("connection lost");
+    });
+  });
+
+  describe("POST /internal/tunnel/creds", () => {
+    it("upserts controller row and returns {ok: true} on valid payload", async () => {
+      const mockRow: ControllerRow = {
+        id: "new-id",
+        name: "new-controller",
+        controllerUrl: "https://new.example.com",
+        connectorName: "new-connector",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "token123",
+        oauthClientId: null,
+        oauthClientSecret: null,
+        oauthTokenUrl: null,
+        registrationToken: null,
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastConnectedAt: null,
+        lastDisconnectReason: null,
+      };
+
+      const mockStore = {
+        upsertController: vi.fn().mockResolvedValue(mockRow),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn().mockResolvedValue(undefined),
+        cycleTunnel: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const payload: ControllerInput = {
+        name: "new-controller",
+        controllerUrl: "https://new.example.com",
+        connectorName: "new-connector",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "token123",
+      };
+
+      const req = mockRequest("POST", payload);
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(200);
+      const body = JSON.parse(res._body);
+      expect(body.ok).toBe(true);
+    });
+
+    it("accepts valid OAuth2 payload", async () => {
+      const mockRow: ControllerRow = {
+        id: "oauth-id",
+        name: "oauth-controller",
+        controllerUrl: "https://oauth.example.com",
+        connectorName: "oauth-connector",
+        environment: "prod",
+        authMode: "oauth2-cc",
+        tunnelAuthToken: null,
+        oauthClientId: "client-id",
+        oauthClientSecret: "client-secret",
+        oauthTokenUrl: "https://auth.example.com/token",
+        registrationToken: null,
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastConnectedAt: null,
+        lastDisconnectReason: null,
+      };
+
+      const mockStore = {
+        upsertController: vi.fn().mockResolvedValue(mockRow),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn().mockResolvedValue(undefined),
+        cycleTunnel: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const payload: ControllerInput = {
+        name: "oauth-controller",
+        controllerUrl: "https://oauth.example.com",
+        connectorName: "oauth-connector",
+        environment: "prod",
+        authMode: "oauth2-cc",
+        oauthClientId: "client-id",
+        oauthClientSecret: "client-secret",
+        oauthTokenUrl: "https://auth.example.com/token",
+      };
+
+      const req = mockRequest("POST", payload);
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(200);
+      expect(JSON.parse(res._body).ok).toBe(true);
+    });
+
+    it("returns 400 on malformed JSON", async () => {
+      const routes = createTunnelRoutes({
+        configStore: {} as ConfigStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = {
+        method: "POST",
+        url: "/internal/tunnel/creds",
+        headers: {},
+        on: vi.fn(),
+        [Symbol.asyncIterator]: async function* () {
+          // Invalid JSON
+          yield Buffer.from("{not valid json", "utf8");
+        },
+      } as unknown as IncomingMessage;
+
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(400);
+      expect(JSON.parse(res._body).error).toContain("malformed JSON");
+    });
+
+    it("returns 400 when body is not an object", async () => {
+      const routes = createTunnelRoutes({
+        configStore: {} as ConfigStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("POST", "not-an-object");
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(400);
+      expect(JSON.parse(res._body).error).toContain("body must be an object");
+    });
+
+    it("returns 400 on missing required fields", async () => {
+      const mockStore = {} as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("POST", { name: "test" }); // missing controllerUrl, connectorName
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(400);
+      const body = JSON.parse(res._body);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("missing required fields");
+    });
+
+    it("returns 400 when static-bearer is missing tunnelAuthToken", async () => {
+      const mockStore = {} as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("POST", {
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        authMode: "static-bearer",
+        // missing tunnelAuthToken
+      });
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(400);
+      const body = JSON.parse(res._body);
+      expect(body.error).toContain("tunnelAuthToken is required");
+    });
+
+    it("returns 400 when oauth2-cc is missing oauth fields", async () => {
+      const mockStore = {} as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("POST", {
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        authMode: "oauth2-cc",
+        oauthClientId: "id",
+        // missing oauthClientSecret and oauthTokenUrl
+      });
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(400);
+      const body = JSON.parse(res._body);
+      expect(body.error).toContain("oauthClientId, oauthClientSecret, and oauthTokenUrl are required");
+    });
+
+    it("returns 500 on DB error", async () => {
+      const mockStore = {
+        upsertController: vi.fn().mockRejectedValue(new Error("DB write failed")),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("POST", {
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        authMode: "static-bearer",
+        tunnelAuthToken: "token",
+      });
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(500);
+      const body = JSON.parse(res._body);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("DB write failed");
+    });
+  });
+
+  describe("POST /internal/tunnel/force-reregister", () => {
+    it("returns 409 when no row exists", async () => {
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("POST");
+      (req as any).url = "/internal/tunnel/force-reregister";
+      const res = mockResponse();
+
+      await routes.handleForceReregister(req, res);
+
+      expect(res._status).toBe(409);
+      const body = JSON.parse(res._body);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("no controller row configured");
+    });
+
+    it("clears registration token and cycles tunnel when row exists", async () => {
+      const mockRow: ControllerRow = {
+        id: "test-id",
+        name: "test-controller",
+        controllerUrl: "https://example.com",
+        connectorName: "test-connector",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "token",
+        oauthClientId: null,
+        oauthClientSecret: null,
+        oauthTokenUrl: null,
+        registrationToken: "old-token",
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastConnectedAt: null,
+        lastDisconnectReason: null,
+      };
+
+      const clearRegistrationToken = vi.fn().mockResolvedValue(undefined);
+      const cycleTunnel = vi.fn().mockResolvedValue(undefined);
+
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(mockRow),
+        clearRegistrationToken,
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel,
+      });
+
+      const req = mockRequest("POST");
+      (req as any).url = "/internal/tunnel/force-reregister";
+      const res = mockResponse();
+
+      await routes.handleForceReregister(req, res);
+
+      expect(clearRegistrationToken).toHaveBeenCalledWith("test-id");
+      expect(cycleTunnel).toHaveBeenCalledWith("force-reregister");
+      expect(res._status).toBe(200);
+      expect(JSON.parse(res._body).ok).toBe(true);
+    });
+
+    it("returns 500 on DB error", async () => {
+      const mockStore = {
+        getController: vi.fn().mockRejectedValue(new Error("DB error")),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("POST");
+      (req as any).url = "/internal/tunnel/force-reregister";
+      const res = mockResponse();
+
+      await routes.handleForceReregister(req, res);
+
+      expect(res._status).toBe(500);
+      const body = JSON.parse(res._body);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("DB error");
+    });
+  });
+});
