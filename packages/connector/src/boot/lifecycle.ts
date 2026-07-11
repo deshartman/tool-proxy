@@ -1043,6 +1043,12 @@ async function bootFromDb(): Promise<void> {
   // ─── connect / reconnect ────────────────────────────────────────────────
   async function connectTunnelDb(reason: string): Promise<void> {
     if (!row || !auth || !tunnelDialUrl) return;  // defensive — empty-DB path leaves these undefined
+    // Always read the CURRENT registration token from the row. The
+    // top-level `const registrationToken` is a snapshot from the
+    // row-exists boot path; under the empty-DB paste flow it was never
+    // initialized, and referencing it inside this closure previously
+    // threw TDZ. `row.registrationToken` is authoritative on every dial.
+    const currentToken = row.registrationToken ?? undefined;
     inspector?.setState("connecting");
     log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
     const pendingTunnel = new TunnelClient(tunnelDialUrl, auth.authToken, row.connectorName, auth.authProvider);
@@ -1102,7 +1108,7 @@ async function bootFromDb(): Promise<void> {
 
     const baseRouter = createFrameRouter({
       webhooks,
-      state: { registrationToken },
+      state: { registrationToken: currentToken },
       statePath: "",
       inspector,
       reconnect: reconnectCtl,
@@ -1185,7 +1191,7 @@ async function bootFromDb(): Promise<void> {
       type: "register",
       manifest,
       name: row.connectorName,
-      ...(registrationToken ? { registrationToken } : {}),
+      ...(currentToken ? { registrationToken: currentToken } : {}),
     });
     log.info(`register frame sent`);
 
