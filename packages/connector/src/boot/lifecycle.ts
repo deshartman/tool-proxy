@@ -34,7 +34,7 @@ import { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
 import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
-import { resolveAuth } from "./auth.js";
+import { resolveAuthFromEnv } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
 import { envOptional, envString, envNumber } from "../env.js";
@@ -62,7 +62,7 @@ export async function boot(): Promise<void> {
     : envNumber("INSPECTOR_PORT", 9090);
 
   const config = loadConfig(configPath);
-  const auth = resolveAuth(config.tunnel.auth_token);
+  const auth = resolveAuthFromEnv(config.tunnel.auth_token);
 
   // Identity: read the persisted registrationToken (if any). On first connect
   // it's absent and we send `name` only — the controller mints a row and
