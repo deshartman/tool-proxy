@@ -60,4 +60,12 @@ describe("resolveCredsSource", () => {
     process.env.CONNECTOR_CREDS_SOURCE = "DB";
     expect(() => resolveCredsSource()).toThrow(/CONNECTOR_CREDS_SOURCE must be "env" or "db"/);
   });
+
+  it("accepts an optional env map argument (keeps requireEnv pure)", () => {
+    const env: NodeJS.ProcessEnv = { CONNECTOR_CREDS_SOURCE: "env" };
+    delete process.env.CONNECTOR_CREDS_SOURCE;
+    expect(resolveCredsSource(env)).toBe("env");
+    // process.env is untouched
+    expect(process.env.CONNECTOR_CREDS_SOURCE).toBeUndefined();
+  });
 });
