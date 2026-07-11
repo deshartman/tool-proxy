@@ -34,7 +34,7 @@ import { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
 import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
-import { resolveAuthFromEnv, resolveAuthFromRow } from "./auth.js";
+import { resolveAuthFromEnv, resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
 import { resolveCredsSource } from "./creds-source.js";
@@ -804,8 +804,18 @@ async function bootFromDb(): Promise<void> {
   }
 
   // Live mutable references — replaced on each reconnect.
+  // Hoisted above the getController() call so the dialTunnel closure (wired
+  // into the inspector routes before we know whether the DB has a row) can
+  // safely assign into them. Under the empty-DB boot path these stay
+  // undefined until an operator submits the Configure Tunnel modal, at
+  // which point dialTunnel populates them before invoking connectTunnelDb.
+  // Prior to hoisting, `let auth = …` sat inside the row-exists branch and
+  // the closure hit a TDZ error ("Cannot access 'auth' before initialization")
+  // whenever the paste flow fired in empty-DB mode.
   let tunnel: TunnelClient | undefined;
   let row: ControllerRow | null = null;
+  let auth: AuthResolution | undefined = undefined;
+  let tunnelDialUrl: string | undefined = undefined;
   let stateCleared = false;  // track if we've already cleared .connector-state.json
 
   // Forward declaration: inspector constructed below, referenced by callbacks.
@@ -987,7 +997,7 @@ async function bootFromDb(): Promise<void> {
     return;
   }
 
-  let auth = resolveAuthFromRow(row);
+  auth = resolveAuthFromRow(row);
   const registrationToken = row.registrationToken ?? undefined;
   const identityStatus = registrationToken
     ? `reconnect (token len=${registrationToken.length})`
@@ -997,7 +1007,7 @@ async function bootFromDb(): Promise<void> {
     `config loaded`,
   );
 
-  let tunnelDialUrl = row.controllerUrl;
+  tunnelDialUrl = row.controllerUrl;
 
   if (inspector) {
     inspector.setIdentity(
@@ -1032,7 +1042,7 @@ async function bootFromDb(): Promise<void> {
 
   // ─── connect / reconnect ────────────────────────────────────────────────
   async function connectTunnelDb(reason: string): Promise<void> {
-    if (!row) return;  // defensive
+    if (!row || !auth || !tunnelDialUrl) return;  // defensive — empty-DB path leaves these undefined
     inspector?.setState("connecting");
     log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
     const pendingTunnel = new TunnelClient(tunnelDialUrl, auth.authToken, row.connectorName, auth.authProvider);
