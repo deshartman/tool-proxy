@@ -783,6 +783,11 @@ async function bootFromDb(): Promise<void> {
 
   const config = loadConfig(configPath);
 
+  // WARN if legacy tunnel: block is present in yaml (db mode ignores it)
+  if (config.tunnel) {
+    log.warn("legacy 'tunnel:' block in connector.yaml ignored under CONNECTOR_CREDS_SOURCE=db; remove it from your yaml");
+  }
+
   // Live mutable references — replaced on each reconnect.
   let tunnel: TunnelClient | undefined;
   let row: ControllerRow | null = null;
