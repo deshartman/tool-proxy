@@ -1720,8 +1720,10 @@ function openTunnelModal(mode /* 'configure' | 'edit' */) {
   }
   applyAuthModeToggle();
   elTunnelModal.hidden = false;
-  // Focus the URL input for keyboard workflow — the two-field form starts there.
-  const first = elTunnelForm.querySelector('input[name="controllerUrl"]');
+  // Focus the first input for keyboard workflow (Display name is now the
+  // top field; falls back to Controller URL if for some reason it's absent).
+  const first = elTunnelForm.querySelector('input[name="displayName"]')
+             ?? elTunnelForm.querySelector('input[name="controllerUrl"]');
   if (first) setTimeout(() => first.focus(), 0);
 }
 

@@ -167,15 +167,15 @@
       <h3 id="tunnel-modal-title">Configure tunnel</h3>
       <form id="tunnel-form" autocomplete="off">
         <label class="tunnel-field">
-          <span>Controller URL</span>
-          <input type="text" name="controllerUrl" required placeholder="https://controller.example.com">
-          <small class="muted">Base URL of your controller. Trailing <code>/mcp-tunnel[/tunnel]</code> paths are stripped automatically.</small>
+          <span>Display name</span>
+          <input type="text" name="displayName" placeholder="twilio-dev">
+          <small class="muted">Free-form label shown in this UI and in logs. Defaults to the URL hostname if left blank.</small>
         </label>
 
         <label class="tunnel-field">
-          <span>Display name <span class="muted">(optional)</span></span>
-          <input type="text" name="displayName" placeholder="twilio-dev">
-          <small class="muted">Free-form label shown in this UI and in logs. Defaults to the URL hostname if left blank. Not sent to the controller as an identity claim.</small>
+          <span>Controller URL</span>
+          <input type="text" name="controllerUrl" required placeholder="https://controller.example.com">
+          <small class="muted">Base URL of your controller. Trailing <code>/mcp-tunnel[/tunnel]</code> paths are stripped automatically.</small>
         </label>
 
         <fieldset class="tunnel-authmode" hidden id="tunnel-authmode-fieldset">
