@@ -40,6 +40,13 @@ export function readState(path: string = defaultStatePath()): ConnectorState {
 }
 
 export function writeState(state: ConnectorState, path: string = defaultStatePath()): void {
+  // Empty path is the db-mode signal: `bootFromDb` passes `statePath: ""`
+  // to the frame-router because the registrationToken lives in Postgres
+  // (via `store.updateRegistrationToken`) instead of on disk. Without this
+  // guard, the default register-ack handler would call `renameSync('.tmp', '')`
+  // and throw ENOENT on every successful register-ack under db mode. The
+  // caller has its own persistence — nothing to write here.
+  if (!path) return;
   mkdirSync(dirname(path), { recursive: true });
   // Write to a sibling tmp file then rename, so a crash mid-write can never
   // leave a half-written .connector-state.json on disk. POSIX rename is
@@ -55,6 +62,10 @@ export function writeState(state: ConnectorState, path: string = defaultStatePat
 // row was deleted out from under us). Removes the file entirely if no other
 // fields remain so the next boot is a clean first-connect.
 export function clearRegistrationToken(path: string = defaultStatePath()): void {
+  // Same db-mode guard as writeState — db mode calls
+  // `store.clearRegistrationToken(row.id)` in bootFromDb's onframe hook;
+  // this call from the default frame-router handler is a no-op there.
+  if (!path) return;
   if (!existsSync(path)) return;
   try {
     unlinkSync(path);
