@@ -19,7 +19,7 @@ __pycache__/
 # the repo root; postbuild.mjs copies them into packages/connector/ so they
 # ship in the npm tarball).
 .env
-*.env
+*.env.*
 !.env.example
 !*.env.example
 
