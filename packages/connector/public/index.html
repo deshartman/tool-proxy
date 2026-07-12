@@ -68,6 +68,8 @@
 
           <div id="tunnel-configured" class="tunnel-configured" hidden>
             <dl class="tunnel-readout">
+              <dt>Display name</dt>
+              <dd><code id="tunnel-r-label"></code></dd>
               <dt>Controller URL</dt>
               <dd><code id="tunnel-r-url"></code></dd>
               <dt>Auth mode</dt>
@@ -168,6 +170,12 @@
           <span>Controller URL</span>
           <input type="text" name="controllerUrl" required placeholder="https://controller.example.com">
           <small class="muted">Base URL of your controller. Trailing <code>/mcp-tunnel[/tunnel]</code> paths are stripped automatically.</small>
+        </label>
+
+        <label class="tunnel-field">
+          <span>Display name <span class="muted">(optional)</span></span>
+          <input type="text" name="displayName" placeholder="twilio-dev">
+          <small class="muted">Free-form label shown in this UI and in logs. Defaults to the URL hostname if left blank. Not sent to the controller as an identity claim.</small>
         </label>
 
         <fieldset class="tunnel-authmode" hidden id="tunnel-authmode-fieldset">

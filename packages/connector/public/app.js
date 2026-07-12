@@ -1571,6 +1571,7 @@ const elTunnelConfigureBtn = document.getElementById('tunnel-configure-btn');
 const elTunnelEditBtn      = document.getElementById('tunnel-edit-btn');
 const elTunnelForceBtn     = document.getElementById('tunnel-force-btn');
 const elTunnelActionStatus = document.getElementById('tunnel-action-status');
+const elTunnelRLabel     = document.getElementById('tunnel-r-label');
 const elTunnelRUrl       = document.getElementById('tunnel-r-url');
 const elTunnelRMode      = document.getElementById('tunnel-r-mode');
 const elTunnelRBearerLabel = document.getElementById('tunnel-r-bearer-label');
@@ -1622,6 +1623,7 @@ function relativeTime(iso) {
 }
 
 function renderTunnelConfigured(row) {
+  elTunnelRLabel.textContent = row.name || row.controllerUrl.replace(/^https?:\/\//, '').split('/')[0];
   elTunnelRUrl.textContent = row.controllerUrl;
   elTunnelRMode.textContent = row.authMode;
 
@@ -1697,6 +1699,7 @@ function openTunnelModal(mode /* 'configure' | 'edit' */) {
   if (editing) {
     const r = tunnelState.row;
     elTunnelForm.controllerUrl.value = r.controllerUrl;
+    if (elTunnelForm.displayName) elTunnelForm.displayName.value = r.name ?? '';
     const modeRadio = elTunnelForm.querySelector(`input[name="authMode"][value="${r.authMode}"]`);
     if (modeRadio) modeRadio.checked = true;
     if (r.authMode === 'oauth2-cc') {
@@ -1819,9 +1822,12 @@ elTunnelForm.addEventListener('submit', async (ev) => {
   // Legacy row-label / connector-name / environment fields were removed;
   // the server fills defaults for the columns that still exist on the DB
   // row (see handlePostCreds in tunnel-routes.ts).
+  const displayName = String(fd.get('displayName') || '').trim();
   const payload = {
     controllerUrl: String(fd.get('controllerUrl') || '').trim(),
     authMode,
+    // Optional cosmetic label. Server auto-derives from URL hostname if blank.
+    ...(displayName ? { name: displayName } : {}),
   };
 
   const editing = tunnelState.mode === 'configured' && tunnelState.row;
