@@ -1782,7 +1782,12 @@ elTunnelEditBtn?.addEventListener('click', () => openTunnelModal('edit'));
 elTunnelForceBtn?.addEventListener('click', () => void handleForceReregister());
 
 async function handleForceReregister() {
-  if (!confirm('Force re-registration? This clears the current registration token and redials the tunnel — the controller will mint a fresh one on next register-ack.')) return;
+  if (!confirm(
+    'Force re-registration will clear this connector\'s registration token and redial the tunnel.\n\n' +
+    'IMPORTANT: if the controller-side MCP Tunnel row still exists (Settings → MCP Tunnel), the next register-ack will FAIL with "organisation_has_connector" — you\'ll need to delete the controller-side row first, then click Reconnect.\n\n' +
+    'Only use this when you want a completely fresh registration (typical after deleting the controller-side row).\n\n' +
+    'Continue?',
+  )) return;
   elTunnelForceBtn.disabled = true;
   elTunnelEditBtn.disabled = true;
   setTunnelActionStatus('re-registering…', true);
