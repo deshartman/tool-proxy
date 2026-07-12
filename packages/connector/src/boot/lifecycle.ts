@@ -865,6 +865,21 @@ async function bootFromDb(): Promise<void> {
         await connectTunnelDb("inspector-dial");
       },
       cycleTunnel: async (reason) => {
+        // Re-read the row from Postgres before redialing — an inspector-
+        // triggered cycleTunnel means the DB was just upserted (bearer
+        // rotated, URL changed, etc.). Without this refresh, `reconnect`
+        // reads the STALE `row`/`auth`/`tunnelDialUrl` from the last dial
+        // and sends the OLD bearer on the WS upgrade. Symptom in the
+        // wild: credential-rotated cycles present a stale bearer to the
+        // controller and get 401'd even though the DB was correctly
+        // rewritten with the new value. Regression pinned by
+        // tests/inspector/tunnel-routes-cycle-refresh.test.ts.
+        const fresh = await store.getController();
+        if (fresh) {
+          row = fresh;
+          auth = resolveAuthFromRow(fresh);
+          tunnelDialUrl = fresh.controllerUrl;
+        }
         await reconnect(reason, { manual: true });
       },
     }));
