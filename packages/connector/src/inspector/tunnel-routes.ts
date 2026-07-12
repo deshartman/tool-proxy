@@ -69,6 +69,24 @@ function setJsonHeaders(res: ServerResponse): void {
   res.setHeader("content-type", "application/json");
 }
 
+// Normalize a pasted Controller URL to the base URL the connector expects.
+// The controller UI's "Copy Controller URL" button copies the full WS endpoint
+// (e.g. https://tap-des.ngrok.dev/mcp-tunnel/tunnel) — but the connector
+// appends `/mcp-tunnel` itself in tunnel/client.ts before opening the WS.
+// Pasting the full URL would double-append and 404 on dial. Strip any
+// trailing `/mcp-tunnel[/…]` path plus any trailing slashes so the stored
+// value is always the bare scheme://host[:port] the connector wants.
+//
+// Idempotent: normalizing an already-base URL is a no-op.
+export function normalizeControllerUrl(url: string): string {
+  return url
+    .trim()
+    // strip trailing whitespace + any trailing /mcp-tunnel(/*)?
+    .replace(/\/mcp-tunnel(?:\/[^?#]*)?$/i, "")
+    // strip trailing slash
+    .replace(/\/+$/, "");
+}
+
 // GET /internal/tunnel/config
 async function handleGetConfig(
   _req: IncomingMessage,
@@ -146,10 +164,13 @@ async function handlePostCreds(
     return;
   }
 
-  // Build ControllerInput
+  // Build ControllerInput. Controller URL is normalized to the base URL —
+  // the connector's tunnel/client.ts appends `/mcp-tunnel` itself, so a
+  // paste of the full WS endpoint (which the controller UI's copy button
+  // hands out) would double-append and 404 on dial.
   const input: ControllerInput = {
     name,
-    controllerUrl,
+    controllerUrl: normalizeControllerUrl(controllerUrl),
     connectorName,
     environment: environment ?? null,
     authMode,

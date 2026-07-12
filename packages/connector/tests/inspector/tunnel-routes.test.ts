@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createTunnelRoutes, type TunnelConfigSummary } from "../../src/inspector/tunnel-routes.js";
+import { createTunnelRoutes, normalizeControllerUrl, type TunnelConfigSummary } from "../../src/inspector/tunnel-routes.js";
 import type { ConfigStore, ControllerInput, ControllerRow } from "../../src/config-store/index.js";
 
 function mockRequest(method: string, body?: unknown): IncomingMessage {
@@ -696,5 +696,120 @@ describe("tunnel routes", () => {
       expect(body.ok).toBe(false);
       expect(body.error).toContain("DB error");
     });
+  });
+});
+
+describe("normalizeControllerUrl", () => {
+  // The controller UI's "Copy Controller URL" button hands the operator the
+  // full WS endpoint (…/mcp-tunnel/tunnel), but the connector expects the
+  // base URL and appends /mcp-tunnel itself. These tests pin the strip
+  // behavior — anything ending in /mcp-tunnel[/…] gets trimmed, plus any
+  // trailing slashes.
+
+  it("leaves a bare base URL untouched", () => {
+    expect(normalizeControllerUrl("https://tap-des.ngrok.dev")).toBe("https://tap-des.ngrok.dev");
+  });
+
+  it("strips a single trailing /mcp-tunnel", () => {
+    expect(normalizeControllerUrl("https://tap-des.ngrok.dev/mcp-tunnel"))
+      .toBe("https://tap-des.ngrok.dev");
+  });
+
+  it("strips /mcp-tunnel/tunnel (the exact string the controller copy button emits)", () => {
+    expect(normalizeControllerUrl("https://tap-des.ngrok.dev/mcp-tunnel/tunnel"))
+      .toBe("https://tap-des.ngrok.dev");
+  });
+
+  it("strips /mcp-tunnel with a trailing slash", () => {
+    expect(normalizeControllerUrl("https://tap-des.ngrok.dev/mcp-tunnel/"))
+      .toBe("https://tap-des.ngrok.dev");
+  });
+
+  it("strips a plain trailing slash on a base URL", () => {
+    expect(normalizeControllerUrl("https://tap-des.ngrok.dev/"))
+      .toBe("https://tap-des.ngrok.dev");
+  });
+
+  it("strips multiple trailing slashes", () => {
+    expect(normalizeControllerUrl("https://tap-des.ngrok.dev///"))
+      .toBe("https://tap-des.ngrok.dev");
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(normalizeControllerUrl("  https://tap-des.ngrok.dev/mcp-tunnel  "))
+      .toBe("https://tap-des.ngrok.dev");
+  });
+
+  it("preserves an unrelated path so it can fail loudly on dial (rather than silently mangled)", () => {
+    // Someone pastes .../v2 or .../api — we DON'T assume that's wrong. Only
+    // /mcp-tunnel is the known-bad-suffix pattern. Unrelated paths pass
+    // through and error at dial time with a clear ECONNREFUSED / 404.
+    expect(normalizeControllerUrl("https://tap-des.ngrok.dev/api"))
+      .toBe("https://tap-des.ngrok.dev/api");
+  });
+
+  it("is idempotent (safe to run twice)", () => {
+    const once = normalizeControllerUrl("https://tap-des.ngrok.dev/mcp-tunnel/tunnel");
+    const twice = normalizeControllerUrl(once);
+    expect(twice).toBe(once);
+  });
+
+  it("case-insensitive match on /mcp-tunnel", () => {
+    expect(normalizeControllerUrl("https://tap-des.ngrok.dev/MCP-Tunnel/Tunnel"))
+      .toBe("https://tap-des.ngrok.dev");
+  });
+});
+
+describe("POST /internal/tunnel/creds — URL normalization integrated", () => {
+  it("stores the normalized (stripped) URL when the operator pastes the full WS endpoint", async () => {
+    let upsertedUrl: string | undefined;
+    const mockStore = {
+      getController: vi.fn().mockResolvedValue(null),
+      upsertController: vi.fn().mockImplementation(async (input: ControllerInput) => {
+        upsertedUrl = input.controllerUrl;
+        return {
+          id: "row-id",
+          name: input.name,
+          controllerUrl: input.controllerUrl,
+          connectorName: input.connectorName,
+          environment: input.environment,
+          authMode: input.authMode,
+          tunnelAuthToken: input.tunnelAuthToken ?? null,
+          oauthClientId: null,
+          oauthClientSecret: null,
+          oauthTokenUrl: null,
+          registrationToken: null,
+          enabled: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          lastConnectedAt: null,
+          lastDisconnectReason: null,
+        } as ControllerRow;
+      }),
+      deleteController: vi.fn(),
+    } as unknown as ConfigStore;
+
+    const routes = createTunnelRoutes({
+      configStore: mockStore,
+      dialTunnel: vi.fn().mockResolvedValue(undefined),
+      cycleTunnel: vi.fn(),
+    });
+
+    // Operator pastes the full WS endpoint (what the controller UI copies).
+    const req = mockRequest("POST", {
+      name: "test-row",
+      controllerUrl: "https://tap-des.ngrok.dev/mcp-tunnel/tunnel",
+      connectorName: "my-conn",
+      environment: "dev",
+      authMode: "static-bearer",
+      tunnelAuthToken: "ts_test",
+    });
+    (req as any).url = "/internal/tunnel/creds";
+    const res = mockResponse();
+
+    await routes.handlePostCreds(req, res);
+
+    expect(res._status).toBe(200);
+    expect(upsertedUrl).toBe("https://tap-des.ngrok.dev");
   });
 });
