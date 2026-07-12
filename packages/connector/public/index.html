@@ -70,10 +70,6 @@
             <dl class="tunnel-readout">
               <dt>Controller URL</dt>
               <dd><code id="tunnel-r-url"></code></dd>
-              <dt>Connector name</dt>
-              <dd><code id="tunnel-r-name"></code></dd>
-              <dt>Environment</dt>
-              <dd><code id="tunnel-r-env"></code></dd>
               <dt>Auth mode</dt>
               <dd><code id="tunnel-r-mode"></code></dd>
               <dt id="tunnel-r-bearer-label">Bearer</dt>
@@ -171,27 +167,16 @@
         <label class="tunnel-field">
           <span>Controller URL</span>
           <input type="text" name="controllerUrl" required placeholder="https://controller.example.com">
-        </label>
-        <label class="tunnel-field">
-          <span>Connector name</span>
-          <input type="text" name="connectorName" required placeholder="my-customer">
-          <small class="muted">Must match the controller-side <strong>MCP Tunnel</strong> row Name (case-sensitive) — the connectors-table row this WS binds to. Distinct from the Tunnel Security row whose bearer is pasted below; on the controller UI they're two separate rows under Conversation Agent → Settings → Connectors.</small>
-        </label>
-        <label class="tunnel-field">
-          <span>Row label (in this UI)</span>
-          <input type="text" name="name" required placeholder="twilio-prod">
-          <small class="muted">Free-form label for this controller row; shown in the readout.</small>
-        </label>
-        <label class="tunnel-field">
-          <span>Environment (optional)</span>
-          <input type="text" name="environment" placeholder="prod">
+          <small class="muted">Base URL of your controller. Trailing <code>/mcp-tunnel[/tunnel]</code> paths are stripped automatically.</small>
         </label>
 
-        <fieldset class="tunnel-authmode">
+        <fieldset class="tunnel-authmode" hidden id="tunnel-authmode-fieldset">
           <legend>Auth mode</legend>
           <label><input type="radio" name="authMode" value="static-bearer" checked> Static bearer</label>
           <label><input type="radio" name="authMode" value="oauth2-cc"> OAuth2 client_credentials</label>
         </fieldset>
+
+        <a href="#" id="tunnel-oauth-toggle" class="tunnel-oauth-toggle">▸ Use OAuth2 client_credentials instead</a>
 
         <div id="tunnel-static-fields" class="tunnel-authmode-fields">
           <label class="tunnel-field">

@@ -1572,8 +1572,6 @@ const elTunnelEditBtn      = document.getElementById('tunnel-edit-btn');
 const elTunnelForceBtn     = document.getElementById('tunnel-force-btn');
 const elTunnelActionStatus = document.getElementById('tunnel-action-status');
 const elTunnelRUrl       = document.getElementById('tunnel-r-url');
-const elTunnelRName      = document.getElementById('tunnel-r-name');
-const elTunnelREnv       = document.getElementById('tunnel-r-env');
 const elTunnelRMode      = document.getElementById('tunnel-r-mode');
 const elTunnelRBearerLabel = document.getElementById('tunnel-r-bearer-label');
 const elTunnelRBearer    = document.getElementById('tunnel-r-bearer');
@@ -1625,8 +1623,6 @@ function relativeTime(iso) {
 
 function renderTunnelConfigured(row) {
   elTunnelRUrl.textContent = row.controllerUrl;
-  elTunnelRName.textContent = row.connectorName;
-  elTunnelREnv.textContent = row.environment || '—';
   elTunnelRMode.textContent = row.authMode;
 
   // Auth-mode-conditional badge label
@@ -1700,10 +1696,7 @@ function openTunnelModal(mode /* 'configure' | 'edit' */) {
   const editing = mode === 'edit' && tunnelState.row;
   if (editing) {
     const r = tunnelState.row;
-    elTunnelForm.name.value = r.name;
     elTunnelForm.controllerUrl.value = r.controllerUrl;
-    elTunnelForm.connectorName.value = r.connectorName;
-    elTunnelForm.environment.value = r.environment ?? '';
     const modeRadio = elTunnelForm.querySelector(`input[name="authMode"][value="${r.authMode}"]`);
     if (modeRadio) modeRadio.checked = true;
     if (r.authMode === 'oauth2-cc') {
@@ -1713,16 +1706,51 @@ function openTunnelModal(mode /* 'configure' | 'edit' */) {
     // Show "leave blank to keep existing" hints when a secret is already set
     elTunnelTokenHint.hidden = !r.hasTunnelAuthToken;
     elTunnelSecretHint.hidden = !r.hasOauthClientSecret;
+    // Editing an OAuth2 row: show the OAuth fields on open (disclosure link
+    // stays visible to let the operator go back to static-bearer).
+    if (r.authMode === 'oauth2-cc') showOauthFields(true);
+    else showOauthFields(false);
   } else {
     elTunnelTokenHint.hidden = true;
     elTunnelSecretHint.hidden = true;
+    showOauthFields(false);  // Fresh configure always starts on static-bearer.
   }
   applyAuthModeToggle();
   elTunnelModal.hidden = false;
-  // Focus the first input for keyboard workflow
-  const first = elTunnelForm.querySelector('input[name="name"]');
+  // Focus the URL input for keyboard workflow — the two-field form starts there.
+  const first = elTunnelForm.querySelector('input[name="controllerUrl"]');
   if (first) setTimeout(() => first.focus(), 0);
 }
+
+// OAuth2 disclosure toggle — hides the static-bearer field, shows the three
+// OAuth fields, and swaps the disclosure link text.
+function showOauthFields(show) {
+  const authFieldset = document.getElementById('tunnel-authmode-fieldset');
+  const staticFields = elTunnelStaticFields;
+  const oauthFields = elTunnelOauthFields;
+  const toggleLink = document.getElementById('tunnel-oauth-toggle');
+  if (show) {
+    authFieldset.hidden = false;
+    staticFields.hidden = true;
+    oauthFields.hidden = false;
+    const oauthRadio = elTunnelForm.querySelector('input[name="authMode"][value="oauth2-cc"]');
+    if (oauthRadio) oauthRadio.checked = true;
+    if (toggleLink) toggleLink.textContent = '▾ Use static bearer instead';
+  } else {
+    authFieldset.hidden = true;
+    staticFields.hidden = false;
+    oauthFields.hidden = true;
+    const bearerRadio = elTunnelForm.querySelector('input[name="authMode"][value="static-bearer"]');
+    if (bearerRadio) bearerRadio.checked = true;
+    if (toggleLink) toggleLink.textContent = '▸ Use OAuth2 client_credentials instead';
+  }
+}
+
+document.getElementById('tunnel-oauth-toggle')?.addEventListener('click', (ev) => {
+  ev.preventDefault();
+  const oauthShown = !elTunnelOauthFields.hidden;
+  showOauthFields(!oauthShown);
+});
 
 function closeTunnelModal() {
   elTunnelModal.hidden = true;
@@ -1782,11 +1810,12 @@ elTunnelForm.addEventListener('submit', async (ev) => {
 
   const fd = new FormData(elTunnelForm);
   const authMode = String(fd.get('authMode') || 'static-bearer');
+  // Only two fields are operator-typed: controllerUrl + the auth secret(s).
+  // Legacy row-label / connector-name / environment fields were removed;
+  // the server fills defaults for the columns that still exist on the DB
+  // row (see handlePostCreds in tunnel-routes.ts).
   const payload = {
-    name: String(fd.get('name') || '').trim(),
     controllerUrl: String(fd.get('controllerUrl') || '').trim(),
-    connectorName: String(fd.get('connectorName') || '').trim(),
-    environment: String(fd.get('environment') || '').trim() || null,
     authMode,
   };
 

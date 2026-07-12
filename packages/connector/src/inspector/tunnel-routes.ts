@@ -69,6 +69,26 @@ function setJsonHeaders(res: ServerResponse): void {
   res.setHeader("content-type", "application/json");
 }
 
+// Derive a default row name / connector identity from the controller URL's
+// hostname (`https://tap-des.ngrok.dev` → `tap-des`). Used to fill columns
+// on the DB row that used to be operator-typed but are now server-side
+// cosmetic. Sent as X-Connector-Name on the WS upgrade until the controller
+// accepts name-less upgrades. Falls back to "connector" if the URL is
+// unparseable — that's a legitimate value; the operator can rename it in
+// the controller UI at any time.
+export function deriveDefaultNameFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname;
+    // First DNS label is usually the meaningful one (`tap-des` from
+    // `tap-des.ngrok.dev`). Strip anything non-alphanumeric-or-dash.
+    const label = host.split(".")[0]?.replace(/[^A-Za-z0-9-]/g, "") ?? "";
+    return label || "connector";
+  } catch {
+    return "connector";
+  }
+}
+
 // Normalize a pasted Controller URL to the base URL the connector expects.
 // The controller UI's "Copy Controller URL" button copies the full WS endpoint
 // (e.g. https://tap-des.ngrok.dev/mcp-tunnel/tunnel) — but the connector
@@ -148,31 +168,42 @@ async function handlePostCreds(
 
   const b = body as Record<string, unknown>;
 
-  // Validate required fields
-  const name = typeof b.name === "string" ? b.name : undefined;
+  // Two operator-required fields: controllerUrl + auth secret(s). Everything
+  // else the DB row's shape still requires (name, connectorName, environment)
+  // is filled with defaults derived from the URL — those columns are
+  // controller-side-cosmetic under the ID-based identity model and will be
+  // removed entirely once the controller's server-mint change lands (see
+  // .claude/plans/CONNECTOR-ID-AS-IDENTITY.md).
   const controllerUrl = typeof b.controllerUrl === "string" ? b.controllerUrl : undefined;
-  const connectorName = typeof b.connectorName === "string" ? b.connectorName : undefined;
-  const environment = b.environment === null || typeof b.environment === "string" ? b.environment : undefined;
   const authMode = b.authMode === "static-bearer" || b.authMode === "oauth2-cc" ? b.authMode : undefined;
 
-  if (!name || !controllerUrl || !connectorName || !authMode) {
+  if (!controllerUrl || !authMode) {
     res.statusCode = 400;
     res.end(JSON.stringify({
       ok: false,
-      error: "missing required fields: name, controllerUrl, connectorName, authMode"
+      error: "missing required fields: controllerUrl, authMode",
     }));
     return;
   }
 
-  // Build ControllerInput. Controller URL is normalized to the base URL —
-  // the connector's tunnel/client.ts appends `/mcp-tunnel` itself, so a
-  // paste of the full WS endpoint (which the controller UI's copy button
-  // hands out) would double-append and 404 on dial.
+  // Optional legacy fields — accepted from callers that still send them, but
+  // no longer required. Server auto-fills when absent.
+  const legacyName = typeof b.name === "string" && b.name ? b.name : undefined;
+  const legacyConnectorName = typeof b.connectorName === "string" && b.connectorName ? b.connectorName : undefined;
+  const legacyEnvironment = typeof b.environment === "string" && b.environment ? b.environment : null;
+
+  const normalizedUrl = normalizeControllerUrl(controllerUrl);
+
+  // Derive a default connector-identity string from the URL hostname. Used
+  // as X-Connector-Name on the WS upgrade until the controller accepts
+  // name-less upgrades (Path A). Once that lands, this field is unused.
+  const defaultName = deriveDefaultNameFromUrl(normalizedUrl);
+
   const input: ControllerInput = {
-    name,
-    controllerUrl: normalizeControllerUrl(controllerUrl),
-    connectorName,
-    environment: environment ?? null,
+    name: legacyName ?? defaultName,
+    controllerUrl: normalizedUrl,
+    connectorName: legacyConnectorName ?? defaultName,
+    environment: legacyEnvironment,
     authMode,
   };
 

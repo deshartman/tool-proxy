@@ -301,12 +301,12 @@ describe("tunnel routes — leak channels", () => {
         cycleTunnel: vi.fn(),
       });
 
-      // Missing connectorName → 400. Body still carries tunnelAuthToken —
-      // must not reflect it back in the error response.
+      // Missing controllerUrl → 400. Body still carries tunnelAuthToken —
+      // must not reflect it back in the error response. (controllerUrl and
+      // authMode are the only remaining required fields after the modal
+      // collapse; missing either triggers the 400.)
       const badInput = {
-        name: "test",
-        controllerUrl: "https://x.example.com",
-        // connectorName intentionally missing
+        // controllerUrl intentionally missing
         authMode: "static-bearer",
         tunnelAuthToken: SECRET,
       };
