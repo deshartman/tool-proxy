@@ -91,7 +91,7 @@ cp .env.example .env
 # edit .env:
 #   CONNECTOR_CREDS_SOURCE=env
 #   CONTROLLER_URL=https://your-controller.example.com
-#   CONNECTOR_NAME=<exact Name from the Tunnel Security row>
+#   CONNECTOR_NAME=<exact Name from the MCP Tunnel row (NOT the Tunnel Security row)>
 # then ONE of:
 #   TUNNEL_AUTH_TOKEN=ts_<...>                     (Twilio Auth Token / API Key row)
 # OR
@@ -313,7 +313,7 @@ docker run --rm \
   -e TUNNEL_AUTH_TOKEN=ts_... \
   -e CONNECTOR_NAME=my-customer \
   -e CONTROLLER_URL=https://controller.example.com \
-  # CONNECTOR_NAME must match the Tunnel Security row's Name on the controller (case-sensitive).
+  # CONNECTOR_NAME must match the MCP Tunnel row's Name on the controller (case-sensitive) — that's the connectors-table row this WS binds to, distinct from the Tunnel Security row that owns the bearer.
   # tunnel.name comes from connector.yaml; first boot mints a connectors row, restart reconnects via state file
   -p 9090:9090 \
   mcp-connector:0.1.0 start
