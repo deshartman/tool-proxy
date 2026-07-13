@@ -17,6 +17,43 @@
 // from the controller (or an inspector "Reload creds" click) calls this to
 // stop the child, swap env, respawn, and reconnect — without going through
 // the WS reconnect path. sameMcpServers() in boot/lifecycle stays untouched.
+//
+// INVARIANTS — read before editing. Each is enforced by inline comments
+// at the referenced line and (where marked) a test that fails CI on drift.
+//
+//   1. Spawn-mutation / __port gating (~stopEntry around line 636)
+//      spawnChild mutates spec.endpoint + stamps a hidden __port so
+//      connectServer works unchanged. That mutation flips isType1Spawn from
+//      true → false. stopEntry MUST clear both when __port is set, else a
+//      creds-driven restart skips respawn and dials the freed port. The
+//      __port gate leaves Type 2 http entries' author-supplied endpoint
+//      untouched.
+//
+//   2. Auth resolution ordering (resolveSpecHeaders, ~line 552)
+//      When the entry carries auth?: McpAuthSpec (set by controller-config),
+//      startEntry calls resolveSpecHeaders AFTER spawnChild (no-op for
+//      Type 2) and BEFORE connectServer. Sync shapes (none/bearer/header)
+//      go through resolve-mcp-auth.ts; OAuth2 client_credentials goes
+//      through resolve-mcp-auth-async.ts backed by a per-supervisor cache
+//      keyed on `${tokenUrl} ${clientId} ${clientSecret}`. Empty-string env
+//      values treated as missing.
+//
+//   3. Source/mcpId plumbing (~line 114, McpStatus.source)
+//      "yaml" (yaml-listed) / "local" (drop-in auto-detected via __dropin) /
+//      "controller-config" (controller-pushed). L2 rescan filters by
+//      "local" so yaml + controller-config entries are immune to drop-in
+//      rescan. register()/registerOne() default to "local" for drop-ins
+//      and "yaml" otherwise; controller-config coordinator overrides
+//      via registerOne(spec, { source: "controller-config", mcpId }).
+//
+//   4. NODE_PATH for drop-in spawns (computeDropinNodePath, ~line 63)
+//      Computed ONCE at module load. Walks ancestors of this module's
+//      import.meta.url and joins every node_modules with the platform
+//      delimiter. Required when MCP_DROPIN_DIR lives OUTSIDE the repo
+//      (prod: /var/lib/mcp-connector/customer-mcps/; dev: /tmp paths) —
+//      otherwise the child crashes with "Cannot find module 'zod'".
+//      Don't move to boot path or per-spawn recompute — import.meta.url
+//      doesn't change at runtime; the closure capture is intentional.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, createConnection } from "node:net";
