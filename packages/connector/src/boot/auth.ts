@@ -15,6 +15,7 @@
 // Pure function over the env map so this is trivially exercisable.
 
 import { OAuthClientCredentialsProvider } from "../auth/oauth-provider.js";
+import type { ControllerRow } from "../config-store/index.js";
 
 export interface AuthResolution {
   authToken: string | undefined;
@@ -24,7 +25,7 @@ export interface AuthResolution {
   status: string;
 }
 
-export function resolveAuth(
+export function resolveAuthFromEnv(
   configAuthToken: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): AuthResolution {
@@ -60,4 +61,37 @@ function requireOauthEnv(name: string, value: string | undefined): string {
     );
   }
   return value;
+}
+
+export function resolveAuthFromRow(row: ControllerRow): AuthResolution {
+  if (row.authMode === "oauth2-cc") {
+    if (!row.oauthClientId) {
+      throw new Error(`oauthClientId is required for row "${row.name}" when authMode is oauth2-cc`);
+    }
+    if (!row.oauthClientSecret) {
+      throw new Error(`oauthClientSecret is required for row "${row.name}" when authMode is oauth2-cc`);
+    }
+    if (!row.oauthTokenUrl) {
+      throw new Error(`oauthTokenUrl is required for row "${row.name}" when authMode is oauth2-cc`);
+    }
+    const provider = new OAuthClientCredentialsProvider(
+      row.oauthClientId,
+      row.oauthClientSecret,
+      row.oauthTokenUrl,
+    );
+    return {
+      authToken: undefined,
+      authProvider: provider,
+      status: `oauth2 (clientId=${row.oauthClientId})`,
+    };
+  }
+  // static-bearer mode
+  if (!row.tunnelAuthToken) {
+    throw new Error(`tunnelAuthToken is required for row "${row.name}" when authMode is static-bearer`);
+  }
+  return {
+    authToken: row.tunnelAuthToken,
+    authProvider: undefined,
+    status: `set (len=${row.tunnelAuthToken.length})`,
+  };
 }

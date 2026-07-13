@@ -28,6 +28,13 @@
 # Per-MCP secrets (e.g. TWILIO_ACCOUNT_SID) live in the entry's dir/.env
 # and are passed only to that child process.
 
+# ---
+# The 'tunnel:' block below is used ONLY when CONNECTOR_CREDS_SOURCE=env.
+# Under the default 'db' mode, tunnel identity is managed in Postgres via
+# the inspector UI at http://127.0.0.1:9090/. Leaving this block in place
+# under 'db' mode is harmless but will log a WARN at boot.
+# ---
+
 tunnel:
   controller_url: ${CONTROLLER_URL}
   # Customer-chosen connector name; must be unique on the controller. On

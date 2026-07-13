@@ -19,7 +19,7 @@ __pycache__/
 # the repo root; postbuild.mjs copies them into packages/connector/ so they
 # ship in the npm tarball).
 .env
-*.env
+*.env.*
 !.env.example
 !*.env.example
 
@@ -80,3 +80,4 @@ mcp/local/crm/
 # connector image. Decision 2026-06-24 — kept as dev scaffolding only,
 # parallels mcp/local/crm/.
 mock/
+.local/

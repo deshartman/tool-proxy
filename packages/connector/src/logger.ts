@@ -73,6 +73,27 @@ const REDACT_PATHS: string[] = [
   "*.apiKey",
   "authToken",
   "*.authToken",
+  // Step 11: tunnel-cred field names carried on decrypted ControllerRow /
+  // encrypted pg column names. `authToken` above only matches that literal
+  // key — pino redact paths are exact, so we must list every distinct
+  // sensitive field on the row explicitly.
+  "tunnelAuthToken",
+  "*.tunnelAuthToken",
+  "oauthClientSecret",
+  "*.oauthClientSecret",
+  "registrationToken",
+  "*.registrationToken",
+  "tunnel_auth_token_ct",
+  "*.tunnel_auth_token_ct",
+  "oauth_client_secret_ct",
+  "*.oauth_client_secret_ct",
+  "registration_token_ct",
+  "*.registration_token_ct",
+  // Master key material — if the resolveMasterKey() struct is ever logged.
+  "masterKey.bytes",
+  "*.masterKey.bytes",
+  "key.bytes",
+  "*.key.bytes",
 ];
 
 function getRoot(): Logger {

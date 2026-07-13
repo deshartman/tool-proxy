@@ -171,3 +171,31 @@ describe("env isolation across tests", () => {
     expect(path).not.toMatch(/connector-state-test-/);
   });
 });
+
+describe("writeState / clearRegistrationToken — empty-path db-mode guard", () => {
+  // Regression: bootFromDb passes `statePath: ""` to the frame-router
+  // because the registrationToken lives in Postgres (via
+  // ConfigStore.updateRegistrationToken), not on disk. The default
+  // register-ack handler in frame-router.ts still calls writeState with
+  // whatever statePath it was given — before this guard, that meant
+  // `renameSync('.tmp', '')` → ENOENT on every successful register-ack
+  // under db mode. The ERROR line scared operators who then thought the
+  // token hadn't persisted (it had, via the db-mode custom onframe hook).
+
+  it("writeState is a no-op when path is empty string", () => {
+    expect(() => writeState({ registrationToken: "tok_x" }, "")).not.toThrow();
+    // No side effects to check — the point is no crash and no file write.
+  });
+
+  it("clearRegistrationToken is a no-op when path is empty string", () => {
+    expect(() => clearRegistrationToken("")).not.toThrow();
+  });
+
+  it("writeState still writes normally when given a real path", () => {
+    const dir = makeTempRoot();
+    const path = join(dir, "state.json");
+    writeState({ registrationToken: "tok_real" }, path);
+    expect(existsSync(path)).toBe(true);
+    expect(readState(path).registrationToken).toBe("tok_real");
+  });
+});

@@ -134,6 +134,12 @@ const RING_SIZE = 500;
 // error message that the inspector route surfaces as `{ok:false,error}`.
 export type ToolDispatch = (server: string, tool: string, args: unknown) => Promise<unknown>;
 
+export interface TunnelRouteHandlers {
+  handleGetConfig: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  handlePostCreds: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  handleForceReregister: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+}
+
 export class Inspector {
   // Caller can wire this to its reconnect routine; invoked when the UI
   // POSTs /reconnect.
@@ -147,12 +153,24 @@ export class Inspector {
   // boot loop; left undefined here means the routes return 503.
   mcpActions?: McpActions;
 
+  // Tunnel routes — only wired in DB mode (bootFromDb). When undefined,
+  // the routes return 404 (env mode).
+  // Accessed by startInspector to dispatch tunnel routes.
+  tunnelRoutes?: TunnelRouteHandlers;
+
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
-  private readonly frames: FrameTap[] = [];
+  private readonly frames: FrameTap[] = []
   private readonly current: InspectorState;
 
   constructor(initial: InspectorState) {
     this.current = initial;
+  }
+
+  // Wire tunnel routes — called by bootFromDb after creating the inspector.
+  // Routes are loopback-only (127.0.0.1) and allow operators to configure
+  // the controller tunnel via the inspector UI.
+  wireTunnelRoutes(routes: TunnelRouteHandlers): void {
+    this.tunnelRoutes = routes;
   }
 
   // Read-only handle for the IPC routes below.
@@ -664,6 +682,30 @@ export function startInspector(port: number, inspector: Inspector): void {
       void handleEnvKeys(req, res, inspector, mcp);
       return;
     }
+
+    // Tunnel routes — only wired in DB mode (bootFromDb). Return 404 in env mode.
+    if (path === "/internal/tunnel/config" && req.method === "GET") {
+      if (inspector.tunnelRoutes) {
+        void inspector.tunnelRoutes.handleGetConfig(req, res);
+        return;
+      }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/tunnel/creds" && req.method === "POST") {
+      if (inspector.tunnelRoutes) {
+        void inspector.tunnelRoutes.handlePostCreds(req, res);
+        return;
+      }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/tunnel/force-reregister" && req.method === "POST") {
+      if (inspector.tunnelRoutes) {
+        void inspector.tunnelRoutes.handleForceReregister(req, res);
+        return;
+      }
+      res.statusCode = 404; res.end(); return;
+    }
+
     if (path === "/" || path === "/index.html") { void serveStatic(res, "index.html"); return; }
     if (path === "/app.js" || path === "/style.css") { void serveStatic(res, path.slice(1)); return; }
     res.statusCode = 404;

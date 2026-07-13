@@ -43,6 +43,55 @@
 
   <main id="main">
     <aside id="left-col">
+      <!-- Tunnel panel — DB mode only. When /internal/tunnel/config returns
+           404 (env mode), the panel renders the legacy-mode banner instead.
+           Three sub-views: env-mode-banner, empty (needs configuration),
+           configured (readout + Edit / Force re-registration buttons). -->
+      <section id="tunnel-pane" class="collapsible" data-key="tunnel">
+        <h2 class="section-head">
+          <span class="caret">▾</span>
+          <span class="section-title">Tunnel</span>
+          <span id="tunnel-mode-badge" class="tunnel-mode-badge" hidden></span>
+        </h2>
+        <div class="section-body">
+          <div id="tunnel-loading" class="empty">Loading tunnel configuration…</div>
+
+          <div id="tunnel-env-mode" class="tunnel-env-mode" hidden>
+            <p>Tunnel identity is configured via <code>.env</code> (<code>CONNECTOR_CREDS_SOURCE=env</code>).</p>
+            <p class="muted">To manage tunnel credentials from this UI, set <code>CONNECTOR_CREDS_SOURCE=db</code> and restart the connector.</p>
+          </div>
+
+          <div id="tunnel-empty" class="tunnel-empty" hidden>
+            <p>No tunnel configured.</p>
+            <button id="tunnel-configure-btn" type="button" class="tunnel-primary-btn">Configure tunnel</button>
+          </div>
+
+          <div id="tunnel-configured" class="tunnel-configured" hidden>
+            <dl class="tunnel-readout">
+              <dt>Display name</dt>
+              <dd><code id="tunnel-r-label"></code></dd>
+              <dt>Controller URL</dt>
+              <dd><code id="tunnel-r-url"></code></dd>
+              <dt>Auth mode</dt>
+              <dd><code id="tunnel-r-mode"></code></dd>
+              <dt id="tunnel-r-bearer-label">Bearer</dt>
+              <dd><span id="tunnel-r-bearer" class="tunnel-badge"></span></dd>
+              <dt>Registration</dt>
+              <dd><span id="tunnel-r-reg" class="tunnel-badge"></span></dd>
+              <dt>Last connected</dt>
+              <dd id="tunnel-r-connected"></dd>
+              <dt id="tunnel-r-disc-label" hidden>Last disconnect</dt>
+              <dd id="tunnel-r-disc" hidden></dd>
+            </dl>
+            <div class="tunnel-actions">
+              <button id="tunnel-edit-btn" type="button">Edit</button>
+              <button id="tunnel-force-btn" type="button">Force re-registration</button>
+            </div>
+            <div id="tunnel-action-status" class="tunnel-action-status" hidden></div>
+          </div>
+        </div>
+      </section>
+
       <section id="manifest-pane" class="collapsible" data-key="manifest">
         <h2 class="section-head">
           <span class="caret">▾</span>
@@ -106,6 +155,68 @@
       <div id="detail-content" hidden></div>
     </section>
   </main>
+
+  <!-- Tunnel configuration modal. Hidden by default; shown when the operator
+       clicks "Configure tunnel" (empty state) or "Edit" (configured state).
+       Under `Edit`, the non-secret fields are pre-filled from the row;
+       password inputs stay empty — leaving them blank keeps the existing
+       sealed value on the server side (matches the mcp-creds pattern). -->
+  <div id="tunnel-modal" class="tunnel-modal" hidden>
+    <div class="tunnel-modal-backdrop" data-close="1"></div>
+    <div class="tunnel-modal-panel" role="dialog" aria-modal="true" aria-labelledby="tunnel-modal-title">
+      <h3 id="tunnel-modal-title">Configure tunnel</h3>
+      <form id="tunnel-form" autocomplete="off">
+        <label class="tunnel-field">
+          <span>Display name</span>
+          <input type="text" name="displayName" placeholder="twilio-dev">
+          <small class="muted">Free-form label shown in this UI and in logs. Defaults to the URL hostname if left blank.</small>
+        </label>
+
+        <label class="tunnel-field">
+          <span>Controller URL</span>
+          <input type="text" name="controllerUrl" required placeholder="https://controller.example.com">
+          <small class="muted">Base URL of your controller. Trailing <code>/mcp-tunnel[/tunnel]</code> paths are stripped automatically.</small>
+        </label>
+
+        <fieldset class="tunnel-authmode" hidden id="tunnel-authmode-fieldset">
+          <legend>Auth mode</legend>
+          <label><input type="radio" name="authMode" value="static-bearer" checked> Static bearer</label>
+          <label><input type="radio" name="authMode" value="oauth2-cc"> OAuth2 client_credentials</label>
+        </fieldset>
+
+        <a href="#" id="tunnel-oauth-toggle" class="tunnel-oauth-toggle">▸ Use OAuth2 client_credentials instead</a>
+
+        <div id="tunnel-static-fields" class="tunnel-authmode-fields">
+          <label class="tunnel-field">
+            <span>Tunnel auth token <span id="tunnel-token-hint" class="muted" hidden>(leave blank to keep existing)</span></span>
+            <input type="password" name="tunnelAuthToken" autocomplete="new-password" placeholder="ts_…">
+          </label>
+        </div>
+
+        <div id="tunnel-oauth-fields" class="tunnel-authmode-fields" hidden>
+          <label class="tunnel-field">
+            <span>OAuth Client ID</span>
+            <input type="text" name="oauthClientId" autocomplete="off">
+          </label>
+          <label class="tunnel-field">
+            <span>OAuth Client Secret <span id="tunnel-secret-hint" class="muted" hidden>(leave blank to keep existing)</span></span>
+            <input type="password" name="oauthClientSecret" autocomplete="new-password">
+          </label>
+          <label class="tunnel-field">
+            <span>OAuth Token URL</span>
+            <input type="text" name="oauthTokenUrl" placeholder="https://oauth.example.com/token">
+          </label>
+        </div>
+
+        <div id="tunnel-form-error" class="tunnel-form-error" hidden></div>
+
+        <div class="tunnel-form-actions">
+          <button type="button" data-close="1">Cancel</button>
+          <button type="submit" id="tunnel-form-submit" class="tunnel-primary-btn">Save &amp; connect</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { resolveAuth } from "../../src/boot/auth.js";
+import { resolveAuthFromEnv } from "../../src/boot/auth.js";
 import { OAuthClientCredentialsProvider } from "../../src/auth/oauth-provider.js";
 
-// resolveAuth is the auth-posture dispatcher — pure function over an
+// resolveAuthFromEnv is the auth-posture dispatcher — pure function over an
 // injected env map. The user-facing missing-env scenarios (OAUTH_CLIENT_ID
 // set but OAUTH_CLIENT_SECRET missing, neither posture configured, etc.)
 // are now covered by tests/boot/require-env.test.ts because requireEnv()
@@ -16,7 +16,7 @@ import { OAuthClientCredentialsProvider } from "../../src/auth/oauth-provider.js
 // fail-fast path — but we don't enumerate every missing-OAUTH-var case
 // because that's requireEnv's job now.
 
-describe("resolveAuth — pure-function contract", () => {
+describe("resolveAuthFromEnv — pure-function contract", () => {
   it("returns an OAuthClientCredentialsProvider when all three OAUTH_* vars are set", () => {
     const env = {
       OAUTH_CLIENT_ID: "client_test",
@@ -24,7 +24,7 @@ describe("resolveAuth — pure-function contract", () => {
       OAUTH_TOKEN_URL: "https://oauth.example.com/token",
     } as NodeJS.ProcessEnv;
 
-    const result = resolveAuth(undefined, env);
+    const result = resolveAuthFromEnv(undefined, env);
 
     expect(result.authToken).toBeUndefined();
     expect(result.authProvider).toBeInstanceOf(OAuthClientCredentialsProvider);
@@ -39,7 +39,7 @@ describe("resolveAuth — pure-function contract", () => {
     const env = {} as NodeJS.ProcessEnv;
     const sensitive = "ts_secret_value_should_never_appear_in_logs";
 
-    const result = resolveAuth(sensitive, env);
+    const result = resolveAuthFromEnv(sensitive, env);
 
     expect(result.authProvider).toBeUndefined();
     expect(result.authToken).toBe(sensitive);
@@ -58,7 +58,7 @@ describe("resolveAuth — pure-function contract", () => {
       OAUTH_TOKEN_URL: "https://oauth.example.com/token",
     } as NodeJS.ProcessEnv;
 
-    const result = resolveAuth("ts_static_fallback", env);
+    const result = resolveAuthFromEnv("ts_static_fallback", env);
 
     expect(result.authProvider).toBeInstanceOf(OAuthClientCredentialsProvider);
     expect(result.authToken).toBeUndefined();
@@ -71,7 +71,7 @@ describe("resolveAuth — pure-function contract", () => {
     // flowing into TunnelClient.
     const env = {} as NodeJS.ProcessEnv;
 
-    expect(() => resolveAuth(undefined, env)).toThrow(/tunnel auth missing/);
+    expect(() => resolveAuthFromEnv(undefined, env)).toThrow(/tunnel auth missing/);
   });
 
   it("default-arg branch — falls back to process.env when no env map is passed", () => {
@@ -79,7 +79,7 @@ describe("resolveAuth — pure-function contract", () => {
     vi.stubEnv("OAUTH_CLIENT_SECRET", "secret_from_process_env");
     vi.stubEnv("OAUTH_TOKEN_URL", "https://oauth.example.com/token");
 
-    const result = resolveAuth(undefined);
+    const result = resolveAuthFromEnv(undefined);
 
     expect(result.authProvider).toBeInstanceOf(OAuthClientCredentialsProvider);
     expect(result.status).toContain("client_from_process_env");

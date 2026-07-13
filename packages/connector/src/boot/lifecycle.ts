@@ -34,16 +34,28 @@ import { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
 import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
-import { resolveAuth } from "./auth.js";
+import { resolveAuthFromEnv, resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
+import { resolveCredsSource } from "./creds-source.js";
+import { ConfigStore, type ControllerRow } from "../config-store/index.js";
+import { initSodium } from "../config-store/seal.js";
+import { resolveMasterKey } from "../config-store/master-key.js";
+import { createTunnelRoutes } from "../inspector/tunnel-routes.js";
 import { envOptional, envString, envNumber } from "../env.js";
+import { unlinkSync } from "node:fs";
 
 const log = createLogger("connector");
 // Adapter for downstream callbacks that take `(msg: string) => void`.
 const logLine = log.info.bind(log);
 
 export async function boot(): Promise<void> {
+  const credsSource = resolveCredsSource();
+  if (credsSource === "env") { await bootFromEnv(); return; }
+  await bootFromDb();
+}
+
+async function bootFromEnv(): Promise<void> {
   // Preflight: every required env var checked in one pass before yaml load
   // or auth resolution. Throws a consolidated error naming all missing
   // pieces so an admin fixes them in one .env edit, not boot-fix-reboot
@@ -62,7 +74,7 @@ export async function boot(): Promise<void> {
     : envNumber("INSPECTOR_PORT", 9090);
 
   const config = loadConfig(configPath);
-  const auth = resolveAuth(config.tunnel.auth_token);
+  const auth = resolveAuthFromEnv(config.tunnel.auth_token);
 
   // Identity: read the persisted registrationToken (if any). On first connect
   // it's absent and we send `name` only — the controller mints a row and
@@ -695,6 +707,609 @@ export async function boot(): Promise<void> {
       inspector?.setManifest(manifest);
 
       await connectTunnel("reconnect");
+    } finally {
+      reconnecting = false;
+    }
+  }
+
+  function startTimers(): void {
+    if (heartbeatTimer || discoveryTimer) return;
+    heartbeatTimer = setInterval(() => {
+      tunnel?.send({ type: "heartbeat", ts: Date.now() });
+    }, config.policy.heartbeat_interval_ms);
+    discoveryTimer = setInterval(() => {
+      void refreshManifestAndPushDelta();
+    }, config.policy.discovery_interval_ms);
+  }
+
+  function stopTimers(): void {
+    if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = undefined; }
+    if (discoveryTimer) { clearInterval(discoveryTimer); discoveryTimer = undefined; }
+  }
+
+  async function refreshManifestAndPushDelta(): Promise<void> {
+    try {
+      const nextManifest = await buildManifest(
+        config,
+        servers,
+        version,
+        (name) => supervisor.fetchEnvKeys(name),
+        (name) => approval.isApproved(name),
+        dropinSpecsByName,
+      );
+      const delta = diffManifest(manifest, nextManifest);
+      manifest = nextManifest;
+      inspector?.setManifest(nextManifest);
+      for (const server of nextManifest.servers) supervisor.setToolsCount(server.name, server.tools.length);
+      inspector?.setMcpStatuses(supervisor.statusList());
+      if (!isEmptyDelta(delta)) {
+        tunnel?.send({ type: "manifest-delta", delta });
+        log.info(
+          { added: delta.added.length, removed: delta.removed.length, changed: delta.changed.length },
+          `pushed manifest-delta`,
+        );
+      }
+    } catch (error) {
+      log.error({ err: error as Error }, `discovery refresh failed`);
+    }
+  }
+
+  async function onSighup(): Promise<void> {
+    try {
+      const nextConfig = loadConfig(configPath);
+      if (!sameMcpServers(config.mcp_servers, nextConfig.mcp_servers)) {
+        log.warn(`SIGHUP: mcp_servers list changed — restart required for live reconnect; ignoring this reload`);
+        return;
+      }
+      Object.assign(config, { policy: nextConfig.policy });
+      log.info(`SIGHUP: config reloaded`);
+      await refreshManifestAndPushDelta();
+    } catch (error) {
+      log.error({ err: error as Error }, `SIGHUP reload failed`);
+    }
+  }
+}
+
+async function bootFromDb(): Promise<void> {
+  requireEnv();
+
+  // WARN once for any legacy per-controller env var still present. These
+  // belonged to `env` mode; under `db` mode they're silently ignored, which
+  // makes a "why isn't my rotated bearer taking effect?" support ticket
+  // very easy to misread. Naming each stray var in the log is the cheap
+  // signal that steers the operator to the inspector UI. Only fires in
+  // `db` mode — `bootFromEnv` REQUIRES these vars, so warning there would
+  // be nonsense.
+  for (const name of ["CONTROLLER_URL", "CONNECTOR_NAME", "TUNNEL_AUTH_TOKEN", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET", "OAUTH_TOKEN_URL"]) {
+    if (envOptional(name)) {
+      log.warn(`legacy per-controller env var '${name}' present but ignored (CONNECTOR_CREDS_SOURCE=db); remove from .env`);
+    }
+  }
+
+  await initSodium();
+  const masterKey = resolveMasterKey();
+  const store = await ConfigStore.open(masterKey);
+
+  const configPath: string = envOptional("CONNECTOR_CONFIG") as string;
+  const version = envString("CONNECTOR_VERSION", "dev");
+  const inspectorPort = process.env.INSPECTOR_PORT === "0"
+    ? 0
+    : envNumber("INSPECTOR_PORT", 9090);
+
+  const config = loadConfig(configPath);
+
+  // WARN if legacy tunnel: block is present in yaml (db mode ignores it)
+  if (config.tunnel) {
+    log.warn("legacy 'tunnel:' block in connector.yaml ignored under CONNECTOR_CREDS_SOURCE=db; remove it from your yaml");
+  }
+
+  // Live mutable references — replaced on each reconnect.
+  // Hoisted above the getController() call so the dialTunnel closure (wired
+  // into the inspector routes before we know whether the DB has a row) can
+  // safely assign into them. Under the empty-DB boot path these stay
+  // undefined until an operator submits the Configure Tunnel modal, at
+  // which point dialTunnel populates them before invoking connectTunnelDb.
+  // Prior to hoisting, `let auth = …` sat inside the row-exists branch and
+  // the closure hit a TDZ error ("Cannot access 'auth' before initialization")
+  // whenever the paste flow fired in empty-DB mode.
+  let tunnel: TunnelClient | undefined;
+  let row: ControllerRow | null = null;
+  let auth: AuthResolution | undefined = undefined;
+  let tunnelDialUrl: string | undefined = undefined;
+  let stateCleared = false;  // track if we've already cleared .connector-state.json
+
+  // Forward declaration: inspector constructed below, referenced by callbacks.
+  let inspector: Inspector | undefined;
+
+  const webhooks = new WebhookRegistry({
+    sendFrame: (frame) => {
+      if (tunnel?.state !== "open") return false;
+      tunnel.send(frame);
+      return true;
+    },
+    onDispatched: () => inspector?.publishWebhookSnapshot(),
+  });
+
+  inspector = inspectorPort > 0
+    ? new Inspector({
+        controllerUrl: "http://127.0.0.1:0",  // placeholder, updated when row is loaded
+        state: "connecting",
+        webhooks,
+      })
+    : undefined;
+
+  let heartbeatTimer: NodeJS.Timeout | undefined;
+  let discoveryTimer: NodeJS.Timeout | undefined;
+  let reconnecting = false;
+  let shuttingDown = false;
+
+  const reconnectCtl = new ReconnectController({
+    getPolicy: () => config.policy.reconnect,
+    onFire: () => { void reconnect(`auto attempt ${reconnectCtl.attemptCount()}`); },
+    onReconnecting: (info) => inspector?.setReconnecting(info),
+    log,
+  });
+
+  if (inspector) {
+    inspector.onReconnect = () => { void reconnect("inspector requested", { manual: true }); };
+    startInspector(inspectorPort, inspector);
+
+    // Wire tunnel routes for DB mode — allows inspector UI to configure tunnel
+    inspector.wireTunnelRoutes(createTunnelRoutes({
+      configStore: store,
+      dialTunnel: async (r) => {
+        // Update shared references with fresh values from the row
+        row = r;
+        auth = resolveAuthFromRow(r);
+        tunnelDialUrl = r.controllerUrl;
+        await connectTunnelDb("inspector-dial");
+      },
+      cycleTunnel: async (reason) => {
+        // Re-read the row from Postgres before redialing — an inspector-
+        // triggered cycleTunnel means the DB was just upserted (bearer
+        // rotated, URL changed, etc.). Without this refresh, `reconnect`
+        // reads the STALE `row`/`auth`/`tunnelDialUrl` from the last dial
+        // and sends the OLD bearer on the WS upgrade. Symptom in the
+        // wild: credential-rotated cycles present a stale bearer to the
+        // controller and get 401'd even though the DB was correctly
+        // rewritten with the new value. Regression pinned by
+        // tests/inspector/tunnel-routes-cycle-refresh.test.ts.
+        const fresh = await store.getController();
+        if (fresh) {
+          row = fresh;
+          auth = resolveAuthFromRow(fresh);
+          tunnelDialUrl = fresh.controllerUrl;
+        }
+        await reconnect(reason, { manual: true });
+      },
+    }));
+  }
+
+  // Discover drop-in MCPs
+  const yamlNames = new Set(config.mcp_servers.map((s) => s.name));
+  const dropins = discoverDropins({ yamlNames });
+  if (dropins.length > 0) {
+    log.info(
+      { dropins: dropins.map((d) => d.name) },
+      `discovered drop-in MCPs from ${envOptional("MCP_DROPIN_DIR") ?? "default dir"}`,
+    );
+  }
+  const allSpecs: SupervisedSpec[] = [...config.mcp_servers, ...dropins];
+
+  const dropinSpecsByName = new Map<string, DropinSpec>(dropins.map((spec) => [spec.name, spec]));
+
+  const servers = new Map<string, McpServerConnection>();
+
+  const notifications = new NotificationForwarder(log);
+
+  const supervisor = new McpSupervisor({
+    log,
+    servers,
+    onSpawn: ({ name, envSources }) => {
+      const dirEnvKeys = Object.entries(envSources).filter(([, src]) => src === "dir/.env").map(([k]) => k);
+      const controllerEnvKeys = Object.entries(envSources).filter(([, src]) => src === "controller").map(([k]) => k);
+      log.info(
+        { name, controller: controllerEnvKeys, dirDotEnv: dirEnvKeys },
+        `mcp spawn env-sources`,
+      );
+    },
+    onRestart: async (name) => {
+      log.info({ name }, `mcp restart complete — refreshing manifest`);
+      await refreshManifestAndPushDelta();
+    },
+    onConnect: (name, connection) => {
+      notifications.attachToConnection(name, connection);
+    },
+  });
+  supervisor.register(allSpecs);
+
+  const mcpConfig = new McpConfigCoordinator({
+    send: () => log.warn(`mcp-config send before tunnel bind — dropping frame`),
+    supervisor,
+    log,
+  });
+
+  const approval = new ApprovalCoordinator({
+    send: () => log.warn(`approval send before tunnel bind — dropping frame`),
+    supervisor,
+    log,
+    onManifestChange: () => refreshManifestAndPushDelta(),
+  });
+
+  const localMcps = new LocalMcpsCoordinator({
+    send: () => log.warn(`local-mcps send before tunnel bind — dropping frame`),
+    supervisor,
+    log,
+    yamlNames,
+    onApplied: () => refreshManifestAndPushDelta(),
+    onMcpAdded: async (name) => {
+      const status = supervisor.statusList().find((s) => s.name === name);
+      const isCustomerDropin = status?.source === "local";
+      if (isCustomerDropin) {
+        const fresh = discoverDropins({ yamlNames });
+        for (const spec of fresh) dropinSpecsByName.set(spec.name, spec);
+
+        try {
+          const envKeys = await supervisor.fetchEnvKeys(name);
+          const conn = servers.get(name);
+          const tools = conn ? await conn.listTools() : [];
+          approval.emitDiscovered({
+            mcp: name,
+            envKeys,
+            tools: tools.map((t) => ({ name: t.name, description: t.description })),
+          });
+        } catch (err) {
+          log.warn({ name, err: err as Error }, `mcp-discovered emission for newly-added drop-in failed`);
+        }
+        return;
+      }
+      try {
+        await inspector?.mcpActions?.reloadCreds(name);
+      } catch (err) {
+        log.warn({ name, err: err as Error }, `creds-request for newly-added drop-in failed — will retry on next reconnect`);
+      }
+    },
+  });
+
+  log.info(`connecting to ${allSpecs.length} local MCP server(s)`);
+  await supervisor.startAll();
+  log.info({ servers: [...servers.keys()] }, `connected to local servers`);
+  inspector?.setMcpStatuses(supervisor.statusList());
+
+  let manifest: ToolManifest = await buildManifest(
+    config,
+    servers,
+    version,
+    (name) => supervisor.fetchEnvKeys(name),
+    (name) => approval.isApproved(name),
+    dropinSpecsByName,
+  );
+  validateManifestSchemas(manifest, config);
+  log.info({ tools: countTools(manifest) }, `built manifest`);
+  for (const server of manifest.servers) supervisor.setToolsCount(server.name, server.tools.length);
+  inspector?.setManifest(manifest);
+  inspector?.setMcpStatuses(supervisor.statusList());
+
+  if (inspector) {
+    inspector.toolDispatch = async (serverName, toolName, args) => {
+      const server = servers.get(serverName);
+      if (!server) throw new Error(`no local MCP server '${serverName}'`);
+      const isDropin = dropinSpecsByName.has(serverName);
+      if (isDropin && !approval.isApproved(serverName)) {
+        throw new Error(`MCP '${serverName}' is awaiting controller approval — tool calls are blocked`);
+      }
+      return server.callTool(toolName, args, {
+        timeoutMs: config.policy.tool_timeout_ms,
+      });
+    };
+  }
+
+  // Get controller row from DB
+  row = await store.getController();
+  if (!row) {
+    log.info(`no controller row; waiting for inspector configuration at http://127.0.0.1:${inspectorPort}/`);
+    // Empty-DB path — DO NOT construct TunnelClient. Inspector + MCPs stay running.
+    return;
+  }
+
+  auth = resolveAuthFromRow(row);
+  const registrationToken = row.registrationToken ?? undefined;
+  const identityStatus = registrationToken
+    ? `reconnect (token len=${registrationToken.length})`
+    : `first-connect (name="${row.connectorName}")`;
+  log.info(
+    { name: row.connectorName, environment: row.environment, authToken: auth.status, identity: identityStatus },
+    `config loaded`,
+  );
+
+  tunnelDialUrl = row.controllerUrl;
+
+  if (inspector) {
+    inspector.setIdentity(
+      registrationToken
+        ? { kind: "bound", tokenLen: registrationToken.length }
+        : { kind: "first-connect" },
+    );
+    inspector.setHeader({
+      connectorName: row.connectorName,
+      environment: row.environment ?? undefined,
+      version,
+    });
+  }
+
+  await connectTunnelDb("initial");
+
+  // SIGHUP — reload YAML, rebuild manifest, push delta.
+  process.on("SIGHUP", () => { void onSighup(); });
+
+  // Graceful shutdown.
+  const shutdown = (signal: string): void => {
+    shuttingDown = true;
+    log.info({ signal }, `shutting down`);
+    reconnectCtl.cancel();
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (discoveryTimer) clearInterval(discoveryTimer);
+    tunnel?.close(`signal:${signal}`);
+    void supervisor.stopAll().then(() => process.exit(0));
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  // ─── connect / reconnect ────────────────────────────────────────────────
+  async function connectTunnelDb(reason: string): Promise<void> {
+    if (!row || !auth || !tunnelDialUrl) return;  // defensive — empty-DB path leaves these undefined
+    // Always read the CURRENT registration token from the row. The
+    // top-level `const registrationToken` is a snapshot from the
+    // row-exists boot path; under the empty-DB paste flow it was never
+    // initialized, and referencing it inside this closure previously
+    // threw TDZ. `row.registrationToken` is authoritative on every dial.
+    const currentToken = row.registrationToken ?? undefined;
+    inspector?.setState("connecting");
+    log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
+    const pendingTunnel = new TunnelClient(tunnelDialUrl, auth.authToken, row.connectorName, auth.authProvider);
+    pendingTunnel.onerror = (error) => log.error({ err: error }, `tunnel error`);
+    if (inspector) {
+      pendingTunnel.onstate = (tunnelState) => inspector.setState(tunnelState);
+      pendingTunnel.ontap = (tap) => inspector.recordTap(tap);
+    }
+    pendingTunnel.onclose = () => {
+      log.info(`tunnel closed`);
+      webhooks.onTunnelClose();
+      notifications.unbind();
+      stopTimers();
+      if (shuttingDown) return;
+      if (!config.policy.reconnect.enabled) return;
+      if (reconnectCtl.isRejected()) {
+        log.warn(`auto-reconnect suppressed: controller rejected the registration — clear DB registration and click Reconnect`);
+        return;
+      }
+      reconnectCtl.schedule();
+    };
+
+    try {
+      await pendingTunnel.connect();
+    } catch (error) {
+      log.error({ err: error as Error }, `tunnel connect failed`);
+      inspector?.setState("closed");
+      if (shuttingDown) return;
+      if (!config.policy.reconnect.enabled) return;
+      if (reconnectCtl.isRejected()) {
+        log.warn(`auto-reconnect suppressed: controller rejected the registration — clear DB registration and click Reconnect`);
+        return;
+      }
+      reconnectCtl.schedule();
+      return;
+    }
+
+    tunnel = pendingTunnel;
+    log.info({ url: tunnelDialUrl }, `tunnel connected`);
+    inspector?.setHeader({ tunnelOpenSinceAt: new Date().toISOString() });
+
+    const creds = new CredsCoordinator({
+      send: (frame) => pendingTunnel.send(frame),
+      supervisor,
+      log,
+    });
+
+    mcpConfig.bind({
+      send: (frame) => pendingTunnel.send(frame),
+      requestCreds: (name, mcpId, envKeys) =>
+        creds.reload(name, "customer", envKeys, mcpId),
+    });
+
+    localMcps.bind({ send: (frame) => pendingTunnel.send(frame) });
+    approval.bind({ send: (frame) => pendingTunnel.send(frame) });
+    notifications.bind({ send: (frame) => pendingTunnel.send(frame) });
+
+    const baseRouter = createFrameRouter({
+      webhooks,
+      state: { registrationToken: currentToken },
+      statePath: "",
+      inspector,
+      reconnect: reconnectCtl,
+      log,
+      connectorName: row.connectorName,
+    });
+    pendingTunnel.onframe = (frame) => {
+      if (frame.type === "creds-response") { creds.handleResponse(frame); return; }
+      if (frame.type === "creds-update") { creds.handleUpdate(frame); return; }
+      if (frame.type === "mcp-config-snapshot") { void mcpConfig.handleSnapshot(frame); return; }
+      if (frame.type === "mcp-config-delta") { void mcpConfig.handleDelta(frame); return; }
+      if (frame.type === "local-mcps-rescan") { void localMcps.rescanFromController(); return; }
+      if (frame.type === "mcp-enable") { void approval.handleEnable(frame); return; }
+      if (frame.type === "mcp-disable") { void approval.handleDisable(frame); return; }
+      if (frame.type === "register-ack" && !frame.error) {
+        baseRouter(frame);
+        void requestCredsForAllMcps(creds, mcpConfig);
+        mcpConfig.armSnapshotWait();
+        void announceDiscoveredDropins();
+        // On first successful register-ack, best-effort delete leftover .connector-state.json
+        if (!stateCleared) {
+          stateCleared = true;
+          try {
+            unlinkSync(defaultStatePath());
+            log.info(`deleted legacy .connector-state.json after successful DB register-ack`);
+          } catch {
+            // swallow ENOENT and any other error — best-effort
+          }
+        }
+        // Persist registration token to DB
+        if (row && frame.registrationToken) {
+          void store.updateRegistrationToken(row.id, frame.registrationToken);
+        }
+        return;
+      }
+      if (frame.type === "register-ack" && frame.error?.code === "unknown_registration_token") {
+        // Clear registration token in DB
+        if (row) {
+          void store.clearRegistrationToken(row.id);
+        }
+      }
+      baseRouter(frame);
+    };
+
+    if (inspector) {
+      inspector.mcpActions = {
+        reloadCreds: async (name: string) => {
+          const reqInfo = buildCredsRequestForMcp(name, mcpConfig);
+          if (!reqInfo) throw new Error(`unknown MCP "${name}"`);
+          await creds.reload(reqInfo.mcp, reqInfo.author, reqInfo.envKeys, reqInfo.mcpId);
+        },
+        restart: async (name: string) => {
+          const ok = await supervisor.restart(name, "manual");
+          if (!ok) throw new Error(`unknown MCP "${name}"`);
+        },
+        rescanLocal: async () => {
+          const ack = await localMcps.rescan();
+          return {
+            added: ack.added,
+            removed: ack.removed,
+            unchanged: ack.unchanged,
+            errors: ack.errors,
+          };
+        },
+        applySessionCreds: async (name: string, env: Record<string, string>) => {
+          const result = await supervisor.applySessionEnv(name, env, { mode: "merge" });
+          if (!result.applied) throw new Error(`unknown MCP "${name}"`);
+          return { expiresAt: result.expiresAt };
+        },
+        clearSessionCreds: async (name: string) => {
+          await supervisor.clearSessionEnv(name, "session-creds-cleared-by-operator");
+        },
+        fetchEnvKeys: async (name: string) => {
+          return supervisor.fetchEnvKeys(name);
+        },
+      };
+    }
+
+    pendingTunnel.send({
+      type: "register",
+      manifest,
+      name: row.connectorName,
+      ...(currentToken ? { registrationToken: currentToken } : {}),
+    });
+    log.info(`register frame sent`);
+
+    const dispatcherLog = createLogger("dispatcher");
+    new Dispatcher({
+      config,
+      servers,
+      getManifest: () => manifest,
+      tunnel: pendingTunnel,
+      log: dispatcherLog.info.bind(dispatcherLog),
+    }).attach();
+
+    startTimers();
+  }
+
+  function buildCredsRequestForMcp(
+    name: string,
+    mcpConfig?: McpConfigCoordinator,
+  ): { mcp: string; mcpId?: string; author: string; envKeys: string[] } | undefined {
+    const spec = config.mcp_servers.find((s) => s.name === name);
+    const author = spec ? authorOf(spec) : "customer";
+    if (!servers.has(name)) return undefined;
+    const mcpId = mcpConfig?.mcpIdFor(name);
+    return { mcp: name, ...(mcpId ? { mcpId } : {}), author, envKeys: [] };
+  }
+
+  async function requestCredsForAllMcps(
+    creds: CredsCoordinator,
+    mcpConfig: McpConfigCoordinator,
+  ): Promise<void> {
+    const requests = await Promise.all(
+      [...servers.keys()].map(async (name) => {
+        const spec = config.mcp_servers.find((s) => s.name === name);
+        const author = spec ? authorOf(spec) : "customer";
+        const envKeys = await supervisor.fetchEnvKeys(name);
+        const mcpId = mcpConfig.mcpIdFor(name);
+        return { mcp: name, ...(mcpId ? { mcpId } : {}), author, envKeys };
+      }),
+    );
+    log.info({ count: requests.length }, `sending creds-request frames`);
+    await creds.requestAllAtBoot(requests);
+    inspector?.setMcpStatuses(supervisor.statusList());
+  }
+
+  async function announceDiscoveredDropins(): Promise<void> {
+    const result = await announceDropinsLoop({
+      dropinNames: [...dropinSpecsByName.keys()],
+      approval,
+      supervisor,
+      servers,
+      log,
+    });
+    if (result.totalDropins > 0) {
+      log.info(result, `mcp-discovered fan-out complete`);
+    }
+  }
+
+  async function reconnect(reason: string, opts?: { manual?: boolean }): Promise<void> {
+    if (reconnecting && !opts?.manual) return;
+    if (reconnecting && opts?.manual) {
+      log.info({ reason }, `manual reconnect overriding in-flight attempt`);
+    }
+    reconnecting = true;
+    try {
+      reconnectCtl.cancel();
+      reconnectCtl.clearRejected();
+      log.info({ reason }, `reconnect requested`);
+      stopTimers();
+      tunnel?.close("reconnect");
+      tunnel = undefined;
+
+      // Refresh row from DB on reconnect (in case credentials were updated)
+      row = await store.getController();
+      if (!row) {
+        log.warn(`reconnect: no controller row in DB — cannot dial`);
+        inspector?.setState("closed");
+        reconnecting = false;
+        return;
+      }
+
+      try {
+        const nextConfig = loadConfig(configPath);
+        if (sameMcpServers(config.mcp_servers, nextConfig.mcp_servers)) {
+          Object.assign(config, { policy: nextConfig.policy });
+          log.info(`reconnect: YAML reloaded`);
+        } else {
+          log.warn(`reconnect: mcp_servers list changed in YAML — restart required to pick that up; using prior list`);
+        }
+      } catch (error) {
+        log.warn({ err: error as Error }, `reconnect: YAML reload failed — using last-known config`);
+      }
+
+      manifest = await buildManifest(
+        config,
+        servers,
+        version,
+        (name) => supervisor.fetchEnvKeys(name),
+        (name) => approval.isApproved(name),
+        dropinSpecsByName,
+      );
+      inspector?.setManifest(manifest);
+
+      await connectTunnelDb("reconnect");
     } finally {
       reconnecting = false;
     }
