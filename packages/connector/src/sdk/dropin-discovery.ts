@@ -71,3 +71,32 @@ export function isResourceShape(value: unknown): value is Resource {
     && typeof (value as Resource).name === "string"
     && typeof (value as Resource).register === "function";
 }
+
+// Load an optional per-folder capabilities.{ts,js} file. The module MUST
+// default-export a plain object (Record<string, unknown>) that the runner
+// hands to createMcpHttpServer as `capabilities`. Missing file / missing
+// default export → undefined (no-op). Import errors log and swallow so a
+// broken capabilities file doesn't crash an otherwise-healthy drop-in.
+export async function loadCapabilities(
+  dir: string,
+  log: Logger,
+): Promise<Record<string, unknown> | undefined> {
+  const candidates = ["capabilities.ts", "capabilities.js"];
+  for (const filename of candidates) {
+    const full = resolvePath(dir, filename);
+    if (!existsSync(full)) continue;
+    try {
+      const mod = (await import(pathToFileURL(full).href)) as Record<string, unknown>;
+      const picked = mod.default;
+      if (picked && typeof picked === "object") {
+        return picked as Record<string, unknown>;
+      }
+      log.warn({ file: filename }, `capabilities file has no default-exported object — ignoring`);
+      return undefined;
+    } catch (err) {
+      log.error({ file: filename, err: err as Error }, `failed to import capabilities file`);
+      return undefined;
+    }
+  }
+  return undefined;
+}
