@@ -434,14 +434,17 @@ async function bootFromEnv(): Promise<void> {
     try {
       await pendingTunnel.connect();
     } catch (error) {
-      log.error({ err: error as Error }, `tunnel connect failed`);
+      // Handshake failures (502/503 during a controller restart, ngrok
+      // cycling, transient DNS blips, dial timeout) are the same recoverable
+      // state as a mid-session close — auto-reconnect handles them. Log at
+      // WARN with just the message so a routine controller bounce doesn't
+      // ship a stack trace to the operator. Use pino's `err`-named field for
+      // genuinely unexpected failures only; anything named `err` triggers
+      // pino's stack serializer.
+      log.warn({ reason: (error as Error).message, url: tunnelDialUrl }, `tunnel connect failed — auto-reconnect scheduled`);
       inspector?.setState("closed");
-      // A handshake failure (e.g. WS 502 because the controller is briefly
-      // unreachable, or ngrok cycling) is the same recoverable state as a
-      // mid-session close. Without this, a transient 502 leaves the connector
-      // stranded in 'closed' until manual intervention. The onclose path
-      // never fires for a connection that never reached OPEN, so this is the
-      // only place we can hook the recovery.
+      // The onclose path never fires for a connection that never reached
+      // OPEN, so this is the only place we can hook the recovery.
       //
       // Don't gate on `reconnecting`: this catch *fires inside* an in-flight
       // reconnect attempt, so reconnecting=true is normal here. `reconnect()`
@@ -1106,7 +1109,9 @@ async function bootFromDb(): Promise<void> {
     try {
       await pendingTunnel.connect();
     } catch (error) {
-      log.error({ err: error as Error }, `tunnel connect failed`);
+      // See env-mode connectTunnel for rationale — recoverable handshake
+      // failure, WARN + message only, no stack.
+      log.warn({ reason: (error as Error).message, url: tunnelDialUrl }, `tunnel connect failed — auto-reconnect scheduled`);
       inspector?.setState("closed");
       if (shuttingDown) return;
       if (!config.policy.reconnect.enabled) return;
