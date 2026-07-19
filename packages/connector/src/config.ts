@@ -83,27 +83,48 @@ const Policy = z.object({
 export type ReconnectPolicyConfig = z.infer<typeof ReconnectPolicy>;
 
 const ConfigSchema = z.object({
-  tunnel: z.object({
-    // The controller's HTTPS root. Used for the WS tunnel dial — the
-    // connector upgrades https:// → wss:// internally and appends the
-    // /mcp-tunnel path in tunnel/client.ts.
-    controller_url: z.string().url(),
-    // Customer-chosen connector name. Used as the identity claim on first
-    // connect — the controller mints a fresh row keyed to this name and
-    // returns a registrationToken which the connector persists in
-    // .connector-state.json. Subsequent connects identify by token; the name
-    // is along for the ride (logs, controller UI).
-    name: z.string().min(1),
-    auth_token: z
-      .string()
-      .nullable()
-      .optional()
-      .transform((v) => (v == null || v === "" ? undefined : v)),
-    account_sid: z.string().optional(),
-    environment: z.string().default("dev"),
-    region: z.string().optional(),
-    credentials_file: z.string().optional(),
-  }),
+  // The tunnel: block is REQUIRED under CONNECTOR_CREDS_SOURCE=env (validated
+  // by bootFromEnv). Under CONNECTOR_CREDS_SOURCE=db it's optional — tunnel
+  // identity lives in the DB, and any inherited yaml block is ignored (with
+  // a WARN at bootFromDb). Empty strings on controller_url / name are also
+  // accepted so `${CONTROLLER_URL:-}` interpolates cleanly when the legacy
+  // env vars have been stripped as part of the env→db migration; bootFromEnv
+  // then throws a clear "missing required fields" error, while bootFromDb
+  // logs its ignore-WARN and continues.
+  tunnel: z
+    .object({
+      // The controller's HTTPS root. Used for the WS tunnel dial — the
+      // connector upgrades https:// → wss:// internally and appends the
+      // /mcp-tunnel path in tunnel/client.ts.
+      //
+      // Preprocess handles the yaml quirk where `key: ${VAR:-}` (unset var)
+      // interpolates to a bare `key: ` which YAML parses as null, not "".
+      // Both null and "" normalize to "" here so downstream code (bootFromEnv
+      // guard, bootFromDb WARN) sees a consistent empty-string signal.
+      controller_url: z.preprocess(
+        (v) => (v === null ? "" : v),
+        z.string().url().or(z.literal("")),
+      ),
+      // Customer-chosen connector name. Used as the identity claim on first
+      // connect — the controller mints a fresh row keyed to this name and
+      // returns a registrationToken which the connector persists in
+      // .connector-state.json. Subsequent connects identify by token; the name
+      // is along for the ride (logs, controller UI).
+      name: z.preprocess(
+        (v) => (v === null ? "" : v),
+        z.string(),
+      ),
+      auth_token: z
+        .string()
+        .nullable()
+        .optional()
+        .transform((v) => (v == null || v === "" ? undefined : v)),
+      account_sid: z.string().optional(),
+      environment: z.string().default("dev"),
+      region: z.string().optional(),
+      credentials_file: z.string().optional(),
+    })
+    .optional(),
   mcp_servers: z.array(z.discriminatedUnion("transport", [HttpServer, StdioServer])).min(1),
   policy: Policy.default(() => Policy.parse({})),
 });
@@ -274,13 +295,33 @@ export function loadConfig(configPath: string): ConnectorConfig {
 // Substitute ${VAR} and ${VAR:-default} from process.env. Unknown vars without
 // a default throw with the var name + 1-based YAML line so the customer can
 // fix the right line.
+//
+// Full-line yaml comments (lines whose first non-whitespace character is `#`)
+// are treated as inert — the interpolator does NOT match ${VAR} inside them.
+// This aligns with yaml's own semantics (comments never affect parsed state)
+// and prevents a class of bugs where a documentation comment mentioning
+// `${CONTROLLER_URL}` hard-fails boot when the customer hasn't set that var.
+// See ENV-TO-DB.md §"Post-Step-12 runtime discoveries" entry G for the
+// retrospective this fix comes from.
 function interpolateEnv(raw: string, source: string): string {
   const pattern = /\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}/g;
-  return raw.replaceAll(pattern, (_match, name: string, fallback: string | undefined, offset: number) => {
-    const value = process.env[name];
-    if (value !== undefined) return value;
-    if (fallback !== undefined) return fallback;
-    const line = raw.slice(0, offset).split("\n").length;
-    throw new Error(`Missing env var \${${name}} at ${source}:${line}`);
-  });
+  return raw
+    .split("\n")
+    .map((line, idx) => {
+      // Skip lines whose first non-whitespace char is `#` — pure yaml comments.
+      // Inline comments (`key: value # inline`) are NOT skipped; that case is
+      // rare in the connector yaml surface and if it did carry a bare ${VAR}
+      // it would still throw (correctly, since the value slice is what yaml
+      // parses). Keeping the inline case strict avoids a fragile string-quote-
+      // aware `#` scanner in this pre-parse pass.
+      if (line.trimStart().startsWith("#")) return line;
+      return line.replaceAll(pattern, (_match, name: string, fallback: string | undefined) => {
+        const value = process.env[name];
+        if (value !== undefined) return value;
+        if (fallback !== undefined) return fallback;
+        // idx is 0-based; yaml editors show 1-based lines.
+        throw new Error(`Missing env var \${${name}} at ${source}:${idx + 1}`);
+      });
+    })
+    .join("\n");
 }
