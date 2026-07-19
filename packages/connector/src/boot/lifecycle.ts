@@ -19,6 +19,7 @@ import { buildManifest, dropinSpecsToMap } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
 import { validateManifestSchemas } from "../manifest/validate.js";
 import { TunnelClient } from "../tunnel/client.js";
+import { formatHandshakeFailure } from "../tunnel/format-log.js";
 import { Dispatcher } from "../dispatcher.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 import { Inspector, startInspector } from "../inspector/server.js";
@@ -441,7 +442,7 @@ async function bootFromEnv(): Promise<void> {
       // ship a stack trace to the operator. Use pino's `err`-named field for
       // genuinely unexpected failures only; anything named `err` triggers
       // pino's stack serializer.
-      log.warn({ reason: (error as Error).message, url: tunnelDialUrl }, `tunnel connect failed — auto-reconnect scheduled`);
+      log.warn(formatHandshakeFailure(error, tunnelDialUrl), `tunnel connect failed — auto-reconnect scheduled`);
       inspector?.setState("closed");
       // The onclose path never fires for a connection that never reached
       // OPEN, so this is the only place we can hook the recovery.
@@ -1111,7 +1112,7 @@ async function bootFromDb(): Promise<void> {
     } catch (error) {
       // See env-mode connectTunnel for rationale — recoverable handshake
       // failure, WARN + message only, no stack.
-      log.warn({ reason: (error as Error).message, url: tunnelDialUrl }, `tunnel connect failed — auto-reconnect scheduled`);
+      log.warn(formatHandshakeFailure(error, tunnelDialUrl), `tunnel connect failed — auto-reconnect scheduled`);
       inspector?.setState("closed");
       if (shuttingDown) return;
       if (!config.policy.reconnect.enabled) return;
