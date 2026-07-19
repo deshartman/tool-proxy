@@ -36,14 +36,17 @@
 # ---
 
 tunnel:
-  controller_url: ${CONTROLLER_URL}
+  # Under CONNECTOR_CREDS_SOURCE=env, requireEnv() enforces CONTROLLER_URL
+  # and CONNECTOR_NAME are set — so ${VAR:-} defaults resolve to real values.
+  # Under CONNECTOR_CREDS_SOURCE=db the whole block is ignored (with a WARN
+  # at boot); the ${VAR:-} defaults let interpolation succeed even when the
+  # legacy env vars have been stripped as part of the migration.
+  controller_url: ${CONTROLLER_URL:-}
   # Customer-chosen connector name; must be unique on the controller. On
   # first connect the controller mints a fresh row keyed to this name.
-  # Set CONNECTOR_NAME in .env — no default here, so an unset var fails
-  # fast at boot rather than silently binding to a placeholder identity.
   # Also sent on the WS upgrade as `X-Connector-Name` for tunnel-security
-  # row lookup.
-  name: ${CONNECTOR_NAME}
+  # row lookup. env mode: bootFromEnv throws with a clear message if unset.
+  name: ${CONNECTOR_NAME:-}
   # Static bearer for the long-lived `ts_<...>` posture. Leave the default
   # empty (`${...:-}`) when using the OAuth2 posture — the connector picks
   # the path purely from env (OAUTH_CLIENT_ID set → OAuth2). See .env.example
