@@ -74,7 +74,24 @@ async function bootFromEnv(): Promise<void> {
     : envNumber("INSPECTOR_PORT", 9090);
 
   const config = loadConfig(configPath);
-  const auth = resolveAuthFromEnv(config.tunnel.auth_token);
+  // Under env mode the tunnel: block is REQUIRED and must carry non-empty
+  // controller_url + name. requireEnv() ensures CONTROLLER_URL / CONNECTOR_NAME
+  // are set, so the yaml's ${CONTROLLER_URL} / ${CONNECTOR_NAME} interpolate
+  // to real values — this guard only fires if the operator has stripped the
+  // yaml block itself (e.g. mid-migration) or replaced the interpolators
+  // with literals. Clear message steers them to either fix or switch modes.
+  if (!config.tunnel || !config.tunnel.controller_url || !config.tunnel.name) {
+    throw new Error(
+      "connector.yaml is missing the required 'tunnel:' block or its controller_url/name fields under CONNECTOR_CREDS_SOURCE=env. " +
+        "Either populate the tunnel block (with CONTROLLER_URL and CONNECTOR_NAME set in .env), " +
+        "or switch to CONNECTOR_CREDS_SOURCE=db and manage tunnel identity via the inspector UI.",
+    );
+  }
+  // Hoisted local — TS narrowing on `config.tunnel` is lost inside the async
+  // closures declared later in bootFromEnv, so subsequent reads of the
+  // narrowed tunnel block route through this const.
+  const tunnelConfig = config.tunnel;
+  const auth = resolveAuthFromEnv(tunnelConfig.auth_token);
 
   // Identity: read the persisted registrationToken (if any). On first connect
   // it's absent and we send `name` only — the controller mints a row and
@@ -380,7 +397,7 @@ async function bootFromEnv(): Promise<void> {
   async function connectTunnel(reason: string): Promise<void> {
     inspector?.setState("connecting");
     log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
-    const pendingTunnel = new TunnelClient(tunnelDialUrl, auth.authToken, config.tunnel.name, auth.authProvider);
+    const pendingTunnel = new TunnelClient(tunnelDialUrl, auth.authToken, tunnelConfig.name, auth.authProvider);
     pendingTunnel.onerror = (error) => log.error({ err: error }, `tunnel error`);
     if (inspector) {
       pendingTunnel.onstate = (tunnelState) => inspector.setState(tunnelState);
@@ -492,7 +509,7 @@ async function bootFromEnv(): Promise<void> {
       inspector,
       reconnect: reconnectCtl,
       log,
-      connectorName: config.tunnel.name,
+      connectorName: tunnelConfig.name,
     });
     pendingTunnel.onframe = (frame) => {
       if (frame.type === "creds-response") { creds.handleResponse(frame); return; }
@@ -577,7 +594,7 @@ async function bootFromEnv(): Promise<void> {
     pendingTunnel.send({
       type: "register",
       manifest,
-      name: config.tunnel.name,
+      name: tunnelConfig.name,
       ...(state.registrationToken ? { registrationToken: state.registrationToken } : {}),
     });
     log.info(`register frame sent`);

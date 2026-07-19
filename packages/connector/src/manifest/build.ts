@@ -74,7 +74,11 @@ export async function buildManifest(
     // frame's `name` / `registrationToken` and stamps the manifest with the
     // canonical connectorId before storing it.
     connectorId: "",
-    environment: config.tunnel.environment,
+    // Under CONNECTOR_CREDS_SOURCE=db, config.tunnel may be undefined (the
+    // yaml block is optional in db mode). Fall back to the same "dev" default
+    // the schema previously baked in via .default("dev"). bootFromEnv's guard
+    // guarantees a non-undefined tunnel on the env-mode path.
+    environment: config.tunnel?.environment ?? "dev",
     version,
     servers: serverEntries,
   };
