@@ -56,6 +56,11 @@ packages/connector/connector.yaml.example
 # the registrationToken handed back by the controller). Customer never edits
 # directly; clearing it forces a fresh mint on next start.
 **/.connector-state.json
+
+# Agentic-memory mock drop-in state file — JSON persistence for the fake
+# identity + memory data. Deterministic externalIds mean deleting this
+# file rehydrates cleanly on next call; safe to gitignore.
+mcp/local/agentic-memory/.state.json
 graphify-out/*
 
 # Snapshot tarballs written by scripts/snapshot-crm.sh.

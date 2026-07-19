@@ -30,6 +30,21 @@ export interface CreateMcpHttpServerOptions {
   // via creds-request so the operator never wonders "what envKeys does
   // this MCP need."
   envKeys?: string[];
+  // Extra capability keys to advertise on the MCP initialize response,
+  // merged alongside the standard tools/prompts/resources presence keys.
+  // Used by protocol extensions (e.g. the memory + identity provider shape
+  // in MEMORY-MCP-INTERFACE.md §7) that need to declare custom capability
+  // groups. Standard keys stay auto-managed — do NOT set `tools`,
+  // `prompts`, or `resources` here.
+  //
+  // IMPORTANT: MCP's ServerCapabilitiesSchema is `.strip()` — unknown
+  // top-level keys are removed by the SDK on both send and receive. Custom
+  // shapes MUST be nested under `experimental` (Record<string, object>) or
+  // `extensions` (same shape), which the schema preserves. Vendor
+  // convention is a single-key namespace so the receiver can find the
+  // group without collision:
+  //   capabilities: { experimental: { "your-mcp-name": { ...your fields } } }
+  capabilities?: Record<string, unknown>;
 }
 
 export interface McpHttpServerHandle {
@@ -52,10 +67,14 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
   // Capabilities follow the registered surface. McpServer's runtime tracks
   // which categories have handlers; we still need to advertise on the wire
   // what the connector / controller can call. The per-category capability
-  // is empty — its presence is the signal.
-  const capabilities: Record<string, Record<string, unknown>> = { tools: {} };
+  // is empty — its presence is the signal. Custom keys from opts.capabilities
+  // are merged in first so the standard tools/prompts/resources presence
+  // keys always win — a caller can't accidentally overwrite them.
+  const capabilities: Record<string, unknown> = { ...(opts.capabilities ?? {}), tools: {} };
   if (prompts.length > 0) capabilities.prompts = {};
+  else delete capabilities.prompts;
   if (resources.length > 0) capabilities.resources = {};
+  else delete capabilities.resources;
 
   const server = new McpServer(
     { name: opts.name, version: opts.version ?? "0.1.0" },

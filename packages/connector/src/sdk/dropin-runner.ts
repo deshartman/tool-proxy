@@ -14,6 +14,7 @@
 import { createMcpHttpServer } from "./http-server.js";
 import {
   loadCategory,
+  loadCapabilities,
   isToolShape,
   isPromptShape,
   isResourceShape,
@@ -35,12 +36,18 @@ async function main(): Promise<void> {
   const tools     = await loadCategory<Tool>(dir,     "tools",     "tool",     isToolShape,     log);
   const prompts   = await loadCategory<Prompt>(dir,   "prompts",   "prompt",   isPromptShape,   log);
   const resources = await loadCategory<Resource>(dir, "resources", "resource", isResourceShape, log);
+  // Optional per-folder capabilities.ts. Missing file → undefined; the
+  // factory's default behavior is unchanged. Present → merged into the MCP
+  // initialize response via the factory's `capabilities` option. Custom
+  // shapes MUST live under `experimental` / `extensions` (see the docstring
+  // on CreateMcpHttpServerOptions.capabilities).
+  const capabilities = await loadCapabilities(dir, log);
 
   if (tools.length === 0 && prompts.length === 0 && resources.length === 0) {
     log.error({ dir }, `no tools / prompts / resources registered — exiting`);
     process.exit(2);
   }
-  await createMcpHttpServer({ name, tools, prompts, resources });
+  await createMcpHttpServer({ name, tools, prompts, resources, capabilities });
 }
 
 void main().catch((err) => {

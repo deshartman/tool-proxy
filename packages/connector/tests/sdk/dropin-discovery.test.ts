@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   loadCategory,
+  loadCapabilities,
   isToolShape,
   isPromptShape,
   isResourceShape,
@@ -104,6 +105,39 @@ describe("dropin discovery — prompts and resources siblings of tools/", () => 
     const prompts = await loadCategory<Prompt>(dir, "prompts", "prompt", isPromptShape, log);
 
     expect(prompts.map((p) => p.name)).toEqual(["named"]);
+  });
+
+  it("loadCapabilities returns the default-exported object when capabilities.ts is present", async () => {
+    // Extension surface for protocol shapes like MEMORY-MCP-INTERFACE.md §7 —
+    // the drop-in folder can advertise custom capability groups on the MCP
+    // initialize response by dropping a capabilities.{ts,js} next to
+    // tools/. Nested under experimental to survive the SDK's schema strip.
+    const dir = makeFixtureDir();
+    writeFileSync(join(dir, "capabilities.js"), `
+      export default {
+        experimental: {
+          "test-provider": { protocolVersion: "test-1", identity: { supported: true } }
+        }
+      };
+    `);
+
+    const caps = await loadCapabilities(dir, log);
+    expect(caps).toEqual({
+      experimental: {
+        "test-provider": { protocolVersion: "test-1", identity: { supported: true } },
+      },
+    });
+  });
+
+  it("loadCapabilities returns undefined when no capabilities file exists — the today's tools-only shape is unchanged", async () => {
+    const dir = makeFixtureDir();
+    writeFixture(dir, "tools", "only.js", `
+      export const only = { name: "only", register(server) {} };
+      export default only;
+    `);
+
+    const caps = await loadCapabilities(dir, log);
+    expect(caps).toBeUndefined();
   });
 
   it("skips files that don't export a matching shape — no crash, just a warn", async () => {
