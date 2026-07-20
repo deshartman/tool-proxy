@@ -133,7 +133,13 @@ async function handleGetConfig(
 // POST /internal/tunnel/creds
 // Body: ControllerInput-shaped JSON
 // Flow:
-//   - Detect INSERT vs UPDATE by checking for an existing row BEFORE upsert.
+//   - Read the prior row FIRST — decides both INSERT-vs-UPDATE routing and
+//     whether the auth secret is optional on this submit.
+//   - Validate payload. On UPDATE where the operator is only changing Display
+//     Name / Controller URL (same authMode, secret field blank), the secret
+//     is treated as "keep existing" — the frontend renders a "leave blank to
+//     keep existing" hint and the SQL COALESCE in upsertController preserves
+//     the sealed value.
 //   - Upsert the row.
 //   - INSERT: dialTunnel(newRow). On dial failure, deleteController() to
 //     roll back so the DB stays empty and the operator can retry cleanly.
@@ -207,37 +213,60 @@ async function handlePostCreds(
     authMode,
   };
 
+  // Read the prior row so we can (a) route INSERT vs UPDATE for dial
+  // orchestration below, and (b) know whether the auth secret is optional
+  // on this submit. The rule for (b): the secret may be blank IFF there is
+  // a prior row with the SAME authMode and a non-null sealed secret — then
+  // the SQL COALESCE in upsertController preserves the existing value. A
+  // switch of authMode (static-bearer ↔ oauth2-cc) always requires the new
+  // secret because there is no matching prior sealed value to preserve.
+  let priorRow: ControllerRow | null;
+  try {
+    priorRow = await configStore.getController();
+  } catch (err) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+    return;
+  }
+  const hadPriorRow = priorRow !== null;
+  const canPreserveTunnelAuthToken = priorRow?.authMode === "static-bearer" && priorRow.tunnelAuthToken !== null;
+  const canPreserveOauthClientSecret = priorRow?.authMode === "oauth2-cc" && priorRow.oauthClientSecret !== null;
+
   if (authMode === "static-bearer") {
-    const token = typeof b.tunnelAuthToken === "string" ? b.tunnelAuthToken : undefined;
-    if (!token) {
+    const token = typeof b.tunnelAuthToken === "string" && b.tunnelAuthToken ? b.tunnelAuthToken : undefined;
+    if (!token && !canPreserveTunnelAuthToken) {
       res.statusCode = 400;
       res.end(JSON.stringify({ ok: false, error: "tunnelAuthToken is required when authMode is static-bearer" }));
       return;
     }
-    input.tunnelAuthToken = token;
+    if (token) input.tunnelAuthToken = token;
   } else {
     const clientId = typeof b.oauthClientId === "string" ? b.oauthClientId : undefined;
-    const clientSecret = typeof b.oauthClientSecret === "string" ? b.oauthClientSecret : undefined;
+    const clientSecret = typeof b.oauthClientSecret === "string" && b.oauthClientSecret ? b.oauthClientSecret : undefined;
     const tokenUrl = typeof b.oauthTokenUrl === "string" ? b.oauthTokenUrl : undefined;
-    if (!clientId || !clientSecret || !tokenUrl) {
+    if (!clientId || !tokenUrl) {
       res.statusCode = 400;
       res.end(JSON.stringify({
         ok: false,
-        error: "oauthClientId, oauthClientSecret, and oauthTokenUrl are required when authMode is oauth2-cc"
+        error: "oauthClientId and oauthTokenUrl are required when authMode is oauth2-cc"
+      }));
+      return;
+    }
+    if (!clientSecret && !canPreserveOauthClientSecret) {
+      res.statusCode = 400;
+      res.end(JSON.stringify({
+        ok: false,
+        error: "oauthClientSecret is required when authMode is oauth2-cc"
       }));
       return;
     }
     input.oauthClientId = clientId;
-    input.oauthClientSecret = clientSecret;
     input.oauthTokenUrl = tokenUrl;
+    if (clientSecret) input.oauthClientSecret = clientSecret;
   }
 
-  // Detect INSERT vs UPDATE before mutating so we know which rollback shape
-  // applies if the dial fails.
-  let hadPriorRow: boolean;
   let newRow: ControllerRow;
   try {
-    hadPriorRow = (await configStore.getController()) !== null;
     newRow = await configStore.upsertController(input);
   } catch (err) {
     res.statusCode = 500;

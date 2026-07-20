@@ -519,8 +519,10 @@ describe("tunnel routes", () => {
       expect(body.error).toContain("missing required fields");
     });
 
-    it("returns 400 when static-bearer is missing tunnelAuthToken", async () => {
-      const mockStore = {} as ConfigStore;
+    it("INSERT: returns 400 when static-bearer is missing tunnelAuthToken (no prior row to preserve)", async () => {
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),
+      } as unknown as ConfigStore;
 
       const routes = createTunnelRoutes({
         configStore: mockStore,
@@ -545,8 +547,10 @@ describe("tunnel routes", () => {
       expect(body.error).toContain("tunnelAuthToken is required");
     });
 
-    it("returns 400 when oauth2-cc is missing oauth fields", async () => {
-      const mockStore = {} as ConfigStore;
+    it("INSERT: returns 400 when oauth2-cc is missing plaintext oauth fields (no prior row to preserve)", async () => {
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),
+      } as unknown as ConfigStore;
 
       const routes = createTunnelRoutes({
         configStore: mockStore,
@@ -569,7 +573,175 @@ describe("tunnel routes", () => {
 
       expect(res._status).toBe(400);
       const body = JSON.parse(res._body);
-      expect(body.error).toContain("oauthClientId, oauthClientSecret, and oauthTokenUrl are required");
+      // Plaintext-field check fires first when tokenUrl is missing; missing
+      // clientSecret alone (with tokenUrl present) would surface the
+      // "oauthClientSecret is required" message instead.
+      expect(body.error).toContain("oauthClientId and oauthTokenUrl are required");
+    });
+
+    it("INSERT: returns 400 when oauth2-cc is missing only oauthClientSecret (no prior row to preserve)", async () => {
+      const mockStore = {
+        getController: vi.fn().mockResolvedValue(null),
+      } as unknown as ConfigStore;
+
+      const routes = createTunnelRoutes({
+        configStore: mockStore,
+        dialTunnel: vi.fn(),
+        cycleTunnel: vi.fn(),
+      });
+
+      const req = mockRequest("POST", {
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        authMode: "oauth2-cc",
+        oauthClientId: "id",
+        oauthTokenUrl: "https://auth.example.com/token",
+        // missing oauthClientSecret only
+      });
+      (req as any).url = "/internal/tunnel/creds";
+      const res = mockResponse();
+
+      await routes.handlePostCreds(req, res);
+
+      expect(res._status).toBe(400);
+      const body = JSON.parse(res._body);
+      expect(body.error).toContain("oauthClientSecret is required");
+    });
+
+    // Pins the regression observed 2026-07-20: the Edit Tunnel modal renders
+    // "Tunnel auth token (leave blank to keep existing)" and the frontend
+    // omits tunnelAuthToken from the POST body when the field is blank. The
+    // backend used to reject that with 400, forcing operators to re-paste
+    // their token every time they wanted to rename the row or fix a URL
+    // typo. The fix: when the prior row has a sealed secret for the same
+    // authMode, treat the blank field as "keep existing" and let the SQL
+    // COALESCE in upsertController preserve the value.
+    describe("UPDATE with omitted secret (leave blank to keep existing)", () => {
+      const priorStaticRow: ControllerRow = {
+        id: "existing-id",
+        name: "Convo Agent",
+        controllerUrl: "http://localhost:3001",
+        connectorName: "convo-agent",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "ts_existing_secret",
+        oauthClientId: null,
+        oauthClientSecret: null,
+        oauthTokenUrl: null,
+        registrationToken: "reg-token",
+        enabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastConnectedAt: null,
+        lastDisconnectReason: null,
+      };
+
+      const priorOauthRow: ControllerRow = {
+        ...priorStaticRow,
+        authMode: "oauth2-cc",
+        tunnelAuthToken: null,
+        oauthClientId: "existing-client-id",
+        oauthClientSecret: "existing-client-secret",
+        oauthTokenUrl: "https://auth.example.com/token",
+      };
+
+      it("static-bearer + same authMode + blank token → 200 (upsert omits tunnelAuthToken; SQL preserves it)", async () => {
+        const upsertController = vi.fn().mockResolvedValue({ ...priorStaticRow, name: "Convo Agent Renamed" });
+        const mockStore = {
+          getController: vi.fn().mockResolvedValue(priorStaticRow),
+          upsertController,
+          deleteController: vi.fn(),
+        } as unknown as ConfigStore;
+
+        const routes = createTunnelRoutes({
+          configStore: mockStore,
+          dialTunnel: vi.fn(),
+          cycleTunnel: vi.fn().mockResolvedValue(undefined),
+        });
+
+        // Body matches what the frontend sends when the operator edits the
+        // display name only and leaves the auth-token field blank.
+        const req = mockRequest("POST", {
+          name: "Convo Agent Renamed",
+          controllerUrl: "http://localhost:3001",
+          authMode: "static-bearer",
+          // no tunnelAuthToken
+        });
+        (req as any).url = "/internal/tunnel/creds";
+        const res = mockResponse();
+
+        await routes.handlePostCreds(req, res);
+
+        expect(res._status).toBe(200);
+        expect(JSON.parse(res._body).ok).toBe(true);
+        // The critical assertion: upsertController must NOT receive a
+        // tunnelAuthToken. If a future change accidentally forwards an
+        // empty-string token, the SQL branch would seal that empty string
+        // as the row's auth token and break the WS handshake.
+        expect(upsertController).toHaveBeenCalledOnce();
+        const upsertInput = upsertController.mock.calls[0][0] as ControllerInput;
+        expect(upsertInput.tunnelAuthToken).toBeUndefined();
+      });
+
+      it("oauth2-cc + same authMode + blank clientSecret → 200 (upsert omits oauthClientSecret)", async () => {
+        const upsertController = vi.fn().mockResolvedValue(priorOauthRow);
+        const mockStore = {
+          getController: vi.fn().mockResolvedValue(priorOauthRow),
+          upsertController,
+          deleteController: vi.fn(),
+        } as unknown as ConfigStore;
+
+        const routes = createTunnelRoutes({
+          configStore: mockStore,
+          dialTunnel: vi.fn(),
+          cycleTunnel: vi.fn().mockResolvedValue(undefined),
+        });
+
+        const req = mockRequest("POST", {
+          name: "renamed",
+          controllerUrl: "https://oauth.example.com",
+          authMode: "oauth2-cc",
+          oauthClientId: "existing-client-id",
+          oauthTokenUrl: "https://auth.example.com/token",
+          // no oauthClientSecret
+        });
+        (req as any).url = "/internal/tunnel/creds";
+        const res = mockResponse();
+
+        await routes.handlePostCreds(req, res);
+
+        expect(res._status).toBe(200);
+        const upsertInput = upsertController.mock.calls[0][0] as ControllerInput;
+        expect(upsertInput.oauthClientSecret).toBeUndefined();
+      });
+
+      it("authMode switch (oauth2-cc → static-bearer) + blank token → 400 (no matching prior secret to preserve)", async () => {
+        const mockStore = {
+          getController: vi.fn().mockResolvedValue(priorOauthRow),
+          upsertController: vi.fn(),
+          deleteController: vi.fn(),
+        } as unknown as ConfigStore;
+
+        const routes = createTunnelRoutes({
+          configStore: mockStore,
+          dialTunnel: vi.fn(),
+          cycleTunnel: vi.fn(),
+        });
+
+        const req = mockRequest("POST", {
+          controllerUrl: "https://oauth.example.com",
+          authMode: "static-bearer",
+          // no tunnelAuthToken — but prior row was oauth2-cc, so nothing to preserve
+        });
+        (req as any).url = "/internal/tunnel/creds";
+        const res = mockResponse();
+
+        await routes.handlePostCreds(req, res);
+
+        expect(res._status).toBe(400);
+        expect(JSON.parse(res._body).error).toContain("tunnelAuthToken is required");
+      });
     });
 
     it("returns 500 on DB error during upsert", async () => {

@@ -182,7 +182,7 @@ describe("ConfigStore", () => {
       );
     });
 
-    it("validates oauth2-cc requires all oauth fields", async () => {
+    it("validates oauth2-cc requires plaintext oauth fields", async () => {
       const input: ControllerInput = {
         name: "test",
         controllerUrl: "https://example.com",
@@ -194,8 +194,107 @@ describe("ConfigStore", () => {
       };
 
       await expect(store.upsertController(input)).rejects.toThrow(
-        /oauthClientId, oauthClientSecret, and oauthTokenUrl are required when authMode is oauth2-cc/
+        /oauthClientId and oauthTokenUrl are required when authMode is oauth2-cc/
       );
+    });
+
+    it("validates oauth2-cc requires oauthClientSecret when no prior row to preserve", async () => {
+      const input: ControllerInput = {
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        environment: null,
+        authMode: "oauth2-cc",
+        oauthClientId: "client-id",
+        oauthTokenUrl: "https://auth.example.com/token",
+        // Missing oauthClientSecret
+      };
+
+      await expect(store.upsertController(input)).rejects.toThrow(
+        /oauthClientSecret is required when authMode is oauth2-cc/
+      );
+    });
+
+    // Pins the "leave blank to keep existing" behavior: on UPDATE with the
+    // SAME authMode, an omitted secret preserves the prior sealed value via
+    // SQL COALESCE. This is what powers the Edit Tunnel modal's ability to
+    // update Display Name / Controller URL without re-pasting the token.
+    it("UPDATE: omitted tunnelAuthToken preserves the prior sealed value on same authMode", async () => {
+      await store!.upsertController({
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "original-secret-token",
+      });
+
+      // Second call omits tunnelAuthToken — should NOT throw, and should
+      // preserve the original secret.
+      const updated = await store!.upsertController({
+        name: "renamed",
+        controllerUrl: "https://renamed.example.com",
+        connectorName: "test",
+        environment: null,
+        authMode: "static-bearer",
+        // tunnelAuthToken deliberately omitted
+      });
+
+      expect(updated.name).toBe("renamed");
+      expect(updated.controllerUrl).toBe("https://renamed.example.com");
+      expect(updated.tunnelAuthToken).toBe("original-secret-token");
+    });
+
+    it("UPDATE: omitted oauthClientSecret preserves the prior sealed value on same authMode", async () => {
+      await store!.upsertController({
+        name: "test",
+        controllerUrl: "https://oauth.example.com",
+        connectorName: "test",
+        environment: null,
+        authMode: "oauth2-cc",
+        oauthClientId: "client-id",
+        oauthClientSecret: "original-client-secret",
+        oauthTokenUrl: "https://auth.example.com/token",
+      });
+
+      const updated = await store!.upsertController({
+        name: "renamed",
+        controllerUrl: "https://oauth.example.com",
+        connectorName: "test",
+        environment: null,
+        authMode: "oauth2-cc",
+        oauthClientId: "client-id",
+        oauthTokenUrl: "https://auth.example.com/token",
+        // oauthClientSecret deliberately omitted
+      });
+
+      expect(updated.name).toBe("renamed");
+      expect(updated.oauthClientSecret).toBe("original-client-secret");
+    });
+
+    it("UPDATE: authMode switch (static-bearer → oauth2-cc) still requires the new secret", async () => {
+      await store!.upsertController({
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        environment: null,
+        authMode: "static-bearer",
+        tunnelAuthToken: "static-token",
+      });
+
+      // Switching authMode → the prior sealed value is for a DIFFERENT
+      // authMode, so there is nothing to preserve. Must supply new secret.
+      await expect(store!.upsertController({
+        name: "test",
+        controllerUrl: "https://example.com",
+        connectorName: "test",
+        environment: null,
+        authMode: "oauth2-cc",
+        oauthClientId: "client-id",
+        oauthTokenUrl: "https://auth.example.com/token",
+        // oauthClientSecret omitted; prior row was static-bearer so no
+        // oauth secret to preserve.
+      })).rejects.toThrow(/oauthClientSecret is required/);
     });
 
     it("round-trips OAuth2 fields", async () => {
