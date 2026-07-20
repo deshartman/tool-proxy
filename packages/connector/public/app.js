@@ -388,28 +388,23 @@ function buildServerCard(s) {
     for (const t of (s.resourceTemplates || [])) resourcesSection.appendChild(buildResourceRow(s.name, t, true));
     card.appendChild(resourcesSection);
   }
-  // Set the card's collapsed state and persist. `next` explicit so name-click
-  // (always-expand) and arrow-click (toggle) share the same DOM-update path
-  // without diverging over time.
-  const setCollapsed = (next) => {
+  // Both the ▾ arrow and the <name> button toggle collapse/expand — a
+  // second click on either one closes the card. The name additionally
+  // selects for the right pane; switching to any tool inside the expanded
+  // card restores the tool-shape view automatically (selection is
+  // single-valued).
+  const toggleCollapsed = () => {
+    const next = !card.classList.contains('collapsed');
     card.classList.toggle('collapsed', next);
     card.querySelector('.server-header').setAttribute('aria-expanded', String(!next));
     setServerCollapsed(s.name, next);
   };
-  // Arrow: bidirectional toggle.
-  card.querySelector('.server-header').addEventListener('click', () => {
-    setCollapsed(!card.classList.contains('collapsed'));
-  });
-  // Name: always expand (never collapse) + select for right pane. Clicking
-  // the name signals "show me more about this MCP" — a collapse would run
-  // counter to that intent, so this is asymmetric with the arrow on purpose.
-  // Switching to any tool inside the expanded card restores the tool-shape
-  // view automatically (selection is single-valued).
+  card.querySelector('.server-header').addEventListener('click', toggleCollapsed);
   const nameBtn = card.querySelector('.server-name-btn');
   if (nameBtn) {
     nameBtn.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      setCollapsed(false);
+      toggleCollapsed();
       setSelection({ kind: 'mcp', key: `mcp:${s.name}`, serverName: s.name });
     });
   }
