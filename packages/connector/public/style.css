@@ -188,7 +188,6 @@ h2 {
   padding: 0.6rem 0.75rem;
   margin-bottom: 0.5rem;
 }
-.server-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .server-name { font-family: var(--mono); font-size: 0.95rem; color: var(--purple); }
 .server-meta { font-size: 0.75rem; color: var(--muted); }
 
@@ -759,6 +758,50 @@ h2 {
 }
 .tunnel-primary-btn:hover { filter: brightness(1.1); }
 .tunnel-primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Tunnel list-card in the left column. Visually mirrors .server-card so
+   the two panels read as a consistent list-of-things → click for detail.
+   Dedicated classes (not shared with .server-card) so applySelectionHighlight
+   in app.js can target tunnel rows independently of MCP rows. */
+.tunnel-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.tunnel-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.tunnel-name-btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.tunnel-name-btn:hover .tunnel-name { text-decoration: underline; }
+.tunnel-name-btn.selected .tunnel-name {
+  background: rgba(187, 134, 252, 0.15);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.tunnel-name-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.tunnel-name { font-family: var(--mono); font-size: 0.95rem; color: var(--purple); }
+.tunnel-card-meta { font-size: 0.75rem; color: var(--muted); }
+
+/* Right-pane detail view — wraps the readout + actions + action status
+   built dynamically by buildTunnelDetailPanel. */
+.tunnel-detail-view { display: flex; flex-direction: column; gap: 0.5rem; }
+
 .tunnel-readout {
   display: grid;
   grid-template-columns: max-content 1fr;

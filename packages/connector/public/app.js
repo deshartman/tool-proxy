@@ -350,11 +350,14 @@ function buildServerCard(s) {
   // (peer to selecting a tool — no close button, just switch by clicking
   // any tool). Two click targets, two distinct behaviours, the inner
   // <button> stops propagation so a name-click never collapses.
+  // No redundant "MCP SERVER" pill — the parent section header already
+  // says MCP SERVERS. The ▾/▸ toggle arrow remains as the expand/collapse
+  // affordance and picks up the same click handler as before via
+  // .server-header (now containing only the arrow + a short aria-label).
   card.innerHTML = `
     <div class="server-header-row">
-      <button type="button" class="server-header" aria-expanded="${!collapsed}">
+      <button type="button" class="server-header" aria-expanded="${!collapsed}" aria-label="Toggle server details">
         <span class="server-toggle" aria-hidden="true">▾</span>
-        <span class="server-label">MCP Server</span>
       </button>
       <button type="button" class="server-name-btn${(s.envKeys || []).length > 0 ? ' has-env' : ''}" data-mcp="${escapeHtml(s.name)}"${(s.envKeys || []).length > 0 ? ' title="Click to set environment variables"' : ''}>
         <span class="server-name">${escapeHtml(s.name)}</span>
@@ -385,20 +388,28 @@ function buildServerCard(s) {
     for (const t of (s.resourceTemplates || [])) resourcesSection.appendChild(buildResourceRow(s.name, t, true));
     card.appendChild(resourcesSection);
   }
+  // Set the card's collapsed state and persist. `next` explicit so name-click
+  // (always-expand) and arrow-click (toggle) share the same DOM-update path
+  // without diverging over time.
+  const setCollapsed = (next) => {
+    card.classList.toggle('collapsed', next);
+    card.querySelector('.server-header').setAttribute('aria-expanded', String(!next));
+    setServerCollapsed(s.name, next);
+  };
+  // Arrow: bidirectional toggle.
   card.querySelector('.server-header').addEventListener('click', () => {
-    const nowCollapsed = !card.classList.contains('collapsed');
-    card.classList.toggle('collapsed', nowCollapsed);
-    card.querySelector('.server-header').setAttribute('aria-expanded', String(!nowCollapsed));
-    setServerCollapsed(s.name, nowCollapsed);
+    setCollapsed(!card.classList.contains('collapsed'));
   });
-  // W-S5: clicking the purple <name> selects the MCP creds view in the
-  // right pane — peer to selecting a tool. Switching to any tool
-  // restores the tool-shape view automatically (selection is
-  // single-valued).
+  // Name: always expand (never collapse) + select for right pane. Clicking
+  // the name signals "show me more about this MCP" — a collapse would run
+  // counter to that intent, so this is asymmetric with the arrow on purpose.
+  // Switching to any tool inside the expanded card restores the tool-shape
+  // view automatically (selection is single-valued).
   const nameBtn = card.querySelector('.server-name-btn');
   if (nameBtn) {
     nameBtn.addEventListener('click', (ev) => {
       ev.stopPropagation();
+      setCollapsed(false);
       setSelection({ kind: 'mcp', key: `mcp:${s.name}`, serverName: s.name });
     });
   }
@@ -683,6 +694,12 @@ function applySelectionHighlight() {
   document.querySelectorAll('.webhook-event').forEach((el) => {
     el.classList.toggle('selected', el.dataset.webhookKey === webhookKey);
   });
+  // Highlight the .tunnel-name-btn whose data-tunnel-id matches the selection,
+  // mirroring the .server-name-btn behavior above.
+  const tunnelId = selection?.kind === 'tunnel' ? selection.tunnelId : null;
+  document.querySelectorAll('.tunnel-name-btn').forEach((el) => {
+    el.classList.toggle('selected', el.dataset.tunnelId === tunnelId);
+  });
 }
 
 function buildToolDetail(sel) {
@@ -788,6 +805,7 @@ const DETAIL_BUILDERS = {
   frame: buildFrameDetailPanel,
   mcp: buildMcpDetailPanel,
   webhook: buildWebhookDetail,
+  tunnel: (sel) => buildTunnelDetailPanel(sel),
 };
 
 function renderDetail() {
@@ -1566,20 +1584,9 @@ const elTunnelLoading    = document.getElementById('tunnel-loading');
 const elTunnelEnvMode    = document.getElementById('tunnel-env-mode');
 const elTunnelEmpty      = document.getElementById('tunnel-empty');
 const elTunnelConfigured = document.getElementById('tunnel-configured');
+const elTunnelList       = document.getElementById('tunnel-list');
 const elTunnelModeBadge  = document.getElementById('tunnel-mode-badge');
 const elTunnelConfigureBtn = document.getElementById('tunnel-configure-btn');
-const elTunnelEditBtn      = document.getElementById('tunnel-edit-btn');
-const elTunnelForceBtn     = document.getElementById('tunnel-force-btn');
-const elTunnelActionStatus = document.getElementById('tunnel-action-status');
-const elTunnelRLabel     = document.getElementById('tunnel-r-label');
-const elTunnelRUrl       = document.getElementById('tunnel-r-url');
-const elTunnelRMode      = document.getElementById('tunnel-r-mode');
-const elTunnelRBearerLabel = document.getElementById('tunnel-r-bearer-label');
-const elTunnelRBearer    = document.getElementById('tunnel-r-bearer');
-const elTunnelRReg       = document.getElementById('tunnel-r-reg');
-const elTunnelRConnected = document.getElementById('tunnel-r-connected');
-const elTunnelRDiscLabel = document.getElementById('tunnel-r-disc-label');
-const elTunnelRDisc      = document.getElementById('tunnel-r-disc');
 
 const elTunnelModal      = document.getElementById('tunnel-modal');
 const elTunnelModalTitle = document.getElementById('tunnel-modal-title');
@@ -1591,8 +1598,18 @@ const elTunnelOauthFields  = document.getElementById('tunnel-oauth-fields');
 const elTunnelTokenHint    = document.getElementById('tunnel-token-hint');
 const elTunnelSecretHint   = document.getElementById('tunnel-secret-hint');
 
-// null → not fetched yet; false → env mode; null-configured → empty; object → row summary
-let tunnelState = { mode: 'loading', row: null };
+// tunnelState shape:
+//   mode:         'loading' | 'env' | 'empty' | 'configured' | 'error'
+//   rows:         Row[] — canonical list. Today the DB constraint holds a
+//                 single row, but the state is shaped for eventual N-tunnel.
+//   row:          alias for rows[0] — preserved so the modal submit handler
+//                 (which reads tunnelState.row?.hasTunnelAuthToken) keeps
+//                 working without a rewrite.
+//   actionStatus: {text, ok} | null — transient banner shown in the
+//                 currently-selected tunnel's right-pane detail. Persists
+//                 across selection changes (i.e. click away + back and the
+//                 last status is still there). Reset by any new action.
+let tunnelState = { mode: 'loading', rows: [], row: null, actionStatus: null };
 
 function showTunnelView(view) {
   elTunnelLoading.hidden    = view !== 'loading';
@@ -1605,10 +1622,16 @@ function showTunnelView(view) {
 }
 
 function setTunnelActionStatus(text, ok) {
-  if (!text) { elTunnelActionStatus.hidden = true; return; }
-  elTunnelActionStatus.hidden = false;
-  elTunnelActionStatus.textContent = text;
-  elTunnelActionStatus.className = 'tunnel-action-status ' + (ok ? 'ok' : 'err');
+  tunnelState.actionStatus = text ? { text, ok } : null;
+  // Re-render the right pane so an in-flight status shows up immediately
+  // when the operator is looking at the tunnel detail. If the user has
+  // navigated to a different selection (e.g. an MCP), the status is stored
+  // and will surface next time they click back to the tunnel.
+  if (selection?.kind === 'tunnel') renderDetail();
+}
+
+function tunnelDisplayName(row) {
+  return row.name || row.controllerUrl.replace(/^https?:\/\//, '').split('/')[0];
 }
 
 function relativeTime(iso) {
@@ -1622,82 +1645,152 @@ function relativeTime(iso) {
   return new Date(iso).toLocaleString();
 }
 
-function renderTunnelConfigured(row) {
-  elTunnelRLabel.textContent = row.name || row.controllerUrl.replace(/^https?:\/\//, '').split('/')[0];
-  elTunnelRUrl.textContent = row.controllerUrl;
-  elTunnelRMode.textContent = row.authMode;
-
-  // Auth-mode-conditional badge label
-  if (row.authMode === 'static-bearer') {
-    elTunnelRBearerLabel.textContent = 'Bearer';
-    elTunnelRBearer.textContent = row.hasTunnelAuthToken ? 'set' : 'not set';
-    elTunnelRBearer.className = 'tunnel-badge ' + (row.hasTunnelAuthToken ? 'set' : 'unset');
-  } else {
-    elTunnelRBearerLabel.textContent = 'OAuth secret';
-    elTunnelRBearer.textContent = row.hasOauthClientSecret ? 'set' : 'not set';
-    elTunnelRBearer.className = 'tunnel-badge ' + (row.hasOauthClientSecret ? 'set' : 'unset');
+// Render the compact list of tunnel cards in the left column. One row per
+// configured tunnel; today N ≤ 1, tomorrow arbitrary. Detail lives in the
+// right pane — clicking .tunnel-name-btn drives setSelection.
+function renderTunnelList(rows) {
+  elTunnelList.replaceChildren();
+  for (const row of rows) {
+    elTunnelList.appendChild(buildTunnelCard(row));
   }
+}
 
-  if (row.hasRegistrationToken) {
-    elTunnelRReg.textContent = `bound (len=${row.registrationTokenLen ?? '?'})`;
-    elTunnelRReg.className = 'tunnel-badge set';
-  } else {
-    elTunnelRReg.textContent = 'not registered';
-    elTunnelRReg.className = 'tunnel-badge unset';
-  }
-
-  elTunnelRConnected.textContent = relativeTime(row.lastConnectedAt);
-
-  if (row.lastDisconnectReason) {
-    elTunnelRDiscLabel.hidden = false;
-    elTunnelRDisc.hidden = false;
-    elTunnelRDisc.textContent = row.lastDisconnectReason;
-  } else {
-    elTunnelRDiscLabel.hidden = true;
-    elTunnelRDisc.hidden = true;
-  }
+function buildTunnelCard(row) {
+  const card = document.createElement('div');
+  card.className = 'tunnel-card';
+  const displayName = tunnelDisplayName(row);
+  // No redundant "TUNNEL" pill inside the card — the parent section header
+  // already says TUNNEL. Just the Display Name (clickable) + auth-mode meta.
+  card.innerHTML = `
+    <div class="tunnel-card-header">
+      <button type="button" class="tunnel-name-btn" data-tunnel-id="${escapeHtml(row.id)}" title="Click to view details">
+        <span class="tunnel-name">${escapeHtml(displayName)}</span>
+      </button>
+      <span class="tunnel-card-meta">${escapeHtml(row.authMode)}</span>
+    </div>
+  `;
+  const btn = card.querySelector('.tunnel-name-btn');
+  btn.addEventListener('click', () => {
+    setSelection({ kind: 'tunnel', key: `tunnel:${row.id}`, tunnelId: row.id });
+  });
+  return card;
 }
 
 async function fetchTunnelConfig() {
   try {
     const resp = await fetch('/internal/tunnel/config');
     if (resp.status === 404) {
-      tunnelState = { mode: 'env', row: null };
+      tunnelState = { ...tunnelState, mode: 'env', rows: [], row: null };
       showTunnelView('env-mode');
+      renderTunnelList([]);
       return;
     }
     const body = await resp.json().catch(() => ({}));
     if (resp.status >= 400 || body.ok === false) {
-      tunnelState = { mode: 'error', row: null };
+      tunnelState = { ...tunnelState, mode: 'error', rows: [], row: null };
       showTunnelView('empty');
+      renderTunnelList([]);
       setTunnelActionStatus(body.error || `HTTP ${resp.status}`, false);
       return;
     }
     if (!body.configured) {
-      tunnelState = { mode: 'empty', row: null };
+      tunnelState = { ...tunnelState, mode: 'empty', rows: [], row: null };
       showTunnelView('empty');
+      renderTunnelList([]);
       return;
     }
-    tunnelState = { mode: 'configured', row: body.row };
-    renderTunnelConfigured(body.row);
+    const rows = [body.row];
+    tunnelState = { ...tunnelState, mode: 'configured', rows, row: body.row };
+    renderTunnelList(rows);
     showTunnelView('configured');
+    // If the operator was already looking at this tunnel's detail, refresh
+    // it so the badge state / lastConnectedAt reflect the new fetch.
+    if (selection?.kind === 'tunnel' && selection.tunnelId === body.row.id) {
+      renderDetail();
+    }
   } catch (err) {
-    tunnelState = { mode: 'error', row: null };
+    tunnelState = { ...tunnelState, mode: 'error', rows: [], row: null };
     showTunnelView('empty');
+    renderTunnelList([]);
     setTunnelActionStatus(String(err.message || err), false);
   }
 }
 
+// Right-pane builder — mirrors buildMcpDetailPanel's contract:
+// look up the selected row by id, render the readout + action buttons +
+// action-status banner. Buttons wire directly into openTunnelModal and
+// handleForceReregister (both scoped by tunnelId for eventual multi-tunnel).
+function buildTunnelDetailPanel(sel) {
+  const row = tunnelState.rows.find((r) => r.id === sel.tunnelId);
+  const view = document.createElement('div');
+  view.className = 'tunnel-detail-view';
+  if (!row) {
+    elDetailTitle.textContent = 'Tunnel';
+    view.innerHTML = `<div class="muted">Tunnel not found — it may have been removed.</div>`;
+    return view;
+  }
+  elDetailTitle.textContent = tunnelDisplayName(row);
+
+  const bearerLabel = row.authMode === 'static-bearer' ? 'Bearer' : 'OAuth secret';
+  const bearerSet = row.authMode === 'static-bearer' ? row.hasTunnelAuthToken : row.hasOauthClientSecret;
+  const regText = row.hasRegistrationToken
+    ? `bound (len=${row.registrationTokenLen ?? '?'})`
+    : 'not registered';
+  const regClass = row.hasRegistrationToken ? 'set' : 'unset';
+  const bearerClass = bearerSet ? 'set' : 'unset';
+  const bearerText = bearerSet ? 'set' : 'not set';
+
+  view.innerHTML = `
+    <dl class="tunnel-readout">
+      <dt>Display name</dt>
+      <dd><code>${escapeHtml(tunnelDisplayName(row))}</code></dd>
+      <dt>Controller URL</dt>
+      <dd><code>${escapeHtml(row.controllerUrl)}</code></dd>
+      <dt>Auth mode</dt>
+      <dd><code>${escapeHtml(row.authMode)}</code></dd>
+      <dt>${escapeHtml(bearerLabel)}</dt>
+      <dd><span class="tunnel-badge ${bearerClass}">${bearerText}</span></dd>
+      <dt>Registration</dt>
+      <dd><span class="tunnel-badge ${regClass}">${escapeHtml(regText)}</span></dd>
+      <dt>Last connected</dt>
+      <dd>${escapeHtml(relativeTime(row.lastConnectedAt))}</dd>
+      ${row.lastDisconnectReason ? `
+        <dt>Last disconnect</dt>
+        <dd>${escapeHtml(row.lastDisconnectReason)}</dd>
+      ` : ''}
+    </dl>
+    <div class="tunnel-actions">
+      <button type="button" data-role="edit">Edit</button>
+      <button type="button" data-role="force">Force re-registration</button>
+    </div>
+    ${tunnelState.actionStatus ? `
+      <div class="tunnel-action-status ${tunnelState.actionStatus.ok ? 'ok' : 'err'}">${escapeHtml(tunnelState.actionStatus.text)}</div>
+    ` : ''}
+  `;
+
+  view.querySelector('button[data-role="edit"]').addEventListener('click', () => {
+    openTunnelModal('edit', row);
+  });
+  view.querySelector('button[data-role="force"]').addEventListener('click', () => {
+    void handleForceReregister(row);
+  });
+
+  return view;
+}
+
 // Modal open/close ────────────────────────────────────────────
-function openTunnelModal(mode /* 'configure' | 'edit' */) {
+// Optional `row` param: which tunnel is being edited. Defaults to
+// tunnelState.row (today's single-row shape) so the "Configure tunnel"
+// empty-state click keeps working without a callsite change.
+function openTunnelModal(mode /* 'configure' | 'edit' */, row) {
   elTunnelModalTitle.textContent = mode === 'edit' ? 'Edit tunnel' : 'Configure tunnel';
   elTunnelFormSubmit.textContent = mode === 'edit' ? 'Save & reconnect' : 'Save & connect';
   elTunnelFormError.hidden = true;
   elTunnelForm.reset();
 
-  const editing = mode === 'edit' && tunnelState.row;
+  const editing = mode === 'edit' && (row ?? tunnelState.row);
   if (editing) {
-    const r = tunnelState.row;
+    const r = row ?? tunnelState.row;
     elTunnelForm.controllerUrl.value = r.controllerUrl;
     if (elTunnelForm.displayName) elTunnelForm.displayName.value = r.name ?? '';
     const modeRadio = elTunnelForm.querySelector(`input[name="authMode"][value="${r.authMode}"]`);
@@ -1782,19 +1875,27 @@ elTunnelForm.querySelectorAll('input[name="authMode"]').forEach((r) => {
 });
 
 // Buttons ─────────────────────────────────────────────────────
+// Only the empty-state "Configure tunnel" button is bound at load time;
+// the Edit / Force re-registration buttons are per-tunnel and live inside
+// the right-pane detail — bound in buildTunnelDetailPanel above.
 elTunnelConfigureBtn?.addEventListener('click', () => openTunnelModal('configure'));
-elTunnelEditBtn?.addEventListener('click', () => openTunnelModal('edit'));
-elTunnelForceBtn?.addEventListener('click', () => void handleForceReregister());
 
-async function handleForceReregister() {
+// Optional `row` param preserves the eventual multi-tunnel shape — today's
+// backend endpoint targets the single configured row and ignores which one
+// the caller specified. Once the controller migrates to per-row endpoints
+// this handler will thread the id through.
+async function handleForceReregister(row) {  // eslint-disable-line no-unused-vars
   if (!confirm(
     'Force re-registration will clear this connector\'s registration token and redial the tunnel.\n\n' +
     'IMPORTANT: if the controller-side MCP Tunnel row still exists (Settings → MCP Tunnel), the next register-ack will FAIL with "organisation_has_connector" — you\'ll need to delete the controller-side row first, then click Reconnect.\n\n' +
     'Only use this when you want a completely fresh registration (typical after deleting the controller-side row).\n\n' +
     'Continue?',
   )) return;
-  elTunnelForceBtn.disabled = true;
-  elTunnelEditBtn.disabled = true;
+  // No button-disable dance: the detail pane re-renders after the fetch
+  // and its buttons are fresh DOM. A double-click before fetch return
+  // fires two POSTs to /internal/tunnel/force-reregister; the second is
+  // effectively a no-op (registration token was already cleared), so
+  // there is no operator-visible bad state.
   setTunnelActionStatus('re-registering…', true);
   try {
     const resp = await fetch('/internal/tunnel/force-reregister', { method: 'POST' });
@@ -1807,9 +1908,6 @@ async function handleForceReregister() {
     }
   } catch (err) {
     setTunnelActionStatus(String(err.message || err), false);
-  } finally {
-    elTunnelForceBtn.disabled = false;
-    elTunnelEditBtn.disabled = false;
   }
 }
 
