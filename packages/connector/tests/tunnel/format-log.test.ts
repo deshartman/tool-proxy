@@ -56,4 +56,36 @@ describe("formatHandshakeFailure", () => {
     const payload = formatHandshakeFailure(new Error("x"), URL);
     expect(Object.keys(payload).sort()).toEqual(["reason", "url"]);
   });
+
+  // Pins the regression observed 2026-07-20 with a controller down: Node's
+  // happy-eyeballs dial (dual-stack IPv4+IPv6 concurrent connect) surfaces
+  // ECONNREFUSED as an AggregateError with an empty top-level .message and
+  // two sub-errors — one per address family. Before the fix, .message alone
+  // produced an empty reason string; now we fall back to .code + address.
+  describe("AggregateError from happy-eyeballs dial (empty .message)", () => {
+    function makeAggregate(code: string, subs: Array<{ code?: string; address?: string; port?: number }>): AggregateError {
+      const inner = subs.map((s) => Object.assign(new Error(""), s));
+      const agg = new AggregateError(inner, "");
+      Object.assign(agg, { code });
+      return agg;
+    }
+
+    it("uses .code plus the first sub-error's address:port when .message is empty", () => {
+      const agg = makeAggregate("ECONNREFUSED", [
+        { code: "ECONNREFUSED", address: "::1", port: 3001 },
+        { code: "ECONNREFUSED", address: "127.0.0.1", port: 3001 },
+      ]);
+      expect(formatHandshakeFailure(agg, URL).reason).toBe("ECONNREFUSED ::1:3001");
+    });
+
+    it("falls back to just .code when no sub-error carries address+port", () => {
+      const agg = makeAggregate("ECONNREFUSED", [{ code: "ECONNREFUSED" }]);
+      expect(formatHandshakeFailure(agg, URL).reason).toBe("ECONNREFUSED");
+    });
+
+    it("falls back to Error name when neither .message nor .code is present", () => {
+      const err = new Error("");
+      expect(formatHandshakeFailure(err, URL).reason).toBe("Error");
+    });
+  });
 });

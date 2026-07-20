@@ -66,28 +66,15 @@
             <button id="tunnel-configure-btn" type="button" class="tunnel-primary-btn">Configure tunnel</button>
           </div>
 
+          <!-- One .tunnel-card per configured tunnel row. Today the DB
+               constraint holds a single row (unique index on ((TRUE))), but
+               the list container is shaped for eventual N-tunnel support.
+               Compact display: Display Name (clickable, opens right-pane
+               detail) + a small meta line. Full readout + Edit / Force
+               re-registration buttons render in the right pane, mirroring
+               MCP Server rows. -->
           <div id="tunnel-configured" class="tunnel-configured" hidden>
-            <dl class="tunnel-readout">
-              <dt>Display name</dt>
-              <dd><code id="tunnel-r-label"></code></dd>
-              <dt>Controller URL</dt>
-              <dd><code id="tunnel-r-url"></code></dd>
-              <dt>Auth mode</dt>
-              <dd><code id="tunnel-r-mode"></code></dd>
-              <dt id="tunnel-r-bearer-label">Bearer</dt>
-              <dd><span id="tunnel-r-bearer" class="tunnel-badge"></span></dd>
-              <dt>Registration</dt>
-              <dd><span id="tunnel-r-reg" class="tunnel-badge"></span></dd>
-              <dt>Last connected</dt>
-              <dd id="tunnel-r-connected"></dd>
-              <dt id="tunnel-r-disc-label" hidden>Last disconnect</dt>
-              <dd id="tunnel-r-disc" hidden></dd>
-            </dl>
-            <div class="tunnel-actions">
-              <button id="tunnel-edit-btn" type="button">Edit</button>
-              <button id="tunnel-force-btn" type="button">Force re-registration</button>
-            </div>
-            <div id="tunnel-action-status" class="tunnel-action-status" hidden></div>
+            <div id="tunnel-list"></div>
           </div>
         </div>
       </section>

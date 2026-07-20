@@ -82,11 +82,23 @@ export class TunnelClient {
       const ws = new WebSocket(wsUrl, { headers });
       this.ws = ws;
 
+      // Pre-settlement flag. Any error that fires BEFORE the WS handshake
+      // resolves is a recoverable dial failure and should reject the connect
+      // Promise so the caller can log it at WARN via formatHandshakeFailure.
+      // We CANNOT rely on `ws.readyState === CONNECTING` for this — the ws
+      // library transitions state to CLOSING before emitting 'error' on
+      // pre-open TCP failures (e.g. ECONNREFUSED from Node's happy-eyeballs
+      // dial), so that check misclassifies the error as post-open and lets
+      // it escape to `this.onerror` → ERROR-level log with a full stack.
+      let settled = false;
+
       // Dial-timeout. Without this, a half-open TLS handshake can hang
       // for the kernel TCP timeout (~4min) and the connector sits stuck
       // in reconnecting=true. 10s is the hard cap.
       const timeoutMs = TunnelClient.DIAL_TIMEOUT_MS;
       const dialTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         // Abort the dial. terminate() forces a close even mid-handshake,
         // which the existing 'close' handler picks up.
         try { ws.terminate(); } catch { /* swallow */ }
@@ -96,16 +108,20 @@ export class TunnelClient {
 
       ws.once("open", () => {
         clearDialTimer();
+        settled = true;
         this.setState("open");
         resolve();
       });
       ws.once("unexpected-response", (_req, res) => {
         clearDialTimer();
+        if (settled) return;
+        settled = true;
         reject(new Error(`Tunnel rejected with status ${res.statusCode}`));
       });
       ws.on("error", (error) => {
-        if (ws.readyState === WebSocket.CONNECTING) {
+        if (!settled) {
           clearDialTimer();
+          settled = true;
           reject(error);
         } else {
           this.onerror?.(error);

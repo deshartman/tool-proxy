@@ -85,21 +85,36 @@ export class ConfigStore {
     if (!input.name || !input.controllerUrl || !input.connectorName) {
       throw new Error("name, controllerUrl, and connectorName are required");
     }
-    if (input.authMode === "static-bearer" && !input.tunnelAuthToken) {
+
+    // Check if row exists to determine if this is INSERT or UPDATE.
+    // We also read the prior authMode + sealed-secret presence so we can
+    // relax the "secret is required" rule when the caller is only updating
+    // display fields — the SQL COALESCE at the bottom of this method
+    // preserves the existing sealed value when the caller omits the secret.
+    // Preservation is only valid when the authMode is UNCHANGED; a switch
+    // between static-bearer and oauth2-cc must always supply the new secret.
+    const { rows: existing } = await this.pool.query(
+      `SELECT id, auth_mode, tunnel_auth_token_ct, oauth_client_secret_ct FROM ${this.schema}.controllers LIMIT 1`
+    );
+    const priorRow = existing[0] as
+      | { id: string; auth_mode: "static-bearer" | "oauth2-cc"; tunnel_auth_token_ct: Buffer | null; oauth_client_secret_ct: Buffer | null }
+      | undefined;
+    const canPreserveTunnelAuthToken = priorRow?.auth_mode === "static-bearer" && priorRow?.tunnel_auth_token_ct !== null;
+    const canPreserveOauthClientSecret = priorRow?.auth_mode === "oauth2-cc" && priorRow?.oauth_client_secret_ct !== null;
+
+    if (input.authMode === "static-bearer" && !input.tunnelAuthToken && !canPreserveTunnelAuthToken) {
       throw new Error("tunnelAuthToken is required when authMode is static-bearer");
     }
     if (input.authMode === "oauth2-cc") {
-      if (!input.oauthClientId || !input.oauthClientSecret || !input.oauthTokenUrl) {
-        throw new Error("oauthClientId, oauthClientSecret, and oauthTokenUrl are required when authMode is oauth2-cc");
+      if (!input.oauthClientId || !input.oauthTokenUrl) {
+        throw new Error("oauthClientId and oauthTokenUrl are required when authMode is oauth2-cc");
+      }
+      if (!input.oauthClientSecret && !canPreserveOauthClientSecret) {
+        throw new Error("oauthClientSecret is required when authMode is oauth2-cc");
       }
     }
 
-    // Check if row exists to determine if this is INSERT or UPDATE
-    const { rows: existing } = await this.pool.query(
-      `SELECT id FROM ${this.schema}.controllers LIMIT 1`
-    );
-
-    const id = existing.length > 0 ? existing[0].id : crypto.randomUUID();
+    const id = priorRow ? priorRow.id : crypto.randomUUID();
     const now = new Date();
 
     // Encrypt secrets

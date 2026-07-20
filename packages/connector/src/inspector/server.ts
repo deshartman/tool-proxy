@@ -720,6 +720,31 @@ export function startInspector(port: number, inspector: Inspector): void {
   // /events. Reach it from outside the container via port-forward / exec,
   // never via an LB. See CLAUDE.md "Inspector port is localhost-only and
   // carries copy-able webhook URLs".
+  // Attach the listen-error handler BEFORE .listen() so EADDRINUSE (typically
+  // a stale connector still holding the port) surfaces as an actionable
+  // one-liner instead of Node's raw "Unhandled 'error' event" stack. Without
+  // this listener the http.Server 'error' event has no consumer and Node
+  // throws an uncaught exception, which pino can't format and start-connector
+  // ends up printing four SIGTERM banners as the trap handler retries.
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      log.error(
+        {
+          port,
+          fix: `lsof -iTCP:${port} -sTCP:LISTEN -n -P  # find the pid, then: kill <pid>`,
+          override: `set INSPECTOR_PORT=<other> in .env to run on a different port`,
+        },
+        `inspector port ${port} is already in use — another connector is likely still running`
+      );
+    } else {
+      log.error({ err, port }, `inspector server failed to listen`);
+    }
+    // The inspector is load-bearing (loopback IPC for bundled MCPs, tunnel
+    // routes under db mode, operator UI) — the connector can't do its job
+    // without it. Exit cleanly rather than boot half-broken; the OS reaps
+    // any MCP children we already spawned.
+    process.exit(1);
+  });
   server.listen(port, "127.0.0.1", () => {
     const snap = inspector.snapshot();
     const controllerUrl = snap.kind === "snapshot" ? snap.controllerUrl : "?";
