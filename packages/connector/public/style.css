@@ -192,10 +192,9 @@ h2 {
 .server-meta { font-size: 0.75rem; color: var(--muted); }
 
 .server-header {
-  display: flex;
-  align-items: flex-start;
+  display: inline-flex;
+  align-items: center;
   gap: 0.5rem;
-  width: 100%;
   background: transparent;
   border: 0;
   padding: 0;
