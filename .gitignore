@@ -75,14 +75,4 @@ graphify-out/*
 # restarts. Production deployments pre-populate or use baked images.
 .ollama-cache/
 
-# Local-only test drop-in. Files live under mcp/local/crm/ when needed for
-# manual smoke-testing against the mock customer service; not tracked in
-# the repo (decision 2026-06-23 — kept as test scaffolding only).
-mcp/local/crm/
-
-# Mock customer service used during development to back the mcp/local/crm
-# drop-in. Folder stays on developer disks but does not ship with the
-# connector image. Decision 2026-06-24 — kept as dev scaffolding only,
-# parallels mcp/local/crm/.
-mock/
 .local/
