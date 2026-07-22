@@ -451,6 +451,39 @@ The core deploy plan (D1–D5) needed zero revision. What we didn't expect: nine
 
 **Bug B6 — `.dockerignore` was missing every dev-only cache we've added since it was written.** `.venv/` (961 MB), `.ollama-cache/` (262 MB), `graphify-out/`, `.playwright-mcp/`, `.local-backups/`, Python caches (`__pycache__`, `.pytest_cache`, `.egg-info`, `.ruff_cache`, `.mypy_cache`), and `mock/` (dev-only per D5). Build context ballooned to 400+ MB before `.venv` content even started transferring. First deploy on a fresh Fly builder took 5+ minutes just to send the context. **Fix:** slimmed [`.dockerignore`](../.dockerignore) — the missing patterns are documented at the additions. Rule: whenever `.gitignore` grows to exclude a new dev artifact directory, `.dockerignore` should grow with it.
 
+### Phase B addendum — real tunnel handshake + approval-gate validation
+
+After adding `MCP_DROPIN_DIR = /app/mcp/local` to the Fly env (so the shipped
+`mcp/local/sample/`, `agentic-memory/`, and `crm/` drop-ins get auto-discovered),
+we exercised the full v1.3 approval-gate handshake end-to-end over the real
+production tunnel:
+
+- Connector emits `mcp-discovered` for each drop-in (3 frames)
+- Operator approves 2/3 in the controller UI
+- Controller sends `mcp-enable` per approval
+- Connector processes each in the SAME millisecond (`mcp-enable applied` and
+  `pushed manifest-delta` share a timestamp) — zero connector-side latency
+- Manifest surfaces 11 tools total (7 crm + 4 sample) in inspector
+
+**Approval-latency observation.** Operator reported "took a long time" between
+click and tools appearing. Connector log timing eliminated us as the source:
+`mcp-enable applied` fired instantly for both approvals. The wall-clock delay
+is on the controller side — either UI render latency after the `manifest-delta`
+round-trip, or the controller's own poll interval before `mcp-enable` actually
+goes down the wire. Worth flagging to the controller dev as a UX concern; no
+action for the connector.
+
+**Boot-time tunnel-flap observation.** After the `MCP_DROPIN_DIR` redeploy,
+the connector attempted 7 reconnects between machine start (`23:12:11`) and
+first successful tunnel (`23:15:07`) — each dial timing out after 10s. Auto-
+reconnect worked correctly; steady state reached in ~3 min. The controller URL
+is Fly-hosted (`twilio-conversation-agent-web.fly.dev`); most likely cause is
+Fly control-plane contention during a rapid-deploy window or a controller
+cold start (if the controller scales to zero). Not fixable connector-side, but
+**lesson for the controller dev**: if the controller is Fly-hosted and can
+scale-to-zero, connectors will see reconnect storms during controller cold
+starts. Pin `min_machines_running = 1` on the controller to avoid this.
+
 ### Meta-lesson
 
 **Every one of these nine bugs was invisible to local `npm test`, `npm run build`, and even a targeted `docker build` from the working tree.** The classes that trip an isolated build:
