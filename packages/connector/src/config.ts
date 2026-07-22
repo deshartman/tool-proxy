@@ -125,7 +125,14 @@ const ConfigSchema = z.object({
       credentials_file: z.string().optional(),
     })
     .optional(),
-  mcp_servers: z.array(z.discriminatedUnion("transport", [HttpServer, StdioServer])).min(1),
+  // Empty array is allowed — legit when the customer runs ONLY drop-ins
+  // (auto-discovered under MCP_DROPIN_DIR) and/or controller-pushed Type 2
+  // MCPs (roster arrives over the WS at register-ack). The yaml only owns
+  // hand-written Type 1 servers + Type 3 bundles; either can legitimately
+  // be empty. Default so an omitted `mcp_servers:` key is also accepted.
+  mcp_servers: z
+    .array(z.discriminatedUnion("transport", [HttpServer, StdioServer]))
+    .default(() => []),
   policy: Policy.default(() => Policy.parse({})),
 });
 
