@@ -4,6 +4,7 @@ import { boot } from "./boot/lifecycle.js";
 import { runDiscover } from "./discover.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
+import { runScaffold } from "./deploy/scaffold.js";
 import { createLogger } from "./logger.js";
 import { envString } from "./env.js";
 
@@ -16,6 +17,7 @@ commands:
   init                    interactive wizard to write connector.yaml
   discover                connect to MCP servers and print tools/list
   doctor                  run preflight checks against your .env and connector.yaml
+  deploy scaffold         emit cloud deployment manifests (fargate/gke/aca/compose)
   version                 print the connector version
 
 start options:
@@ -45,6 +47,10 @@ async function dispatch(): Promise<void> {
       return;
     case "doctor": {
       const code = await runDoctor(rest);
+      process.exit(code);
+    }
+    case "deploy": {
+      const code = await runScaffold(rest);
       process.exit(code);
     }
     case "help":
