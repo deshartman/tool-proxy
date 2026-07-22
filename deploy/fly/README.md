@@ -30,11 +30,22 @@ Reach the inspector via `fly proxy 9090:9090 -a mcp-connector-<CUSTOMER>`.
 
 ### 1. Copy the template and set the app name
 
+The fly.toml **must live at the repo root** — Fly's build context is
+locked to the fly.toml's directory and this connector's Dockerfile needs
+the repo root as context. See §B1 in the [deployment plan](../../architectural-plans/CODE-DEPLOY.md#lessons-learned-2026-07-22--2026-07-23).
+
 ```bash
-cd deploy/fly
-cp fly.toml.example fly.toml
+# From the repo root:
+cp deploy/fly/fly.toml.example fly.toml
 # Replace <CUSTOMER> with your customer slug (e.g. acme-prod).
 sed -i.bak 's/<CUSTOMER>/acme-prod/g' fly.toml && rm fly.toml.bak
+```
+
+Or use the scaffold CLI (also writes to repo root by default):
+
+```bash
+mcp-connector deploy scaffold --target fly --name acme-prod \
+  --controller-url https://your-controller.example.com --yes
 ```
 
 ### 2. Create the Fly app (no deploy yet)
@@ -88,8 +99,13 @@ volume is belt-and-braces — see [D3 in the deployment plan](../../architectura
 
 ### 6. Deploy
 
+`fly deploy` silently buffers stdout when piped through `2>&1 | tail` —
+Fly's Depot builder only flushes on a real TTY. Redirect to a file so
+you can watch build progress live during the ~3 min initial build:
+
 ```bash
-fly deploy --app mcp-connector-acme-prod
+nohup fly deploy > /tmp/fly-deploy.log 2>&1 &
+tail -f /tmp/fly-deploy.log
 ```
 
 First deploy takes ~2 minutes (image pull + volume attach + Machine start).

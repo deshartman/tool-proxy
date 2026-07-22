@@ -38,15 +38,20 @@ Beyond the [common prereqs](README.md#prereqs-every-cloud):
 Full runbook lives in [`deploy/fly/README.md`](../../deploy/fly/README.md). The condensed version:
 
 ```bash
-# 1. Render the manifests into a working directory of your choice.
+# 1. Render the manifests. Default outDir is the repo root (`.`) — the
+#    generated fly.toml MUST live at repo root because Fly's build context
+#    is locked to the fly.toml's directory, and our Dockerfile needs the
+#    repo root as context (it COPYs package.json, packages/connector/,
+#    mcp/, bundles/).
 mcp-connector deploy scaffold --target fly --name acme-prod \
-  --controller-url https://your-controller.example.com \
-  --out ./deploy/fly --yes
+  --controller-url https://your-controller.example.com --yes
+# Result: ./fly.toml + ./fly-secrets-hint.sh at the repo root.
 
 # 2. Create the Fly app (no deploy yet).
-cd ./deploy/fly && fly launch --no-deploy --copy-config
+fly launch --no-deploy --copy-config
 
-# 3. Provision Fly Postgres and attach as POSTGRES_URL (NOT DATABASE_URL).
+# 3. Provision Fly Postgres and attach as POSTGRES_URL (NOT DATABASE_URL —
+#    Fly's default var name doesn't match what the connector reads).
 fly postgres create --name mcp-connector-acme-prod-db --region iad --initial-cluster-size 1
 fly postgres attach mcp-connector-acme-prod-db \
   --app mcp-connector-acme-prod \
@@ -60,8 +65,11 @@ fly secrets set CONNECTOR_KEY_B64="$(head -c 32 /dev/urandom | base64)" \
 # 5. Create the state volume.
 fly volumes create state --region iad --size 1 --app mcp-connector-acme-prod
 
-# 6. Deploy.
-fly deploy --app mcp-connector-acme-prod
+# 6. Deploy. Redirect to a file — `fly deploy 2>&1 | tail` silently
+#    buffers because Fly's Depot builder only flushes on a real TTY.
+#    You want live progress during the ~3 min build:
+nohup fly deploy > /tmp/fly-deploy.log 2>&1 &
+tail -f /tmp/fly-deploy.log
 ```
 
 Then configure the tunnel via the inspector (below).
@@ -166,6 +174,8 @@ Fly's defaults would violate the connector's load-bearing invariants. The scaffo
 - **`fly ips allocate-v4` or `-v6`** — allocates a public IP on either app. Every app in this deploy should have `fly ips list` return empty.
 - **`fly scale count 2`** — the controller's dup-name guard 409s the second Machine. Multi-replica is a future workstream.
 - **Cross-Fly-org deployment** — the mock's `.internal` DNS is only resolvable from apps in the same org. Split-org forces public exposure, breaking the private-only invariant.
+- **Removing `INSPECTOR_BIND_ADDR = "::"` from the connector's `[env]`** — the inspector's default bind is `127.0.0.1`, which is unreachable from `fly proxy` (Fly's WireGuard tunnel connects to the Machine's mesh IP, not loopback). Without this override the inspector runs happily inside the Machine but there's no way to reach it from your laptop. Safe to keep the override because `fly ips list` is empty — the mesh is Fly-private, same trust surface as `.internal` DNS.
+- **Moving `fly.toml` from repo root into a subdirectory** — Fly's build context is locked to the fly.toml's directory (no `--build-context` flag exists), and this connector's Dockerfile needs the repo root as context. Everything breaks with "Dockerfile not found" or missing-source errors.
 
 ## Reference
 

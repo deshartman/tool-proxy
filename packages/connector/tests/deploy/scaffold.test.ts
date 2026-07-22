@@ -102,7 +102,7 @@ describe("render — variable substitution", () => {
 
   it("emits fly.toml with substituted app name + image and NO public service", () => {
     const { files } = render("fly", VARS);
-    expect(files.map((f) => f.path)).toEqual(["fly.toml", "secrets-hint.sh"]);
+    expect(files.map((f) => f.path)).toEqual(["fly.toml", "fly-secrets-hint.sh"]);
 
     const toml = files.find((f) => f.path === "fly.toml")!;
     expect(toml.content).toContain(`app = "mcp-connector-prod-us-east-1"`);
@@ -117,6 +117,12 @@ describe("render — variable substitution", () => {
     expect(toml.content).not.toMatch(/^\[\[services\]\]/m);
     expect(toml.content).not.toMatch(/^\[http_service\]/m);
     expect(toml.content).not.toMatch(/^\s*auto_stop_machines\s*=/m);
+
+    // Phase-B bug B4 fix: fly proxy tunnels to the mesh IP, not loopback.
+    // The scaffold-generated fly.toml MUST set INSPECTOR_BIND_ADDR=:: or
+    // the operator can't reach the inspector via `fly proxy`. Pinned as
+    // an active TOML assignment so a comment mention doesn't satisfy it.
+    expect(toml.content).toMatch(/^\s*INSPECTOR_BIND_ADDR\s*=\s*"::"/m);
 
     // Volume mount for state — belt-and-braces per D3.
     expect(toml.content).toContain(`source = "state"`);
@@ -144,12 +150,12 @@ describe("render — variable substitution", () => {
     expect(dockerfile.content).toContain("tsx");
   });
 
-  it("emits secrets-hint.sh with Postgres attach + master key + volume steps", () => {
+  it("emits fly-secrets-hint.sh with Postgres attach + master key + volume steps", () => {
     const { files } = render("fly", VARS);
-    const hint = files.find((f) => f.path === "secrets-hint.sh")!;
+    const hint = files.find((f) => f.path === "fly-secrets-hint.sh")!;
 
     // Postgres must attach as POSTGRES_URL, not the default DATABASE_URL —
-    // the connector's env reader looks for POSTGRES_URL.
+    // the connector's env reader looks for POSTGRES_URL. Bug B3.
     expect(hint.content).toContain("--variable-name POSTGRES_URL");
     expect(hint.content).toContain("--database-name mcp_connector");
     expect(hint.content).toContain("mcp-connector-prod-us-east-1-db");
@@ -161,6 +167,12 @@ describe("render — variable substitution", () => {
     // Inspector reach is `fly proxy`, not any public exposure.
     expect(hint.content).toContain("fly proxy 9090:9090 -a mcp-connector-prod-us-east-1");
     expect(hint.content).toContain("https://controller.example.com");
+
+    // Phase-B bug B5 fix: `fly deploy 2>&1 | tail` silently buffers because
+    // Fly's Depot builder only flushes on TTY. Hint must show the direct-file
+    // redirect + tail -f pattern so operators can watch build progress live.
+    expect(hint.content).toContain("nohup fly deploy > /tmp/fly-deploy.log");
+    expect(hint.content).toContain("tail -f /tmp/fly-deploy.log");
   });
 });
 
@@ -217,14 +229,14 @@ describe("scaffoldTo — file writes", () => {
     }
   });
 
-  it("writes fly.toml + secrets-hint.sh to the given outDir", async () => {
+  it("writes fly.toml + fly-secrets-hint.sh to the given outDir", async () => {
     const outDir = mkdtempSync(join(tmpdir(), "scaffold-fly-"));
     try {
       const result = await scaffoldTo("fly", VARS, outDir);
       expect(result.written).toHaveLength(2);
       const toml = readFileSync(join(outDir, "fly.toml"), "utf8");
       expect(toml).toContain("prod-us-east-1");
-      const hint = readFileSync(join(outDir, "secrets-hint.sh"), "utf8");
+      const hint = readFileSync(join(outDir, "fly-secrets-hint.sh"), "utf8");
       expect(hint).toContain("CONNECTOR_KEY_B64");
     } finally {
       rmSync(outDir, { recursive: true, force: true });

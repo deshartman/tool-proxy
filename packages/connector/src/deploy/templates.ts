@@ -341,7 +341,14 @@ primary_region = "iad"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
   CONNECTOR_STATE_PATH = "/var/lib/mcp-connector/.connector-state.json"
   INSPECTOR_PORT = "9090"
-  # POSTGRES_URL, CONNECTOR_KEY_B64 come from \`fly secrets set\` — see secrets-hint.sh.
+  # Bind on all IPv6 interfaces so \`fly proxy\` can reach the inspector via
+  # Fly's private mesh. Loopback-only (default 127.0.0.1) isn't reachable
+  # from \`fly proxy\` because it tunnels to the Machine's fdaa: mesh IP,
+  # not to 127.0.0.1. Safe here because this app has no public IP allocated —
+  # \`fly ips list -a mcp-connector-{{NAME}}\` MUST be empty.
+  # See architectural-plans/CODE-DEPLOY.md §B4.
+  INSPECTOR_BIND_ADDR = "::"
+  # POSTGRES_URL, CONNECTOR_KEY_B64 come from \`fly secrets set\` — see fly-secrets-hint.sh.
 
 [[mounts]]
   source = "state"
@@ -357,12 +364,17 @@ primary_region = "iad"
 `;
 
 const FLY_SECRETS_HINT = `# Fly secrets & Postgres — populate before \`fly deploy\`.
+# Run these from the SAME directory as fly.toml (which is the repo root —
+# see architectural-plans/CODE-DEPLOY.md §B1 for why).
 #
 # 1. Create the Fly app (no deploy yet):
 #      fly launch --no-deploy --copy-config
 #
-# 2. Provision Fly Postgres and attach as POSTGRES_URL (NOT DATABASE_URL —
-#    the connector reads POSTGRES_URL; \`--variable-name\` is required):
+# 2. Provision Fly Postgres and attach.
+#    CRITICAL: \`--variable-name POSTGRES_URL\` is required. Fly's default
+#    is DATABASE_URL, which the connector doesn't recognize — boot fails
+#    with "POSTGRES_URL is required" even though Postgres is attached.
+#
 #      fly postgres create --name mcp-connector-{{NAME}}-db --region iad \\
 #        --initial-cluster-size 1
 #      fly postgres attach mcp-connector-{{NAME}}-db \\
@@ -377,8 +389,10 @@ const FLY_SECRETS_HINT = `# Fly secrets & Postgres — populate before \`fly dep
 # 4. Create the state volume (1 GB is plenty):
 #      fly volumes create state --region iad --size 1 --app mcp-connector-{{NAME}}
 #
-# 5. Deploy:
-#      fly deploy --app mcp-connector-{{NAME}}
+# 5. Deploy — redirect to file so you can tail progress. \`fly deploy 2>&1 | tail\`
+#    silently buffers because Fly's Depot builder only flushes on TTY:
+#      nohup fly deploy > /tmp/fly-deploy.log 2>&1 &
+#      tail -f /tmp/fly-deploy.log
 #
 # 6. Configure the tunnel via the inspector:
 #      fly proxy 9090:9090 -a mcp-connector-{{NAME}}
@@ -532,16 +546,25 @@ Verify: \`docker compose exec connector mcp-connector doctor\`
 
   fly: {
     files: [
-      { path: "fly.toml",         content: FLY_TOML },
-      { path: "secrets-hint.sh",  content: FLY_SECRETS_HINT },
+      { path: "fly.toml",             content: FLY_TOML },
+      { path: "fly-secrets-hint.sh",  content: FLY_SECRETS_HINT },
     ],
     readmeAppendix: `## Fly.io
 
-Follow \`secrets-hint.sh\` (Fly Postgres attach + master key + volume), then:
+Files landed AT REPO ROOT (Fly's build context is locked to the fly.toml's
+directory, and the Dockerfile needs repo root — see docs/deploy/fly-io.md).
 
-    fly deploy --app mcp-connector-{{NAME}}
+Follow \`fly-secrets-hint.sh\` (Fly Postgres attach + master key + volume), then:
+
+    # Redirect to file — fly deploy buffers stdout when piped; direct file
+    # output is the only reliable way to watch build progress live.
+    nohup fly deploy > /tmp/fly-deploy.log 2>&1 &
+    tail -f /tmp/fly-deploy.log
 
 Reach the inspector: \`fly proxy 9090:9090 -a mcp-connector-{{NAME}}\` → http://localhost:9090/
+
+Once verified, you can \`rm fly-secrets-hint.sh\` — it's a one-shot reference,
+not a persistent config file. \`fly.toml\` stays.
 
 See docs/deploy/fly-io.md for the full walkthrough (mock backend, private
 DNS, rotation, graduation to managed Postgres).

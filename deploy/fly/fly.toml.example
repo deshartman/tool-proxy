@@ -1,7 +1,15 @@
-# mcp-connector — Fly.io deployment
+# mcp-connector — Fly.io deployment (reference; see ./README.md).
 #
-# Copy to fly.toml in this folder, replace <CUSTOMER>, and `fly deploy`.
-# See ./README.md for the full walkthrough.
+# **Copy this file to the REPO ROOT as `fly.toml`**, not to this folder.
+# Fly's build context is locked to the fly.toml's directory (no
+# --build-context flag exists), and this connector's Dockerfile needs the
+# repo root as context — it COPYs package.json, packages/connector/, mcp/,
+# bundles/, all at repo root. A fly.toml under `deploy/fly/` would fail
+# with "Dockerfile not found" at deploy time.
+#
+# See architectural-plans/CODE-DEPLOY.md §B1 for the full analysis. The
+# scaffold CLI (`mcp-connector deploy scaffold --target fly`) writes to
+# `.` by default for this reason.
 #
 # ── Load-bearing invariants ────────────────────────────────────────────
 # Do NOT relax these without reading architectural-plans/CODE-DEPLOY.md.
@@ -37,6 +45,12 @@ primary_region = "iad"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
   CONNECTOR_STATE_PATH = "/var/lib/mcp-connector/.connector-state.json"
   INSPECTOR_PORT = "9090"
+  # Bind on all IPv6 interfaces so `fly proxy` can reach the inspector via
+  # Fly's private mesh. Loopback-only (default 127.0.0.1) isn't reachable
+  # from `fly proxy` — it tunnels to the Machine's fdaa: mesh IP, not to
+  # 127.0.0.1. Safe here because this app has no public IP allocated —
+  # `fly ips list` MUST be empty. See architectural-plans/CODE-DEPLOY.md §B4.
+  INSPECTOR_BIND_ADDR = "::"
   # POSTGRES_URL and CONNECTOR_KEY_B64 arrive via `fly secrets set` — see README.
 
 [[mounts]]

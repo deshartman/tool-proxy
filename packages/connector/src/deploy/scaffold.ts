@@ -25,9 +25,15 @@ const DEFAULT_OUT: Record<ScaffoldTarget, string> = {
   gke: "./deploy/gke",
   aca: "./deploy/aca",
   compose: "./deploy/compose",
-  fly: "./deploy/fly",
-  // fly-mock output lives in-tree with the mock source it packages. Same
-  // gitignored trust posture as the rest of mock/customers/.
+  // Fly's build context is locked to the fly.toml's directory (no
+  // --build-context flag exists), and our Dockerfile COPYs package.json,
+  // packages/connector/, mcp/, bundles/ — all at repo root. So fly.toml
+  // MUST live at repo root or the build fails with "Dockerfile not found"
+  // / missing source files. See architectural-plans/CODE-DEPLOY.md §B1.
+  fly: ".",
+  // fly-mock output lives in-tree with the mock source it packages. The
+  // mock's Dockerfile sits right next to its fly.toml, so the build
+  // context is self-contained — no repo-root requirement.
   "fly-mock": "./mock/customers",
 };
 
