@@ -94,10 +94,73 @@ describe("render — variable substitution", () => {
   });
 
   it("emits a readme appendix telling the customer what to do next", () => {
-    for (const target of ["fargate", "gke", "aca", "compose"] as const) {
+    for (const target of ["fargate", "gke", "aca", "compose", "fly", "fly-mock"] as const) {
       const { readmeAppendix } = render(target, VARS);
       expect(readmeAppendix.length, `${target} appendix`).toBeGreaterThan(50);
     }
+  });
+
+  it("emits fly.toml with substituted app name + image and NO public service", () => {
+    const { files } = render("fly", VARS);
+    expect(files.map((f) => f.path)).toEqual(["fly.toml", "secrets-hint.sh"]);
+
+    const toml = files.find((f) => f.path === "fly.toml")!;
+    expect(toml.content).toContain(`app = "mcp-connector-prod-us-east-1"`);
+    expect(toml.content).toContain(`image = "ghcr.io/twilio/mcp-connector:0.2.0"`);
+    expect(toml.content).toContain(`CONNECTOR_CREDS_SOURCE = "db"`);
+
+    // Load-bearing invariants — outbound-only, no scale-to-zero, no public IP.
+    // If any of these regress as ACTIVE toml (not a comment mention),
+    // the deploy silently starts leaking the bcrypt-protected webhook URLs
+    // or dying at first idle. Match line-start to allow the file to still
+    // *mention* the invariants in its own reminder comments.
+    expect(toml.content).not.toMatch(/^\[\[services\]\]/m);
+    expect(toml.content).not.toMatch(/^\[http_service\]/m);
+    expect(toml.content).not.toMatch(/^\s*auto_stop_machines\s*=/m);
+
+    // Volume mount for state — belt-and-braces per D3.
+    expect(toml.content).toContain(`source = "state"`);
+    expect(toml.content).toContain(`destination = "/var/lib/mcp-connector"`);
+  });
+
+  it("emits fly-mock fly.toml + Dockerfile with private-only invariants", () => {
+    const { files } = render("fly-mock", VARS);
+    expect(files.map((f) => f.path)).toEqual(["fly.toml", "Dockerfile"]);
+
+    const toml = files.find((f) => f.path === "fly.toml")!;
+    expect(toml.content).toContain(`app = "mock-customers-prod-us-east-1"`);
+    expect(toml.content).toContain(`dockerfile = "Dockerfile"`);
+    expect(toml.content).toContain(`PORT = "7400"`);
+
+    // Load-bearing invariants: the mock is private by contract. If any of
+    // these regress as ACTIVE toml, the mock stops modelling an enterprise
+    // firewall'd backend and becomes reachable from the public internet.
+    expect(toml.content).not.toMatch(/^\[\[services\]\]/m);
+    expect(toml.content).not.toMatch(/^\[http_service\]/m);
+
+    const dockerfile = files.find((f) => f.path === "Dockerfile")!;
+    expect(dockerfile.content).toContain("FROM node:22-alpine");
+    expect(dockerfile.content).toContain("EXPOSE 7400");
+    expect(dockerfile.content).toContain("tsx");
+  });
+
+  it("emits secrets-hint.sh with Postgres attach + master key + volume steps", () => {
+    const { files } = render("fly", VARS);
+    const hint = files.find((f) => f.path === "secrets-hint.sh")!;
+
+    // Postgres must attach as POSTGRES_URL, not the default DATABASE_URL —
+    // the connector's env reader looks for POSTGRES_URL.
+    expect(hint.content).toContain("--variable-name POSTGRES_URL");
+    expect(hint.content).toContain("--database-name mcp_connector");
+    expect(hint.content).toContain("mcp-connector-prod-us-east-1-db");
+
+    // Master key delivery is the entrypoint-decoded env var, not a file.
+    expect(hint.content).toContain("CONNECTOR_KEY_B64");
+    expect(hint.content).toContain("head -c 32 /dev/urandom | base64");
+
+    // Inspector reach is `fly proxy`, not any public exposure.
+    expect(hint.content).toContain("fly proxy 9090:9090 -a mcp-connector-prod-us-east-1");
+    expect(hint.content).toContain("https://controller.example.com");
   });
 });
 
@@ -151,6 +214,34 @@ describe("scaffoldTo — file writes", () => {
       expect(result.written).toHaveLength(5);
     } finally {
       rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("writes fly.toml + secrets-hint.sh to the given outDir", async () => {
+    const outDir = mkdtempSync(join(tmpdir(), "scaffold-fly-"));
+    try {
+      const result = await scaffoldTo("fly", VARS, outDir);
+      expect(result.written).toHaveLength(2);
+      const toml = readFileSync(join(outDir, "fly.toml"), "utf8");
+      expect(toml).toContain("prod-us-east-1");
+      const hint = readFileSync(join(outDir, "secrets-hint.sh"), "utf8");
+      expect(hint).toContain("CONNECTOR_KEY_B64");
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes fly-mock fly.toml + Dockerfile to the given outDir", async () => {
+    const outDir = mkdtempSync(join(tmpdir(), "scaffold-fly-mock-"));
+    try {
+      const result = await scaffoldTo("fly-mock", VARS, outDir);
+      expect(result.written).toHaveLength(2);
+      const toml = readFileSync(join(outDir, "fly.toml"), "utf8");
+      expect(toml).toContain("mock-customers-prod-us-east-1");
+      const df = readFileSync(join(outDir, "Dockerfile"), "utf8");
+      expect(df).toContain("FROM node:22-alpine");
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
     }
   });
 });

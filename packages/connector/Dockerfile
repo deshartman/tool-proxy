@@ -133,6 +133,13 @@ COPY --from=node-build /repo/mcp ./mcp
 # rebuild.
 COPY --from=bundle-build /opt/bundled-mcps /opt/bundled-mcps
 
+# Runtime entrypoint — decodes $CONNECTOR_KEY_B64 → $CONNECTOR_KEY_FILE on
+# platforms whose secret store is env-only (Fly.io, ACA, etc.); no-op when
+# the env is unset (docker-compose et al. that mount the file directly).
+# See architectural-plans/CODE-DEPLOY.md §"D2 — Master key delivery".
+COPY packages/connector/entrypoint.sh /usr/local/bin/mcp-connector-entrypoint.sh
+RUN chmod +x /usr/local/bin/mcp-connector-entrypoint.sh
+
 WORKDIR /app/packages/connector
 
 # Default config location — mount the customer's yaml at this path. dir:
@@ -142,5 +149,5 @@ WORKDIR /app/packages/connector
 ENV CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
 
 EXPOSE 9090
-ENTRYPOINT ["node", "dist/index.js"]
+ENTRYPOINT ["/usr/local/bin/mcp-connector-entrypoint.sh"]
 CMD ["start"]

@@ -1,0 +1,53 @@
+# mcp-connector — Fly.io deployment
+#
+# Copy to fly.toml in this folder, replace <CUSTOMER>, and `fly deploy`.
+# See ./README.md for the full walkthrough.
+#
+# ── Load-bearing invariants ────────────────────────────────────────────
+# Do NOT relax these without reading architectural-plans/CODE-DEPLOY.md.
+#
+#   - No [[services]] and no [http_service] block. The connector is
+#     outbound-only; the inspector on 127.0.0.1:9090 is reachable via
+#     `fly proxy 9090:9090 -a mcp-connector-<CUSTOMER>`, NOT a public
+#     service. Publishing 9090 would leak the bcrypt-protected webhook
+#     URLs the inspector renders.
+#
+#   - fly ips list -a mcp-connector-<CUSTOMER> MUST return no rows. Do
+#     not run `fly ips allocate-v4` or `-v6` on this app.
+#
+#   - Machines with no [[services]] don't get auto-stopped by Fly's
+#     request-based scaler — that's why this file has no auto_stop /
+#     min_machines_running block. If you ever add [[services]], you MUST
+#     also set auto_stop_machines = false to keep the WSS alive.
+#
+#   - Single Machine per CONNECTOR_NAME. `fly scale count 1` — the
+#     controller's dup-name guard 409s a second registration under the
+#     same name. Multi-replica is a future workstream.
+
+app = "mcp-connector-<CUSTOMER>"
+primary_region = "iad"
+
+[build]
+  # Pin a specific tag in production; :latest is fine for demos.
+  image = "ghcr.io/twilio/mcp-connector:latest"
+
+[env]
+  CONNECTOR_CREDS_SOURCE = "db"
+  CONNECTOR_KEY_FILE = "/etc/mcp-connector/connector.key"
+  CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
+  CONNECTOR_STATE_PATH = "/var/lib/mcp-connector/.connector-state.json"
+  INSPECTOR_PORT = "9090"
+  # POSTGRES_URL and CONNECTOR_KEY_B64 arrive via `fly secrets set` — see README.
+
+[[mounts]]
+  source = "state"
+  destination = "/var/lib/mcp-connector"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+
+[deploy]
+  # Roll immediately so `fly secrets set` rotations take effect on next deploy.
+  strategy = "immediate"
