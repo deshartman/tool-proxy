@@ -2,9 +2,9 @@
 
 > **Goal.** Deploy the mcp-connector to Fly.io in a shape that (a) preserves every load-bearing property from [CLAUDE.md](../CLAUDE.md), (b) is customer-reproducible from a small set of `flyctl` commands, and (c) fits Fly's Machines-first execution model without fighting the platform's defaults.
 >
-> **Branch (when we implement).** `feature/fly-deploy` — cut from `main` when the design decisions in §"Design decisions" have been signed off. This document is design-only; no code lands until D1–D4 are answered.
+> **Branch.** `feature/fly-deploy` — cut from `main` 2026-07-22.
 >
-> **Status: evaluation.** Recommends a concrete shape; enumerates each meaningful choice with trade-offs. Read alongside [DEPLOY-ARCHITECTURE.md](DEPLOY-ARCHITECTURE.md), which lists Fly.io as green-light for the "long-lived outbound TCP" requirement but doesn't drill in.
+> **Status: implemented (2026-07-23).** All five design decisions (D1–D5) resolved. S1–S5 shipped. Live Fly deploy verified: connector + Fly Postgres + state volume + inspector reachable via `fly proxy`. **EK bundle NOT deployed** — deliberately out of scope; the Fly.io deploy target proves the connector's deploy shape works, EK on Fly is its own workstream (needs Ollama sidecar + pgvector Postgres). See §"Lessons learned" for every latent bug this exercise surfaced.
 >
 > **Self-describing.** A fresh-context Claude should be able to read this file + [CLAUDE.md](../CLAUDE.md) + [docs/deploy/README.md](../docs/deploy/README.md) and start work. No hidden context; every subtle interaction with a load-bearing property is called out inline.
 
@@ -375,16 +375,19 @@ Verification: `fly ssh console -a mcp-connector-<CUSTOMER> -C "mcp-connector doc
 
 Ordered by dependency; each step is a discrete PR-sized chunk.
 
-| Step | Change | Files | Depends on |
+| Step | Status | Change | Files |
 |---|---|---|---|
-| **S1** | Ship the entrypoint script and wire it as the Dockerfile `ENTRYPOINT`. Backwards-compatible: no-op when `CONNECTOR_KEY_B64` is unset. | [`packages/connector/Dockerfile`](../packages/connector/Dockerfile), new `packages/connector/entrypoint.sh` | — |
-| **S2** | Add `deploy/fly/fly.toml.example` + `deploy/fly/README.md`. Purely additive. | `deploy/fly/*` | S1 (references the entrypoint) |
-| **S3** | Add `fly` as a first-class `deploy scaffold --target` value (alongside `compose` / `fargate` / `gke` / `aca`). Emits the fly.toml + entrypoint reference + README triple with `{{NAME}}` / `{{CONTROLLER_URL}}` substituted, following the template pattern in [`packages/connector/src/deploy/templates.ts`](../packages/connector/src/deploy/templates.ts). | [`packages/connector/src/deploy/scaffold.ts`](../packages/connector/src/deploy/scaffold.ts), [`packages/connector/src/deploy/templates.ts`](../packages/connector/src/deploy/templates.ts), test: `packages/connector/tests/deploy/scaffold.test.ts` | S2 |
-| **S3b** | Add `fly-mock` as a second `deploy scaffold --target`. Emits `mock/customers/fly.toml.example` + `mock/customers/Dockerfile` for the D5(a) shape. Separate target so real customer deploys (D5(c)) skip it cleanly. | Same files as S3, plus `packages/connector/src/deploy/templates.ts` gains `flyMockToml` / `flyMockDockerfile` constants. | S3 |
-| **S4** | Add `docs/deploy/fly-io.md` — customer-facing guide covering both the connector and mock apps, `.internal` DNS, and the "graduate to a real backend" path. Update [`docs/deploy/README.md`](../docs/deploy/README.md) to list Fly.io. Update [DEPLOY-ARCHITECTURE.md](DEPLOY-ARCHITECTURE.md) Stage I checklist. | `docs/deploy/*`, `architectural-plans/DEPLOY-ARCHITECTURE.md` | S3b |
-| **S5** | Update [CLAUDE.md](../CLAUDE.md) §"Deployment scaffolding" to name Fly.io alongside compose/fargate/gke/aca; note the mock's separate deploy shape in §"Dev-only scaffolding". | `CLAUDE.md` | S4 |
+| **S1** | ✅ done | Ship the entrypoint script and wire it as the Dockerfile `ENTRYPOINT`. Backwards-compatible: no-op when `CONNECTOR_KEY_B64` is unset. | [`packages/connector/Dockerfile`](../packages/connector/Dockerfile), [`packages/connector/entrypoint.sh`](../packages/connector/entrypoint.sh), [`tests/deploy/entrypoint.test.ts`](../packages/connector/tests/deploy/entrypoint.test.ts) |
+| **S2** | ✅ done | `deploy/fly/fly.toml.example` + `deploy/fly/README.md` (hand-authored operator runbook). | [`deploy/fly/`](../deploy/fly/) |
+| **S3** | ✅ done | `--target fly` in scaffold CLI, template constants + tests. | [`src/deploy/scaffold.ts`](../packages/connector/src/deploy/scaffold.ts), [`src/deploy/templates.ts`](../packages/connector/src/deploy/templates.ts), [`tests/deploy/scaffold.test.ts`](../packages/connector/tests/deploy/scaffold.test.ts) |
+| **S3b** | ✅ done | `--target fly-mock` + `mock/customers/fly.toml` + `mock/customers/Dockerfile` (D5 shape). `targetNeedsControllerUrl()` helper skips CONTROLLER_URL prompt. | Same as S3 + `flyMockToml` / `flyMockDockerfile` template constants. |
+| **S4** | ✅ done | [`docs/deploy/fly-io.md`](../docs/deploy/fly-io.md) customer walkthrough + [`docs/deploy/README.md`](../docs/deploy/README.md) index update. | `docs/deploy/*` |
+| **S5** | ✅ done | [`CLAUDE.md`](../CLAUDE.md) §"Deployment scaffolding" + §"Dev-only scaffolding" + §"Distribution" (entrypoint note) refresh. | `CLAUDE.md` |
+| **S6** | 📋 queued | Scaffold `--target fly` output should land at repo root (not `./deploy/fly/`) — Fly's build context is locked to fly.toml's directory, and the Dockerfile needs repo root. Change `DEFAULT_OUT.fly` in `scaffold.ts` OR document the required `mv fly.toml <repo-root>/` step in `secrets-hint.sh`. Update tests. | [`src/deploy/scaffold.ts`](../packages/connector/src/deploy/scaffold.ts), [`tests/deploy/scaffold.test.ts`](../packages/connector/tests/deploy/scaffold.test.ts) |
+| **S7** | ✅ done | `INSPECTOR_BIND_ADDR` env var. Default `127.0.0.1` unchanged; Fly's `[env]` overrides to `::` because `fly proxy` tunnels to the mesh IP not loopback. WARN log fires when bind widens. | [`src/inspector/server.ts`](../packages/connector/src/inspector/server.ts), scaffold `flyToml` template |
+| **S8** | 📋 queued | Fold the four Phase-B latent-bug fixes into the scaffold's template constants and per-cloud guides — the fly.toml template should already include the `INSPECTOR_BIND_ADDR = "::"` line; the `secrets-hint.sh` should mention the `--variable-name POSTGRES_URL` flag prominently; the walkthrough should tell operators to redirect `fly deploy` output to a file. Currently these live in the hand-authored `deploy/fly/*` files but not in the generated scaffold. | [`src/deploy/templates.ts`](../packages/connector/src/deploy/templates.ts), [`docs/deploy/fly-io.md`](../docs/deploy/fly-io.md) |
 
-**Estimated total.** 1–1.5 days of implementation. S1 is the only load-bearing change (touches the runtime image); S2–S5 are docs + scaffold plumbing. S3b adds ~2 hours over S3 alone because the mock's Dockerfile is a first-time artifact in this repo.
+**Estimated remaining.** S6 + S8 ≈ 1–2 hours of scaffold updates + doc alignment. S7 is coded and tested but not yet committed (branch-local).
 
 ## Verification
 
@@ -419,6 +422,46 @@ All primary decisions (D1–D5 + Meta) resolved on 2026-07-22 — see the "Decis
 - **D5.3** — `--target fly` and `--target fly-mock` as separate scaffold verbs (chosen), or a combined `--target fly-demo` that emits both? Separate is already in the S3/S3b breakdown; revisit if `--target fly-demo` turns out to be what customers actually type.
 - **Future — Postgres graduation.** When a real customer moves to prod, does the walkthrough recommend Neon, Supabase, RDS, or CloudSQL by default? Deferred until we have a first prod customer.
 - **Future — mock stricter than same-org.** Shared-bearer auth on the mock (~10 lines in `mock/customers/server.ts`) if the demo Fly org grows beyond just these two apps. Not planned; noted in §"Hosts and cross-app networking".
+
+## Lessons learned (2026-07-22 → 2026-07-23)
+
+The core deploy plan (D1–D5) needed zero revision. What we didn't expect: nine latent bugs surfaced only by actually building and running the OCI image. Every one traces back to the same pattern — **"the local `npm run build` from the working tree resolves files or dependencies from the surrounding tree; the isolated Docker/Fly build context does not"**. Same class as [ENV-TO-DB.md](ENV-TO-DB.md)'s post-Step-12 discoveries: real-run pass surfaces stuff analysis can't. All fixed on `feature/fly-deploy`.
+
+### Phase A — local `docker build` + `docker run` (before Fly)
+
+**Bug A1 — `postbuild.mjs` reads from repo root, Dockerfile didn't COPY it.** The postbuild script (`packages/connector/scripts/postbuild.mjs`) copies `.env.example` + `connector.yaml.example` from `<repoRoot>/` into `packages/connector/` so the npm tarball ships them. The Dockerfile COPY'd `packages/connector/` and `tsconfig.base.json` but NOT the two repo-root template files. `npm run build` failed with `ENOENT: /repo/.env.example`. **Fix:** `COPY .env.example connector.yaml.example ./` in the node-build stage before `RUN npm run build`.
+
+**Bug A2 — npm workspace hoisting isn't uniform.** `dotenv@^17.4.2` failed to hoist to `<repoRoot>/node_modules` (npm chose to nest it under `packages/connector/node_modules/dotenv` for version-conflict isolation). Every other prod dep hoisted fine. Dockerfile's runtime stage only COPY'd `/repo/node_modules`, so `dotenv` disappeared from the image. Connector crashed at startup with `Cannot find package 'dotenv'`. **Fix:** also `COPY --from=node-build /repo/packages/connector/node_modules ./packages/connector/node_modules` in the runtime stage. Diagnostic recipe (for any workspace-nested dep): `docker run --rm --entrypoint /bin/sh <img> -c 'for dep in $(node -e "console.log(Object.keys(require(\"/app/packages/connector/package.json\").dependencies).join(\" \"))"); do [ -d "/app/node_modules/$dep" ] && echo root || echo nested; done'`.
+
+**Bug A3 — `CONNECTOR_KEY_FILE` had no `ENV` default in the Dockerfile.** The entrypoint writes to `${CONNECTOR_KEY_FILE:-/etc/mcp-connector/connector.key}` — the shell-level default resolves inside entrypoint.sh but doesn't propagate to the exec'd `node` process's env. Result: entrypoint wrote the file at the default path; the connector's env-loader failed with `CONNECTOR_KEY_FILE is required` because that var was unset from Node's POV. **Fix:** `ENV CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key` in the Dockerfile, symmetric with the existing `CONNECTOR_CONFIG` default. Rule: any path the entrypoint uses as a default MUST also be an `ENV` in the Dockerfile.
+
+**Test coverage added:** [`packages/connector/tests/deploy/entrypoint.test.ts`](../packages/connector/tests/deploy/entrypoint.test.ts) — 4 cases pinning both branches (env-set decode + env-unset no-op).
+
+### Phase B — real Fly deploy
+
+**Bug B1 — `fly.toml` must live at repo root, not `deploy/fly/`.** Fly's `[build] dockerfile` path is resolved relative to the fly.toml's directory. Even with `fly deploy --config deploy/fly/fly.toml --dockerfile packages/connector/Dockerfile` from the repo root, Fly interpreted the Dockerfile path as `deploy/fly/packages/connector/Dockerfile` (doesn't exist). And Fly has no `--build-context` flag — build context is locked to the fly.toml's directory. Our Dockerfile COPYs `package.json`, `packages/connector/`, `mcp/`, `bundles/` — every one of those requires the repo root as context. **Workaround for this deploy:** moved `fly.toml` to the repo root. **Followup S6 (queued below):** scaffold template needs to emit `fly.toml` at repo root, not `deploy/fly/`.
+
+**Bug B2 — `mcp_servers: []` was over-constrained by `.min(1)`.** Yaml schema in [`packages/connector/src/config.ts`](../packages/connector/src/config.ts) required at least one `mcp_servers` entry — but empty is a legitimate posture when the customer runs ONLY drop-ins (auto-discovered from `MCP_DROPIN_DIR`) or controller-pushed Type 2 MCPs (from `mcp-config-snapshot`). Forced our first-attempt yaml to include a placeholder Type 3 entry that couldn't actually spawn. **Fix:** `.min(1)` → `.default(() => [])`. Also accepts a yaml with no `mcp_servers` key at all. Pinned by [`tests/config/empty-mcp-servers.test.ts`](../packages/connector/tests/config/empty-mcp-servers.test.ts).
+
+**Bug B3 — `fly postgres attach` requires `--variable-name POSTGRES_URL` explicitly.** Fly's default env var name is `DATABASE_URL`, which the connector doesn't recognize. Missing this flag → boot fails with `POSTGRES_URL is required` even though Postgres is attached. **Fix:** documented in [`deploy/fly/README.md`](../../deploy/fly/README.md) + [`docs/deploy/fly-io.md`](../../docs/deploy/fly-io.md) + scaffold's `secrets-hint.sh` — but the flag is easy to miss on first reading. Consider making `POSTGRES_URL` fallback to `DATABASE_URL` in `env.ts` as a future ergonomics fix.
+
+**Bug B4 — inspector's `127.0.0.1` bind is unreachable via `fly proxy`.** Fly's `fly proxy` tunnels through the WireGuard mesh to the Machine's private mesh IP (fdaa:...), NOT to the Machine's `127.0.0.1`. Loopback-only bind → nothing listens on the mesh interface → HTTP 000, connection refused. Every other platform's port-forward mechanism (`kubectl port-forward`, `aws ecs execute-command`, `az containerapp exec`) establishes "inside-container" reach *first*, then hits `127.0.0.1`. Fly is the outlier. **Fix:** new env-driven `INSPECTOR_BIND_ADDR` in [`packages/connector/src/inspector/server.ts`](../packages/connector/src/inspector/server.ts). Default stays `127.0.0.1` (docker-compose, laptop dev, K8s/Fargate/ACA all preserved unchanged). Fly's `[env]` overrides to `::`. WARN log fires when the bind isn't loopback so a misconfigured non-Fly deploy is loud in operator logs. Trust posture preserved: `fly ips list` MUST remain empty (invariant already in the plan), so the mesh IS the private network — same trust surface as `.internal` DNS.
+
+**Bug B5 — Fly's Depot builder silently buffers output when stdout is piped.** `fly deploy 2>&1 | tail` blocks entirely until the process ends. Nothing to look at during a 3-min build; if it hangs, indistinguishable from "still running". **Fix (dev-side, not code):** always redirect to a real file — `nohup fly deploy > /tmp/fly-deploy.log 2>&1 &` — then `tail -f` the log to see live builder output. Worth documenting in the operator runbook.
+
+**Bug B6 — `.dockerignore` was missing every dev-only cache we've added since it was written.** `.venv/` (961 MB), `.ollama-cache/` (262 MB), `graphify-out/`, `.playwright-mcp/`, `.local-backups/`, Python caches (`__pycache__`, `.pytest_cache`, `.egg-info`, `.ruff_cache`, `.mypy_cache`), and `mock/` (dev-only per D5). Build context ballooned to 400+ MB before `.venv` content even started transferring. First deploy on a fresh Fly builder took 5+ minutes just to send the context. **Fix:** slimmed [`.dockerignore`](../.dockerignore) — the missing patterns are documented at the additions. Rule: whenever `.gitignore` grows to exclude a new dev artifact directory, `.dockerignore` should grow with it.
+
+### Meta-lesson
+
+**Every one of these nine bugs was invisible to local `npm test`, `npm run build`, and even a targeted `docker build` from the working tree.** The classes that trip an isolated build:
+
+- **Path assumptions**: postbuild scripts, docker COPYs, and default-path env vars must be consistent across the build's isolated context.
+- **npm workspace edges**: hoisting isn't guaranteed; nested workspace `node_modules` need explicit COPY.
+- **Platform-specific reach mechanics**: `fly proxy` ≠ `kubectl port-forward` ≠ `aws ecs execute-command`. A loopback bind that works on 3/4 platforms may be unreachable on the 4th.
+- **Silent transport buffering**: piping remote-builder stdout hides progress; use direct file redirection.
+- **Ignore-file drift**: `.dockerignore` decays as the repo adds new dev caches — audit it whenever `.gitignore` changes.
+
+Recommend adding a CI step that does `docker build` + `docker run <img> doctor` (or the closest equivalent). Build-only CI catches Bug A1 but not A2, A3, B2, B4. A real image run catches everything up to but not including B1/B3/B5/B6, which are Fly-specific and need a real Fly deploy to catch. The lessons are portable — the controller dev doing the same local check will hit some of these too (particularly A1, A2, A3, B5, B6).
 
 ## Cross-references
 
