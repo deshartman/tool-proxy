@@ -12,7 +12,7 @@
 #      openssl rand -hex 24 > ./secrets/pg_password
 #      chmod 400 ./secrets/pg_password
 #   3. Copy the compose env template:
-#      cp .env.compose.example .env
+#      cp compose.env.example .env
 #      # then edit MCP_VERSION if you don't want :latest
 #
 # Bring up:
