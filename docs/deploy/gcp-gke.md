@@ -2,6 +2,12 @@
 
 Run the connector as a one-replica Deployment on GKE.
 
+> **Skip the raw YAML below** if you use Helm — the chart at
+> [`deploy/helm/mcp-connector/`](../../deploy/helm/mcp-connector/README.md)
+> ships Deployment + PVC + Secret templates with sane defaults.
+> Alternatively `mcp-connector deploy scaffold --target gke` renders
+> five hand-editable manifests with your name substituted in.
+
 ## Prereqs
 
 - Image pushed to Artifact Registry.

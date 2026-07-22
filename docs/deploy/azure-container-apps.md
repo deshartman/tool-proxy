@@ -2,6 +2,10 @@
 
 Run the connector as a Container App. Outbound-only.
 
+> `mcp-connector deploy scaffold --target aca` renders a bicep template
+> with your connector name + controller URL substituted in. The
+> walkthrough below covers the reasoning behind each choice.
+
 ## Prereqs
 
 - Image pushed to ACR (or another registry the Container App can pull from).

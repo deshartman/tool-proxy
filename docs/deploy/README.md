@@ -4,6 +4,30 @@ The connector is a single Node.js process. It dials out over WSS to a
 controller and serves an inspector UI on `:9090`. No inbound ports are
 required for the tunnel itself.
 
+## Shortest path
+
+For most customers, three commands are enough:
+
+```bash
+mcp-connector deploy scaffold --target compose \
+  --name prod-us-east-1 \
+  --controller-url https://your-controller.example.com \
+  --out ./deploy/compose
+cd deploy/compose
+docker compose up -d
+```
+
+Then verify from inside the container:
+
+```bash
+docker compose exec connector mcp-connector doctor
+```
+
+For Kubernetes and public clouds, the same `deploy scaffold` command emits
+`fargate`, `gke`, and `aca` targets. Terraform / Helm users can point
+straight at the modules under [`deploy/terraform/`](../../deploy/terraform/)
+and [`deploy/helm/`](../../deploy/helm/) instead — no scaffold step needed.
+
 ## Prereqs (every cloud)
 
 1. Build and push the OCI image:
@@ -34,9 +58,13 @@ When the WSS is down (deploy, restart, blip), the controller returns 503 to the 
 
 ## Cloud-specific guides
 
-- [AWS Fargate](./aws-fargate.md)
+Each walkthrough covers footguns, reconnect strategy, and how to reach the
+inspector — for the manifest shapes themselves, prefer `deploy scaffold` or
+the IaC modules above.
+
+- [AWS Fargate](./aws-fargate.md) — also see [`deploy/terraform/aws-fargate/`](../../deploy/terraform/aws-fargate/README.md).
 - [Azure Container Apps](./azure-container-apps.md)
-- [GCP GKE](./gcp-gke.md)
+- [GCP GKE](./gcp-gke.md) — also see [`deploy/helm/mcp-connector/`](../../deploy/helm/mcp-connector/README.md).
 
 ## Your cloud isn't listed?
 

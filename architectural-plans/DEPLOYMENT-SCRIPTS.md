@@ -1,6 +1,6 @@
 # DEPLOYMENT-SCRIPTS.md
 
-Status: in progress
+Status: completed 2026-07-22
 Started: 2026-07-22
 Branch: `feature/deployment-scripts`
 
