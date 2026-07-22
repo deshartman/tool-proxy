@@ -160,17 +160,23 @@ Tests live at `packages/connector/tests/**/*.test.ts` (peer-tests, not colocated
 ## CLI
 
 ```
-mcp-connector start         run the connector (default; auto-registers on first connect)
-mcp-connector init          interactive wizard to write connector.yaml
-mcp-connector discover      print tools/list per configured server, then exit
-mcp-connector version       print the connector version
+mcp-connector start                 run the connector (default; auto-registers on first connect)
+mcp-connector init                  interactive wizard to write connector.yaml
+mcp-connector discover              print tools/list per configured server, then exit
+mcp-connector doctor                run preflight checks against .env + connector.yaml
+mcp-connector deploy scaffold       emit cloud deployment manifests (fargate|gke|aca|compose)
+mcp-connector version               print the connector version
 ```
 
 ## Production deployment
 
-See [docs/deploy/README.md](docs/deploy/README.md) and the per-cloud guides:
-[AWS Fargate](docs/deploy/aws-fargate.md), [Azure Container Apps](docs/deploy/azure-container-apps.md),
-[GCP GKE](docs/deploy/gcp-gke.md).
+Three shapes, in order of increasing surface area:
+
+1. **Single VM / docker compose.** Copy [`docker-compose.prod.yml`](docker-compose.prod.yml) + [`compose.env.example`](compose.env.example), mint a master key, run `docker compose up -d`. See the header comments in the compose file.
+2. **CLI scaffolding.** `mcp-connector deploy scaffold --target {fargate|gke|aca|compose}` emits manifests with your `CONNECTOR_NAME` + `CONTROLLER_URL` substituted in — reasonable defaults, drop-in usable.
+3. **IaC modules.** [`deploy/terraform/aws-fargate/`](deploy/terraform/aws-fargate/README.md) and [`deploy/helm/mcp-connector/`](deploy/helm/mcp-connector/README.md) for teams whose infrastructure is already declared in Terraform / Helm.
+
+Per-cloud walkthroughs remain in [docs/deploy/](docs/deploy/README.md): [AWS Fargate](docs/deploy/aws-fargate.md), [Azure Container Apps](docs/deploy/azure-container-apps.md), [GCP GKE](docs/deploy/gcp-gke.md). Run `mcp-connector doctor` from inside any deployment to verify the environment before starting.
 
 ## What's load-bearing
 

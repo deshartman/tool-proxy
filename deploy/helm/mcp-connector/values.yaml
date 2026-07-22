@@ -1,0 +1,56 @@
+# Default values for the mcp-connector chart. Override these on
+# `helm install --set` or a values.yaml file.
+
+connector:
+  # CONNECTOR_NAME — must match the controller's Tunnel Security row Name
+  # exactly (case-sensitive). No default; --set connector.name=<value>.
+  name: ""
+  # HTTPS root of the controller. No default; must be set.
+  controllerUrl: ""
+  # Recommended: "db" mode. Alternate "env".
+  credsSource: db
+  # Auth posture. "static" reads TUNNEL_AUTH_TOKEN; "oauth2" reads
+  # OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL.
+  auth: static
+
+image:
+  repository: ghcr.io/twilio/mcp-connector
+  tag: latest
+  pullPolicy: IfNotPresent
+  # Optional: list of secret names for private registries.
+  pullSecrets: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Persistent volume for .connector-state.json. ReadWriteOnce is sufficient
+# — the chart hardcodes replicas: 1 by design.
+persistence:
+  size: 64Mi
+  storageClassName: ""
+
+# Secret content. For production, prefer using an external secret operator
+# (external-secrets, sealed-secrets, CSI driver) — do not commit real
+# values here. This block exists so `helm install` produces a runnable
+# deployment out of the box for testing.
+secrets:
+  # Base64 not required — Helm's default renders stringData for you.
+  tunnelAuthToken: ""
+  oauthClientId: ""
+  oauthClientSecret: ""
+  oauthTokenUrl: ""
+  # Db mode only. Path INSIDE the container where CONNECTOR_KEY_FILE points.
+  # Bring the actual bytes in via a separate secret + volumeMount if you're
+  # using db mode.
+  connectorKeyFile: /etc/mcp-connector/connector.key
+  postgresUrl: ""
+
+# The chart does NOT create a Service for the inspector port by design.
+# The inspector binds 127.0.0.1 inside the pod; expose it via kubectl
+# port-forward, not a Service. Exposing 9090 as a Service would leak the
+# bcrypt-protected webhook URLs.
