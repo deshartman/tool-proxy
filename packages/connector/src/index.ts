@@ -2,6 +2,7 @@ import "dotenv/config";
 import { parseArgs } from "node:util";
 import { boot } from "./boot/lifecycle.js";
 import { runDiscover } from "./discover.js";
+import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { createLogger } from "./logger.js";
 import { envString } from "./env.js";
@@ -14,6 +15,7 @@ commands:
   start                   run the connector (default). Auto-registers with the controller on first connect.
   init                    interactive wizard to write connector.yaml
   discover                connect to MCP servers and print tools/list
+  doctor                  run preflight checks against your .env and connector.yaml
   version                 print the connector version
 
 start options:
@@ -41,6 +43,10 @@ async function dispatch(): Promise<void> {
     case "init":
       await runInit(rest);
       return;
+    case "doctor": {
+      const code = await runDoctor(rest);
+      process.exit(code);
+    }
     case "help":
     case "-h":
     case "--help":
