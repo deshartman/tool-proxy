@@ -5,8 +5,8 @@ The connector's dial-out-only shape maps cleanly onto Fly Machines: single Firec
 If you want to skip the walkthrough and copy-paste, the CLI renders both apps' manifests for you:
 
 ```bash
-mcp-connector deploy scaffold --target fly --name <customer> --controller-url https://your-controller.example.com --yes
-mcp-connector deploy scaffold --target fly-mock --name <customer> --yes  # only for the demo mock backend
+mcp-connector deploy init --target fly --name <customer> --controller-url https://your-controller.example.com --yes
+mcp-connector deploy init --target fly-mock --name <customer> --yes  # only for the demo mock backend
 ```
 
 ## Deployment shape
@@ -43,7 +43,7 @@ Full runbook lives in [`deploy/fly/README.md`](../../deploy/fly/README.md). The 
 #    is locked to the fly.toml's directory, and our Dockerfile needs the
 #    repo root as context (it COPYs package.json, packages/connector/,
 #    mcp/, bundles/).
-mcp-connector deploy scaffold --target fly --name acme-prod \
+mcp-connector deploy init --target fly --name acme-prod \
   --controller-url https://your-controller.example.com --yes
 # Result: ./fly.toml + ./fly-secrets-hint.sh at the repo root.
 
@@ -82,7 +82,7 @@ For the demo, the mock is a **private** Fly app in the same Fly organization —
 
 ```bash
 # 1. Render the mock's manifests.
-mcp-connector deploy scaffold --target fly-mock --name acme-prod \
+mcp-connector deploy init --target fly-mock --name acme-prod \
   --out ./mock/customers --yes
 
 # 2. Create the Fly app (no deploy yet). Must be in the same Fly org as

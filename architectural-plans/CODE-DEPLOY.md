@@ -149,7 +149,7 @@ For a live Fly demo, the mock has to go somewhere. Four options, evaluated again
 **Open sub-questions:**
 - **D5.1** — Should the mock app's fly.toml + Dockerfile ship in this repo (`mock/customers/fly.toml`, gitignored like the rest of `mock/`) or in a separate demo-infra repo? Recommend: in this repo, gitignored, next to `mock/customers/server.ts` — same trust posture as the mock itself.
 - **D5.2** — Does the mock app need its own `/livez` / `/readyz`? It already has `/healthz` returning `ok` — good enough for a Fly `[[http_service.checks]]` block if we decide to expose it publicly.
-- **D5.3** — Do we auto-provision the mock in the connector's `deploy scaffold --target fly`, or is it a separate `mcp-connector deploy scaffold --target fly-mock`? Recommend: separate target — keeps the connector deploy self-contained and lets a real customer skip the mock entirely.
+- **D5.3** — Do we auto-provision the mock in the connector's `deploy init --target fly`, or is it a separate `mcp-connector deploy init --target fly-mock`? Recommend: separate target — keeps the connector deploy self-contained and lets a real customer skip the mock entirely.
 
 ## 5. Hosts and cross-app networking
 

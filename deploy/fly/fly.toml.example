@@ -8,7 +8,7 @@
 # with "Dockerfile not found" at deploy time.
 #
 # See architectural-plans/CODE-DEPLOY.md §B1 for the full analysis. The
-# scaffold CLI (`mcp-connector deploy scaffold --target fly`) writes to
+# scaffold CLI (`mcp-connector deploy init --target fly`) writes to
 # `.` by default for this reason.
 #
 # ── Load-bearing invariants ────────────────────────────────────────────

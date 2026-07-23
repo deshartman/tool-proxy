@@ -44,7 +44,7 @@ sed -i.bak 's/<CUSTOMER>/acme-prod/g' fly.toml && rm fly.toml.bak
 Or use the scaffold CLI (also writes to repo root by default):
 
 ```bash
-mcp-connector deploy scaffold --target fly --name acme-prod \
+mcp-connector deploy init --target fly --name acme-prod \
   --controller-url https://your-controller.example.com --yes
 ```
 

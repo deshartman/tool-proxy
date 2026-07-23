@@ -9,7 +9,7 @@ required for the tunnel itself.
 For most customers, three commands are enough:
 
 ```bash
-mcp-connector deploy scaffold --target compose \
+mcp-connector deploy init --target compose \
   --name prod-us-east-1 \
   --controller-url https://your-controller.example.com \
   --out ./deploy/compose
@@ -23,7 +23,7 @@ Then verify from inside the container:
 docker compose exec connector mcp-connector doctor
 ```
 
-For Kubernetes and public clouds, the same `deploy scaffold` command emits
+For Kubernetes and public clouds, the same `deploy init` command emits
 `fargate`, `gke`, and `aca` targets. Terraform / Helm users can point
 straight at the modules under [`deploy/terraform/`](../../deploy/terraform/)
 and [`deploy/helm/`](../../deploy/helm/) instead — no scaffold step needed.
@@ -59,7 +59,7 @@ When the WSS is down (deploy, restart, blip), the controller returns 503 to the 
 ## Cloud-specific guides
 
 Each walkthrough covers footguns, reconnect strategy, and how to reach the
-inspector — for the manifest shapes themselves, prefer `deploy scaffold` or
+inspector — for the manifest shapes themselves, prefer `deploy init` or
 the IaC modules above.
 
 - [AWS Fargate](./aws-fargate.md) — also see [`deploy/terraform/aws-fargate/`](../../deploy/terraform/aws-fargate/README.md).
