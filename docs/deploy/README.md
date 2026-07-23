@@ -65,6 +65,7 @@ the IaC modules above.
 - [AWS Fargate](./aws-fargate.md) — also see [`deploy/terraform/aws-fargate/`](../../deploy/terraform/aws-fargate/README.md).
 - [Azure Container Apps](./azure-container-apps.md)
 - [GCP GKE](./gcp-gke.md) — also see [`deploy/helm/mcp-connector/`](../../deploy/helm/mcp-connector/README.md).
+- [Fly.io](./fly-io.md) — also see [`deploy/fly/`](../../deploy/fly/README.md). Cheapest path for demos; ships private-mock deploy alongside the connector.
 
 ## Your cloud isn't listed?
 

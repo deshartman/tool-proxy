@@ -37,6 +37,12 @@ RUN npm ci --workspaces --include-workspace-root
 COPY tsconfig.base.json ./
 COPY packages/connector packages/connector
 
+# Repo-root template files the postbuild script propagates into the package
+# so `mcp-connector init` can read them via `import.meta.url` post-`npm i`.
+# Not in the working-tree build path (files are already there); required for
+# the isolated build context inside this image.
+COPY .env.example connector.yaml.example ./
+
 RUN npm run build
 
 # Strip workspace dev deps for the runtime copy.
@@ -108,14 +114,17 @@ WORKDIR /app
 RUN apk add --no-cache python3
 
 # Connector + its prod deps (incl. tsx, which the spawner needs to run
-# Type 1 children). npm workspaces hoist all deps to the root node_modules,
-# so there is no per-package packages/connector/node_modules to copy —
-# Node's resolver finds them via the parent dir walk.
-COPY --from=node-build /repo/node_modules                     ./node_modules
-COPY --from=node-build /repo/packages/connector/dist          ./packages/connector/dist
-COPY --from=node-build /repo/packages/connector/public        ./packages/connector/public
-COPY --from=node-build /repo/packages/connector/package.json  ./packages/connector/package.json
-COPY --from=node-build /repo/package.json                     ./package.json
+# Type 1 children). npm workspaces hoist MOST deps to the root node_modules
+# — but some resolve into the workspace-nested packages/connector/node_modules
+# when a version conflict prevents hoisting (npm's isolation-by-nesting).
+# `dotenv@^17` is the canonical example today. Copy the nested tree so
+# Node's parent-dir walk finds those deps too.
+COPY --from=node-build /repo/node_modules                          ./node_modules
+COPY --from=node-build /repo/packages/connector/node_modules       ./packages/connector/node_modules
+COPY --from=node-build /repo/packages/connector/dist               ./packages/connector/dist
+COPY --from=node-build /repo/packages/connector/public             ./packages/connector/public
+COPY --from=node-build /repo/packages/connector/package.json       ./packages/connector/package.json
+COPY --from=node-build /repo/package.json                          ./package.json
 
 # MCP tree: Type 1 source (mcp/local/) + Type 3 .env stubs (mcp/bundled/).
 # Required so the customer's yaml can resolve dir: paths to
@@ -133,6 +142,13 @@ COPY --from=node-build /repo/mcp ./mcp
 # rebuild.
 COPY --from=bundle-build /opt/bundled-mcps /opt/bundled-mcps
 
+# Runtime entrypoint — decodes $CONNECTOR_KEY_B64 → $CONNECTOR_KEY_FILE on
+# platforms whose secret store is env-only (Fly.io, ACA, etc.); no-op when
+# the env is unset (docker-compose et al. that mount the file directly).
+# See architectural-plans/CODE-DEPLOY.md §"D2 — Master key delivery".
+COPY packages/connector/entrypoint.sh /usr/local/bin/mcp-connector-entrypoint.sh
+RUN chmod +x /usr/local/bin/mcp-connector-entrypoint.sh
+
 WORKDIR /app/packages/connector
 
 # Default config location — mount the customer's yaml at this path. dir:
@@ -140,7 +156,14 @@ WORKDIR /app/packages/connector
 # so a yaml at /etc/mcp-connector/config.yaml referencing
 # dir: /app/mcp/local/sample works.
 ENV CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
+# Default master-key location — matches the path the entrypoint script
+# writes to when $CONNECTOR_KEY_B64 is set (Fly.io / ACA / any secret-as-env
+# platform). Override at deploy time if the operator mounts a key file
+# somewhere else. Symmetric with CONNECTOR_CONFIG above; without this ENV
+# the connector's env-loader fails with "CONNECTOR_KEY_FILE is required"
+# even though the entrypoint just wrote the key to the default path.
+ENV CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key
 
 EXPOSE 9090
-ENTRYPOINT ["node", "dist/index.js"]
+ENTRYPOINT ["/usr/local/bin/mcp-connector-entrypoint.sh"]
 CMD ["start"]

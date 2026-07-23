@@ -7,6 +7,7 @@ import type { ToolManifest } from "../tunnel/frames.js";
 import type { WebhookRegistry, WebhookEvent } from "../tunnel/webhook-registry.js";
 import type { McpStatus } from "../mcp-supervisor.js";
 import { createLogger } from "../logger.js";
+import { envString } from "../env.js";
 
 const log = createLogger("inspector");
 
@@ -745,9 +746,38 @@ export function startInspector(port: number, inspector: Inspector): void {
     // any MCP children we already spawned.
     process.exit(1);
   });
-  server.listen(port, "127.0.0.1", () => {
+  // Default bind is 127.0.0.1 — loopback-only, the load-bearing invariant
+  // for docker-compose, laptop dev, K8s (kubectl port-forward reaches
+  // loopback inside the pod), Fargate (aws ecs execute-command), and ACA
+  // (az containerapp exec). All four platforms establish "inside the
+  // container" reach before touching 127.0.0.1.
+  //
+  // Fly.io is the special case that forced INSPECTOR_BIND_ADDR to exist:
+  // `fly proxy` opens a WireGuard tunnel to the Machine's private-network
+  // (fdaa:...) mesh IP, NOT to the Machine's 127.0.0.1. A loopback-only
+  // bind is unreachable from `fly proxy`. Override to "::" in fly.toml
+  // [env] so the inspector listens on all IPv6 interfaces including the
+  // mesh. Trust posture is preserved: `fly ips list` MUST remain empty
+  // (see architectural-plans/CODE-DEPLOY.md §"What we do NOT do"), so the
+  // inspector is only reachable via `fly proxy` from authenticated flyctl
+  // sessions in the app's Fly org — the same trust surface as .internal
+  // DNS.
+  //
+  // Any non-127.0.0.1 override logs a WARN so operators see it loud, and
+  // so a misconfigured non-Fly deploy doesn't silently widen the bind.
+  const bindAddr = envString("INSPECTOR_BIND_ADDR", "127.0.0.1");
+  if (bindAddr !== "127.0.0.1") {
+    log.warn(
+      { bindAddr, port },
+      `inspector bind widened beyond loopback (INSPECTOR_BIND_ADDR set) — ensure the host has no public IP allocated`
+    );
+  }
+  server.listen(port, bindAddr, () => {
     const snap = inspector.snapshot();
     const controllerUrl = snap.kind === "snapshot" ? snap.controllerUrl : "?";
-    log.info({ port, url: `http://127.0.0.1:${port}/`, controllerUrl }, `listening`);
+    log.info(
+      { port, bindAddr, url: `http://${bindAddr === "127.0.0.1" ? "127.0.0.1" : `[${bindAddr}]`}:${port}/`, controllerUrl },
+      `listening`
+    );
   });
 }

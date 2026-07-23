@@ -17,14 +17,24 @@ import { stdin as input, stdout as output } from "node:process";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { resolve as resolvePath, join } from "node:path";
-import { render, type ScaffoldTarget, type ScaffoldVars } from "./templates.js";
+import { render, targetNeedsControllerUrl, type ScaffoldTarget, type ScaffoldVars } from "./templates.js";
 
-const TARGETS: ScaffoldTarget[] = ["fargate", "gke", "aca", "compose"];
+const TARGETS: ScaffoldTarget[] = ["fargate", "gke", "aca", "compose", "fly", "fly-mock"];
 const DEFAULT_OUT: Record<ScaffoldTarget, string> = {
   fargate: "./deploy/aws-fargate",
   gke: "./deploy/gke",
   aca: "./deploy/aca",
   compose: "./deploy/compose",
+  // Fly's build context is locked to the fly.toml's directory (no
+  // --build-context flag exists), and our Dockerfile COPYs package.json,
+  // packages/connector/, mcp/, bundles/ — all at repo root. So fly.toml
+  // MUST live at repo root or the build fails with "Dockerfile not found"
+  // / missing source files. See architectural-plans/CODE-DEPLOY.md §B1.
+  fly: ".",
+  // fly-mock output lives in-tree with the mock source it packages. The
+  // mock's Dockerfile sits right next to its fly.toml, so the build
+  // context is self-contained — no repo-root requirement.
+  "fly-mock": "./mock/customers",
 };
 
 export interface ScaffoldWriteResult {
@@ -73,6 +83,9 @@ Targets:
   gke        Kubernetes manifests (Namespace, Secret, ConfigMap, Deployment, PVC)
   aca        Azure Container Apps bicep template
   compose    docker-compose.yml + .env.example (single-VM prod)
+  fly        Fly.io fly.toml + secrets-hint.sh (connector, outbound-only)
+  fly-mock   Fly.io fly.toml + Dockerfile for the demo mock backend (private,
+             .internal-DNS-only, same Fly org as the connector)
 
 Flags:
   --target <t>          required (one of the above)
@@ -126,20 +139,25 @@ export async function runScaffold(argv: string[]): Promise<number> {
   const nonInteractive = !!values.yes;
   const rl = nonInteractive ? null : createInterface({ input, output });
   try {
-    const name = await resolveField(
-      rl,
-      values.name,
-      "CONNECTOR_NAME (must match your controller's Tunnel Security row Name exactly)",
-      nonInteractive,
-      "name",
-    );
-    const controllerUrl = await resolveField(
-      rl,
-      values["controller-url"],
-      "CONTROLLER_URL (https://...)",
-      nonInteractive,
-      "controller-url",
-    );
+    // For fly-mock, --name is the DEMO slug (not the connector name); the
+    // resulting app is mock-customers-<slug>. Same variable, different
+    // semantics — flagged in the prompt text.
+    const namePrompt =
+      target === "fly-mock"
+        ? "DEMO slug (used as mock-customers-<slug>; matches --name on the connector app)"
+        : "CONNECTOR_NAME (must match your controller's Tunnel Security row Name exactly)";
+    const name = await resolveField(rl, values.name, namePrompt, nonInteractive, "name");
+
+    // The mock backend doesn't dial anywhere — no controller URL needed.
+    const controllerUrl = targetNeedsControllerUrl(target)
+      ? await resolveField(
+          rl,
+          values["controller-url"],
+          "CONTROLLER_URL (https://...)",
+          nonInteractive,
+          "controller-url",
+        )
+      : (values["controller-url"] ?? "");
 
     const vars: ScaffoldVars = {
       name,

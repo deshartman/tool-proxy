@@ -38,3 +38,52 @@ docs
 README.md
 CLAUDE.md
 scripts
+
+# Python virtualenvs. `bundles/enterprise-knowledge/.venv/` is ~1 GB of
+# dev-installed deps and was silently inflating the Fly build context
+# (200+ MB before the .venv content started transferring). Bundle venvs
+# are (re)built INSIDE the image by the bundle-build stage, so the
+# on-disk copy from dev never needs to ship. Belt-and-braces patterns:
+# leading `.venv/` matches at the root, `**/.venv/` for nested.
+.venv
+**/.venv
+.venv/
+**/.venv/
+
+# Python bytecode + test caches. `.pytest_cache` shows up wherever pytest
+# runs (bundles/enterprise-knowledge/); the others are similar dev
+# artifacts that don't belong in the image.
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+**/.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+**/*.egg-info
+
+# Ollama embedding sidecar model cache — hundreds of MB of dev model
+# weights. Production deployments run the sidecar as a separate image;
+# the cache never ships in the connector image.
+.ollama-cache
+
+# graphify output — knowledge graph artifacts for tooling on the dev
+# machine. Not shipped.
+graphify-out
+
+# Playwright snapshots + logs, dev-only.
+.playwright-mcp
+
+# Snapshot tarballs from scripts/snapshot-crm.sh, dev-only.
+.local-backups
+.local
+
+# Dev-only scaffolding. mock/customers/ is gitignored and is deployed
+# as a SEPARATE Fly app (see architectural-plans/CODE-DEPLOY.md §D5),
+# not baked into the connector image.
+mock
+
+# architectural-plans/ = design docs, not runtime code.
+architectural-plans

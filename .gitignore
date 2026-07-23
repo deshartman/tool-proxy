@@ -32,6 +32,12 @@ __pycache__/
 **/connector.yaml
 !**/connector.yaml.example
 
+# Fly.io generated fly.toml (customer-specific; template lives at
+# fly.toml.example). Scaffold output for --target fly / fly-mock lands
+# here; deploy/fly/ ships the .example reference only.
+**/fly.toml
+!**/fly.toml.example
+
 # The packages/connector/ copies of the templates are BUILD ARTIFACTS
 # written by scripts/postbuild.mjs — the tracked source lives at the repo
 # root. These rules must come AFTER the un-ignore lines above (git respects
