@@ -3,8 +3,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { scaffoldTo } from "../../src/deploy/scaffold.js";
+import { scaffoldTo, normalizeControllerUrl } from "../../src/deploy/scaffold.js";
 import { render, type ScaffoldVars } from "../../src/deploy/templates.js";
+import { vi } from "vitest";
 
 // Two layers of test:
 //   1. render() — pure. Assert per-target that the substituted string
@@ -205,6 +206,73 @@ describe("render — variable substitution", () => {
     expect(dockerfile.content).toContain("tsx");
   });
 
+});
+
+describe("normalizeControllerUrl", () => {
+  // Customer-facing UX lesson (2026-07-23): operators paste the "connect
+  // your connector" URL from the controller UI verbatim, which includes
+  // the `/mcp-tunnel` path. The connector appends that path itself in
+  // tunnel/client.ts, so the yaml/env value must be the HTTPS root only.
+  // Without normalization, the connector dials wss://.../mcp-tunnel/mcp-tunnel
+  // and silently fails to open the WS — no boot error, no obvious symptom.
+  //
+  // Defensive strip lives in scaffold.ts. Not a URL parser — only handles
+  // the one path we know breaks. Loud warn to stderr so the operator
+  // notices we corrected their paste.
+
+  it("strips a trailing /mcp-tunnel path from the controller URL", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(normalizeControllerUrl("https://controller.example.com/mcp-tunnel")).toBe(
+      "https://controller.example.com",
+    );
+    // Warning must be visible — silent strip would confuse operators
+    // whose paste doesn't match the emitted config.
+    const stderrText = stderrSpy.mock.calls.map((c) => c[0]).join("");
+    expect(stderrText).toContain('Stripping "/mcp-tunnel"');
+    vi.restoreAllMocks();
+  });
+
+  it("strips trailing slashes even when path is present", () => {
+    // `https://controller.example.com/mcp-tunnel/` — trailing slash after
+    // the path we want to strip. Normalize the slash first, then strip.
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(normalizeControllerUrl("https://controller.example.com/mcp-tunnel/")).toBe(
+      "https://controller.example.com",
+    );
+    vi.restoreAllMocks();
+  });
+
+  it("leaves the URL alone when it's already the bare root", () => {
+    // No warning, no changes — this is the happy path.
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(normalizeControllerUrl("https://controller.example.com")).toBe(
+      "https://controller.example.com",
+    );
+    expect(stderrSpy).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("strips a bare trailing slash", () => {
+    // `https://controller.example.com/` — common shell autocomplete
+    // artifact. No warning; just a hygiene trim.
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(normalizeControllerUrl("https://controller.example.com/")).toBe(
+      "https://controller.example.com",
+    );
+    expect(stderrSpy).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("does NOT touch unrelated paths (defensive, not aggressive)", () => {
+    // Only /mcp-tunnel is the known-broken suffix. Other paths might be
+    // legitimate custom routes; the connector will fail-loud on those
+    // rather than silently mangling them. If a customer needs to point
+    // at something other than /mcp-tunnel, that's a controller-side
+    // configuration story, not a scaffold input.
+    expect(normalizeControllerUrl("https://controller.example.com/custom-path")).toBe(
+      "https://controller.example.com/custom-path",
+    );
+  });
 });
 
 describe("scaffoldTo — file writes", () => {

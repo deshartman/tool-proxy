@@ -289,6 +289,11 @@ Next steps:
      This forwards http://localhost:9090 to the Machine's :9090
      inspector via Fly's private mesh.
 
+     If you get "bind: address already in use" — port 9090 is already
+     held by a local dev inspector. Use a different local port:
+
+       fly proxy 19090:9090 -a ${app}    # then browser http://localhost:19090
+
   3. Open the inspector:
 
        http://localhost:9090

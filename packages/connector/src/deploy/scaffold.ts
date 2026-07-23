@@ -181,7 +181,7 @@ export async function runDeployInit(argv: string[]): Promise<number> {
     const vars: ScaffoldVars = {
       name,
       appName,
-      controllerUrl,
+      controllerUrl: normalizeControllerUrl(controllerUrl),
       image: values.image ?? "ghcr.io/twilio/mcp-connector:latest",
       credsSource: parseEnum(values["creds-source"], ["db", "env"], "db"),
       auth: parseEnum(values.auth, ["static", "oauth2"], "static"),
@@ -232,4 +232,30 @@ function defaultAppName(target: ScaffoldTarget, name: string): string {
   if (target === "fly") return `mcp-connector-${name}`;
   if (target === "fly-mock") return `mock-customers-${name}`;
   return name;
+}
+
+// Defensive normalization for --controller-url. The connector wants the
+// controller's HTTPS ROOT ONLY — it upgrades https:// → wss:// and appends
+// `/mcp-tunnel` itself in tunnel/client.ts. Customers copying the "connect
+// your connector" URL from a controller UI often paste the full path
+// (`https://controller.example.com/mcp-tunnel`), which then double-appends
+// at boot time (`wss://controller.example.com/mcp-tunnel/mcp-tunnel`) and
+// silently fails to dial. Strip the known suffix + warn. Keep the operator
+// noise loud so they know their paste was corrected.
+//
+// This is intentionally NOT a URL parser — it's a targeted defensive strip.
+// Other stray paths (`?query`, `/other-path`) are left alone; a full parser
+// would be over-engineering for the one path we know breaks.
+export function normalizeControllerUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, ""); // strip trailing slashes
+  if (trimmed.endsWith("/mcp-tunnel")) {
+    const stripped = trimmed.slice(0, -"/mcp-tunnel".length);
+    process.stderr.write(
+      `warn: --controller-url should be the HTTPS root only ` +
+      `(the connector appends "/mcp-tunnel" itself). ` +
+      `Stripping "/mcp-tunnel" — using "${stripped}".\n`,
+    );
+    return stripped;
+  }
+  return trimmed;
 }

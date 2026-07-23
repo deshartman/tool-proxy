@@ -195,6 +195,12 @@ describe("applyFly — happy path", () => {
     expect(stdoutText).toContain("Next steps");
     // Post-deploy invariant check must be mentioned.
     expect(stdoutText).toContain("fly ips list -a twilio-tool-sdk");
+    // Port-collision fallback — operators running the local dev inspector
+    // alongside `fly proxy` hit "address already in use" on 9090. The
+    // fallback command lets them use a different local port without
+    // hunting for the PID holding 9090.
+    expect(stdoutText).toContain("fly proxy 19090:9090 -a twilio-tool-sdk");
+    expect(stdoutText).toContain("bind: address already in use");
     vi.restoreAllMocks();
   });
 
