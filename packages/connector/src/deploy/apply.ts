@@ -257,11 +257,64 @@ export function applyFly(cwd: string = process.cwd(), spawn: SpawnFn = spawnSync
   }
 
   log.info({ app }, `deploy complete`);
-  log.info(
-    { proxy: `fly proxy 9090:9090 -a ${app}`, url: "http://localhost:9090" },
-    `to reach the inspector, run the proxy command in another terminal`,
-  );
+  printPostDeployNextSteps(app);
   return 0;
+}
+
+// Explicit post-deploy summary — written directly to stdout so it bypasses
+// the pino formatter and lands as an unmissable block after the log
+// output. Deliberately verbose because operators (a) forget the proxy
+// command and (b) forget which of the three "reach the inspector" mistakes
+// they made last time (HSTS-upgrade, port collision, forgot to run proxy).
+function printPostDeployNextSteps(app: string): void {
+  const block = `
+==============================================================
+  Deploy complete — ${app}
+==============================================================
+
+Next steps:
+
+  1. Confirm no public IP (outbound-only invariant):
+
+       fly ips list -a ${app}
+
+     MUST return empty. If it lists an IPv4/IPv6, release with
+     \`fly ips release <address> -a ${app}\` before proceeding.
+
+  2. In ANOTHER terminal, start the WireGuard proxy — leave it running:
+
+       fly proxy 9090:9090 -a ${app}
+
+     Wait for "Proxying local port 9090 to remote [...] :9090".
+     This forwards http://localhost:9090 to the Machine's :9090
+     inspector via Fly's private mesh.
+
+  3. Open the inspector:
+
+       http://localhost:9090
+
+     Use \`http://\` explicitly. Chrome HSTS on localhost:9090 can
+     force https:// which the inspector doesn't serve
+     (ERR_CONNECTION_RESET).
+
+  4. In the browser, fill in the "Configure Tunnel" modal:
+
+       Controller URL:  https://<your-controller>
+       Connector Name:  must match the Tunnel Security row Name
+                        on your controller (case-sensitive)
+       Auth posture:    static bearer OR OAuth2 (match the row type)
+
+     Save. The status pill goes:
+       closed  →  connecting  →  open  (green)
+
+  5. Verify tools flowing (once tunnel is open):
+
+       fly logs -a ${app}   # look for "tunnel opened" + "register-ack"
+
+==============================================================
+
+`;
+  process.stdout.write(block);
 }
 
 // ---- helpers ----

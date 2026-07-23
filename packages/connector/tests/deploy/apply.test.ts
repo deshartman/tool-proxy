@@ -169,6 +169,35 @@ describe("applyFly — happy path", () => {
     expect(mutations[5].args).toEqual(["deploy"]);
   });
 
+  it("prints an explicit next-steps block to stdout on success", () => {
+    // Operators forget the proxy command. Pino log lines land as noise
+    // after the deploy output, so the CLI writes a plain-text summary
+    // block DIRECTLY to stdout (bypassing the pino formatter) with the
+    // exact `fly proxy` command, HSTS warning, and Configure Tunnel
+    // instructions. This test pins that: the block MUST appear.
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { spawn } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64  x\n" } },
+      { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
+    ]);
+
+    expect(applyFly(outDir, spawn)).toBe(0);
+
+    const stdoutText = stdoutSpy.mock.calls.map((c) => c[0]).join("");
+    // The exact fly proxy command must appear — copy-pasteable.
+    expect(stdoutText).toContain("fly proxy 9090:9090 -a twilio-tool-sdk");
+    // The HSTS warning must be there — recurring source of "why doesn't
+    // localhost:9090 work" support questions.
+    expect(stdoutText).toContain("Chrome HSTS");
+    // "Next steps" heading — makes the block scannable.
+    expect(stdoutText).toContain("Next steps");
+    // Post-deploy invariant check must be mentioned.
+    expect(stdoutText).toContain("fly ips list -a twilio-tool-sdk");
+    vi.restoreAllMocks();
+  });
+
   it("attaches Postgres with --variable-name POSTGRES_URL (Bug B3)", () => {
     // The connector's env reader looks for POSTGRES_URL specifically —
     // Fly's default variable name (DATABASE_URL) would silently break boot
