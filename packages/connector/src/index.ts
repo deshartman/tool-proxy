@@ -5,6 +5,7 @@ import { runDiscover } from "./discover.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
 import { runDeployInit } from "./deploy/scaffold.js";
+import { runDeployApply } from "./deploy/apply.js";
 import { createLogger } from "./logger.js";
 import { envString } from "./env.js";
 
@@ -19,7 +20,7 @@ commands:
   doctor                  run preflight checks against your .env and connector.yaml
   deploy init             generate cloud deployment manifests (fargate/gke/aca/compose/fly).
                           Does NOT touch the cloud — writes files for the operator to apply.
-  deploy apply            (reserved) actually deploy to the cloud — not yet implemented.
+  deploy apply            actually deploy to the cloud (fly today; other targets forthcoming).
   version                 print the connector version
 
 start options:
@@ -62,8 +63,8 @@ async function dispatch(): Promise<void> {
           `usage: mcp-connector deploy <subcommand> [options]\n\n` +
           `subcommands:\n` +
           `  init    generate cloud deployment manifests (does NOT touch the cloud)\n` +
-          `  apply   actually deploy to the cloud (not yet implemented)\n\n` +
-          `Run \`mcp-connector deploy init --help\` for target-specific flags.`,
+          `  apply   actually deploy to the cloud using config from a prior init\n\n` +
+          `Run \`mcp-connector deploy init --help\` or \`deploy apply --help\` for flags.`,
         );
         process.exit(subverb ? 0 : 2);
       }
@@ -73,13 +74,8 @@ async function dispatch(): Promise<void> {
           process.exit(code);
         }
         case "apply": {
-          console.error(
-            `"mcp-connector deploy apply" is not yet implemented.\n\n` +
-            `To generate the deploy manifests, use: mcp-connector deploy init --target <t>\n` +
-            `Then apply with the cloud's native tool (aws / kubectl / az / docker compose / fly),\n` +
-            `or — for Fly — the emitted \`bash fly-deploy.sh\` script.`,
-          );
-          process.exit(2);
+          const code = await runDeployApply(subrest);
+          process.exit(code);
         }
         default: {
           console.error(

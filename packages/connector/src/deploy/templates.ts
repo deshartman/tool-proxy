@@ -711,22 +711,25 @@ Verify: \`docker compose exec connector mcp-connector doctor\`
 Files landed AT REPO ROOT (Fly's build context is locked to the fly.toml's
 directory, and the Dockerfile needs repo root — see docs/deploy/fly-io.md).
 
-**One-command deploy** — the emitted \`fly-deploy.sh\` runs the whole flow:
+**Deploy with the CLI:**
 
-    bash fly-deploy.sh
+    mcp-connector deploy apply --target fly
 
-The script is idempotent — safe to re-run if a mid-step failure interrupts it.
-Creates the Fly app + Postgres, sets the master key, creates the state volume,
-then runs \`fly deploy\` in the foreground.
+That's it. The verb wraps the emitted \`fly-deploy.sh\`, so you get the same
+idempotent 5-step flow (create app + Postgres, set master key, create volume,
+then \`fly deploy\`) with one command. Safe to re-run.
 
-**Prefer step-by-step?** \`fly-secrets-hint.sh\` is a paste-friendly hint doc
-that walks through the same 6 steps individually. Every line is a comment;
-paste each block into your terminal to run.
+**Alternative escape hatches:**
+- \`bash fly-deploy.sh\` — same effect as \`deploy apply\`, useful if you
+  want to \`cat\` the script and audit it before running (a common posture
+  for security review) or in a Node-less CI environment.
+- \`fly-secrets-hint.sh\` — paste-friendly hint doc walking through each
+  step individually. Every line is a comment; run block-by-block manually.
 
 Reach the inspector: \`fly proxy 9090:9090 -a {{APP_NAME}}\` → http://localhost:9090/
 
-Once verified, you can \`rm fly-secrets-hint.sh fly-deploy.sh\` — both are
-one-shot references, not persistent config. \`fly.toml\` stays.
+Once verified, you can \`rm fly-secrets-hint.sh fly-deploy.sh\` if you prefer
+the CLI verb as your single entry point. \`fly.toml\` stays either way.
 
 See docs/deploy/fly-io.md for the full walkthrough (mock backend, private
 DNS, rotation, graduation to managed Postgres).
