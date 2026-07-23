@@ -17,7 +17,7 @@ __pycache__/
 
 # Env files. Never commit; templates are *.env.example (source-of-truth at
 # the repo root; postbuild.mjs copies them into packages/connector/ so they
-# ship in the npm tarball).
+# ship in the runtime image).
 .env
 *.env.*
 !.env.example
@@ -26,9 +26,9 @@ __pycache__/
 .DS_Store
 
 # Connector live config — customer-authored copy of connector.yaml.example.
-# Lives at the repo root (dev) or the customer's project root (post `npm i`);
-# resolved from CWD by the connector. Gitignored; only the *.example template
-# ships.
+# Lives at the repo root (dev) or the container's mounted config path
+# (production); resolved from CWD by the connector. Gitignored; only the
+# *.example template ships.
 **/connector.yaml
 !**/connector.yaml.example
 
@@ -82,3 +82,10 @@ graphify-out/*
 .ollama-cache/
 
 .local/
+
+# Live-deploy scratch space for REMOVE-NPM commits 4 + 5. Holds
+# throwaway Dockerfiles / fly.tomls / sample MCPs used to verify the
+# derived-image and volume-mount paths against a real Fly controller.
+# Verified commands land in docs/deploy/{DERIVED-IMAGE,VOLUME-MOUNT}.md
+# as "Verified example" sections, not as tracked test fixtures.
+test/deploy/

@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "mcp-connector": "dist/index.js"
   },

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Boots a single connector. The connector itself spawns Type 1 (customer-
-# authored) MCP children via tsx and dials Type 2 (external) MCP servers as
-# declared in ./connector.yaml (at the repo root — mirrors the customer's
-# post-`npm i` layout).
+# Boots a single connector for local development. The connector itself
+# spawns Type 1 (customer-authored) MCP children via tsx and dials Type 2
+# (external) MCP servers as declared in ./connector.yaml (at the repo
+# root — resolved from CWD by the connector; production containers mount
+# config at /etc/mcp-connector/ instead).
 #
 # To add an MCP, edit ./connector.yaml — see packages/connector/connector.yaml.example
 # for the two patterns (Type 1 / Type 2).
@@ -32,10 +33,10 @@ sleep 1
 
 CONNECTOR_DIR="$ROOT/packages/connector"
 CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
-# Live config lives at the repo root — mirrors the customer's post-`npm i`
-# layout where `.env` and `connector.yaml` sit next to `node_modules/`, not
-# inside it. The *.example templates ship inside packages/connector/ and are
-# the source of truth `init` copies from.
+# Live config lives at the repo root — the connector resolves .env and
+# connector.yaml from CWD. In production containers, the customer mounts
+# these at /etc/mcp-connector/ (or a custom path). The *.example templates
+# ship inside packages/connector/ and are the source `init` copies from.
 ENV_FILE="$ROOT/.env"
 YAML_FILE="$ROOT/connector.yaml"
 MOCK_DATA_FILE="$ROOT/mock/customers/data.ts"

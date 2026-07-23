@@ -9,6 +9,11 @@
 //
 // MCP_DROPIN_DIR resolution:
 //   * Production (OCI image): /var/lib/mcp-connector/customer-mcps/
+//     Customers land Type 1 MCPs at this path via one of two supported
+//     patterns: derived image (`FROM twilio/mcp-connector` + `COPY`) or
+//     volume mount (K8s ConfigMap / PVC, Fly volume, AWS EFS, Azure
+//     Files, docker-compose bind mount). See docs/deploy/DERIVED-IMAGE.md
+//     and docs/deploy/VOLUME-MOUNT.md.
 //   * Local dev: defaults to mcp/local/ relative to the connector package
 //     so the bundled `sample` drop-in works without a new mount.
 
@@ -108,8 +113,10 @@ export function dropinRunnerPath(): string {
 }
 
 // Helper for callers that need to feed the supervisor a uniform list:
-// returns the directory the connector package itself lives in, so the
-// .env-default fallback works when MCP_DROPIN_DIR is unset.
+// returns the directory the connector package itself lives in. Used as
+// the dev-only fallback when MCP_DROPIN_DIR is unset; production
+// customers always either set MCP_DROPIN_DIR or land MCPs at
+// PROD_DEFAULT (see resolution comment above).
 export function connectorPackageRoot(): string {
   // `here` at runtime is dist/; up one to packages/connector/.
   return dirname(here);
