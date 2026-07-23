@@ -37,11 +37,6 @@ __pycache__/
 # here; deploy/fly/ ships the .example reference only.
 **/fly.toml
 !**/fly.toml.example
-# Scaffold-emitted deploy artifacts alongside fly.toml. Both are per-operator
-# (contain the specific app name baked in via {{APP_NAME}} substitution);
-# templates live in packages/connector/src/deploy/templates.ts.
-fly-deploy.sh
-fly-secrets-hint.sh
 
 # The packages/connector/ copies of the templates are BUILD ARTIFACTS
 # written by scripts/postbuild.mjs — the tracked source lives at the repo

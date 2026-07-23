@@ -106,11 +106,14 @@ describe("render — variable substitution", () => {
 
   it("emits fly.toml with substituted app name + image and NO public service", () => {
     const { files } = render("fly", VARS);
-    // Three files: fly.toml (config), fly-deploy.sh (runnable one-command
-    // deploy), fly-secrets-hint.sh (paste-friendly hint doc for step-by-step
-    // walkthroughs). The runnable script was added post-merge — its absence
-    // was a UX flaw that broke the "just run the script" story.
-    expect(files.map((f) => f.path)).toEqual(["fly.toml", "fly-deploy.sh", "fly-secrets-hint.sh"]);
+    // Fly target emits ONE file: fly.toml. The deploy step is a separate
+    // CLI verb (`mcp-connector deploy apply --target fly`), which reads
+    // this fly.toml and spawns fly commands directly. Historical: earlier
+    // iterations emitted `fly-deploy.sh` + `fly-secrets-hint.sh` alongside,
+    // but that produced a confusing three-artifact surface — the customer
+    // wondered which one to run. Consolidating to one file (init) + one
+    // command (apply) matches the terraform init/apply pattern.
+    expect(files.map((f) => f.path)).toEqual(["fly.toml"]);
 
     const toml = files.find((f) => f.path === "fly.toml")!;
     expect(toml.content).toContain(`app = "mcp-connector-prod-us-east-1"`);
@@ -174,22 +177,6 @@ describe("render — variable substitution", () => {
     expect(toml.content).toContain("fly ips list -a twilio-tool-sdk");
   });
 
-  it("propagates custom appName through fly-secrets-hint.sh commands", () => {
-    const { files } = render("fly", { ...VARS, name: "des-fly-test", appName: "twilio-tool-sdk" });
-    const hint = files.find((f) => f.path === "fly-secrets-hint.sh")!;
-    // Every fly CLI command in the hint script must target the custom name,
-    // including the derived Postgres app name.
-    expect(hint.content).toContain("twilio-tool-sdk-db");
-    expect(hint.content).toContain("--app twilio-tool-sdk");
-    expect(hint.content).toContain("fly proxy 9090:9090 -a twilio-tool-sdk");
-    // Connector identity (CONNECTOR_NAME) stays separate — the inspector
-    // configure step still shows `--name` as the controller-side identity.
-    expect(hint.content).toContain("Connector Name: des-fly-test");
-    // Guard: default prefix must not leak when a custom appName is set.
-    expect(hint.content).not.toContain("mcp-connector-twilio-tool-sdk");
-    expect(hint.content).not.toContain("mcp-connector-des-fly-test");
-  });
-
   it("emits fly-mock fly.toml + Dockerfile with private-only invariants", () => {
     // Fly-mock's app-name default is `mock-customers-<name>` — computed in
     // scaffold.ts's runDeployInit(). render() is pure, so tests supply appName
@@ -218,86 +205,6 @@ describe("render — variable substitution", () => {
     expect(dockerfile.content).toContain("tsx");
   });
 
-  it("emits fly-secrets-hint.sh with Postgres attach + master key + volume steps", () => {
-    const { files } = render("fly", VARS);
-    const hint = files.find((f) => f.path === "fly-secrets-hint.sh")!;
-
-    // Postgres must attach as POSTGRES_URL, not the default DATABASE_URL —
-    // the connector's env reader looks for POSTGRES_URL. Bug B3.
-    expect(hint.content).toContain("--variable-name POSTGRES_URL");
-    expect(hint.content).toContain("--database-name mcp_connector");
-    expect(hint.content).toContain("mcp-connector-prod-us-east-1-db");
-
-    // Master key delivery is the entrypoint-decoded env var, not a file.
-    expect(hint.content).toContain("CONNECTOR_KEY_B64");
-    expect(hint.content).toContain("head -c 32 /dev/urandom | base64");
-
-    // Inspector reach is `fly proxy`, not any public exposure.
-    expect(hint.content).toContain("fly proxy 9090:9090 -a mcp-connector-prod-us-east-1");
-    expect(hint.content).toContain("https://controller.example.com");
-
-    // Phase-B bug B5 fix: `fly deploy 2>&1 | tail` silently buffers because
-    // Fly's Depot builder only flushes on TTY. Hint must show the direct-file
-    // redirect + tail -f pattern so operators can watch build progress live.
-    expect(hint.content).toContain("nohup fly deploy > /tmp/fly-deploy.log");
-    expect(hint.content).toContain("tail -f /tmp/fly-deploy.log");
-  });
-
-  it("emits fly-deploy.sh as a runnable, idempotent one-command deploy", () => {
-    const { files } = render("fly", VARS);
-    const sh = files.find((f) => f.path === "fly-deploy.sh")!;
-    expect(sh).toBeDefined();
-
-    // Load-bearing: the whole point of this file is that `bash fly-deploy.sh`
-    // just works. The shebang + strict-mode pragmas are the minimum shape.
-    expect(sh.content).toMatch(/^#!\/usr\/bin\/env bash/);
-    expect(sh.content).toContain("set -euo pipefail");
-
-    // App-name substitution — the script MUST reference the specific app the
-    // scaffold was generated for, not the generic `{{APP_NAME}}` placeholder.
-    // If substitution regressed, the script would try to create an app named
-    // literally "{{APP_NAME}}".
-    expect(sh.content).toContain(`APP="mcp-connector-prod-us-east-1"`);
-    expect(sh.content).toContain(`DB_APP="mcp-connector-prod-us-east-1-db"`);
-    expect(sh.content).not.toContain("{{APP_NAME}}");
-    expect(sh.content).not.toContain("{{NAME}}");
-
-    // Bug B3 — Postgres MUST be attached with --variable-name POSTGRES_URL.
-    // The default DATABASE_URL is invisible to the connector's env reader.
-    // Pinning here catches template drift that reverts to Fly's default.
-    expect(sh.content).toContain("--variable-name POSTGRES_URL");
-
-    // Idempotency — re-running after a mid-step failure must not fail on
-    // "app already exists" style errors. Each mutation checks state first.
-    expect(sh.content).toContain("already exists — skipping create");
-    expect(sh.content).toContain("already set — skipping mint");
-
-    // Master key mint — 32 bytes from /dev/urandom, base64-encoded, set
-    // as CONNECTOR_KEY_B64 (entrypoint decodes to CONNECTOR_KEY_FILE).
-    expect(sh.content).toContain("head -c 32 /dev/urandom | base64");
-    expect(sh.content).toContain("CONNECTOR_KEY_B64");
-
-    // The final `fly deploy` runs in the foreground. The B5 nohup+tail-f
-    // pattern is in fly-secrets-hint.sh for the step-by-step path.
-    expect(sh.content).toMatch(/^fly deploy$/m);
-
-    // Preflight — creates deploy/fly/connector.yaml if missing so first-time
-    // operators don't hit the [[files]] block's local_path resolution failure.
-    expect(sh.content).toContain("deploy/fly/connector.yaml");
-    expect(sh.content).toContain("mcp_servers: []");
-  });
-
-  it("propagates custom appName into fly-deploy.sh", () => {
-    // Companion to the existing fly-secrets-hint appName test — same
-    // guarantee for the runnable script.
-    const { files } = render("fly", { ...VARS, name: "des-fly-test", appName: "twilio-tool-sdk" });
-    const sh = files.find((f) => f.path === "fly-deploy.sh")!;
-    expect(sh.content).toContain(`APP="twilio-tool-sdk"`);
-    expect(sh.content).toContain(`DB_APP="twilio-tool-sdk-db"`);
-    // Default prefix must not leak when a custom appName is set.
-    expect(sh.content).not.toContain("mcp-connector-twilio-tool-sdk");
-    expect(sh.content).not.toContain("mcp-connector-des-fly-test");
-  });
 });
 
 describe("scaffoldTo — file writes", () => {
@@ -353,21 +260,16 @@ describe("scaffoldTo — file writes", () => {
     }
   });
 
-  it("writes fly.toml + fly-deploy.sh + fly-secrets-hint.sh to the given outDir", async () => {
+  it("writes fly.toml to the given outDir (single-file target)", async () => {
     const outDir = mkdtempSync(join(tmpdir(), "scaffold-fly-"));
     try {
       const result = await scaffoldTo("fly", VARS, outDir);
-      expect(result.written).toHaveLength(3);
+      // Fly emits exactly one file. The deploy is a separate CLI verb
+      // (`mcp-connector deploy apply --target fly`), not a script emitted
+      // alongside fly.toml.
+      expect(result.written).toHaveLength(1);
       const toml = readFileSync(join(outDir, "fly.toml"), "utf8");
       expect(toml).toContain("prod-us-east-1");
-      // Runnable deploy script — verify it landed on disk with the right
-      // shape (shebang + strict-mode pragmas). Not asserting exec bit; the
-      // scaffold writes with default perms and operators run via `bash file.sh`.
-      const sh = readFileSync(join(outDir, "fly-deploy.sh"), "utf8");
-      expect(sh).toMatch(/^#!\/usr\/bin\/env bash/);
-      expect(sh).toContain("set -euo pipefail");
-      const hint = readFileSync(join(outDir, "fly-secrets-hint.sh"), "utf8");
-      expect(hint).toContain("CONNECTOR_KEY_B64");
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }

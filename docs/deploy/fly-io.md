@@ -35,42 +35,25 @@ Beyond the [common prereqs](README.md#prereqs-every-cloud):
 
 ## Deploy the connector
 
-Full runbook lives in [`deploy/fly/README.md`](../../deploy/fly/README.md). The condensed version:
+Two commands. That's it.
 
 ```bash
-# 1. Render the manifests. Default outDir is the repo root (`.`) — the
+# 1. Generate fly.toml. Default outDir is the repo root (`.`) — the
 #    generated fly.toml MUST live at repo root because Fly's build context
 #    is locked to the fly.toml's directory, and our Dockerfile needs the
 #    repo root as context (it COPYs package.json, packages/connector/,
 #    mcp/, bundles/).
 mcp-connector deploy init --target fly --name acme-prod \
   --controller-url https://your-controller.example.com --yes
-# Result: ./fly.toml + ./fly-secrets-hint.sh at the repo root.
+# Result: ./fly.toml at the repo root.
 
-# 2. Create the Fly app (no deploy yet).
-fly launch --no-deploy --copy-config
-
-# 3. Provision Fly Postgres and attach as POSTGRES_URL (NOT DATABASE_URL —
-#    Fly's default var name doesn't match what the connector reads).
-fly postgres create --name mcp-connector-acme-prod-db --region iad --initial-cluster-size 1
-fly postgres attach mcp-connector-acme-prod-db \
-  --app mcp-connector-acme-prod \
-  --database-name mcp_connector \
-  --variable-name POSTGRES_URL
-
-# 4. Mint the master key and set as a Fly secret.
-fly secrets set CONNECTOR_KEY_B64="$(head -c 32 /dev/urandom | base64)" \
-  --app mcp-connector-acme-prod
-
-# 5. Create the state volume.
-fly volumes create state --region iad --size 1 --app mcp-connector-acme-prod
-
-# 6. Deploy. Redirect to a file — `fly deploy 2>&1 | tail` silently
-#    buffers because Fly's Depot builder only flushes on a real TTY.
-#    You want live progress during the ~3 min build:
-nohup fly deploy > /tmp/fly-deploy.log 2>&1 &
-tail -f /tmp/fly-deploy.log
+# 2. Deploy — creates the Fly app + Postgres + master key + state volume,
+#    then runs `fly deploy`. Idempotent — safe to re-run if any step is
+#    interrupted. Foreground so you see build progress live.
+mcp-connector deploy apply --target fly
 ```
+
+Under the hood `deploy apply` runs the five Fly operations you'd otherwise type by hand: `fly apps create`, `fly postgres create + attach --variable-name POSTGRES_URL` (Fly's default `DATABASE_URL` doesn't match what the connector reads), `fly secrets set CONNECTOR_KEY_B64`, `fly volumes create state`, and finally `fly deploy`. See [`packages/connector/src/deploy/apply.ts`](../../packages/connector/src/deploy/apply.ts) for the exact sequence.
 
 Then configure the tunnel via the inspector (below).
 

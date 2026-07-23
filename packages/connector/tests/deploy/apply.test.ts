@@ -1,29 +1,67 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SpawnSyncReturns } from "node:child_process";
+import type { SpawnSyncReturns, SpawnSyncOptions } from "node:child_process";
 
 import { applyFly, runDeployApply, type SpawnFn } from "../../src/deploy/apply.js";
 
-// applyFly() shells out to fly-deploy.sh from a given cwd. Native ESM
-// blocks vi.spyOn on child_process.spawnSync (module namespace isn't
-// configurable) — so applyFly accepts a `spawn` parameter for injection.
-// Tests supply a fake and assert on its call shape.
+// applyFly spawns `fly` commands directly (native Node — no bash script).
+// Under native ESM `vi.spyOn` on child_process.spawnSync doesn't work
+// (module namespace not configurable), so applyFly takes an injectable
+// `spawn` parameter. Tests supply a scripted fake that returns different
+// canned responses per (command, args) pattern.
 
-function fakeSpawn(returnValue: Partial<SpawnSyncReturns<Buffer>>): SpawnFn {
-  const base: SpawnSyncReturns<Buffer> = {
-    status: 0,
-    stdout: Buffer.alloc(0),
-    stderr: Buffer.alloc(0),
-    pid: 12345,
-    output: [],
-    signal: null,
-  };
-  return vi.fn(() => ({ ...base, ...returnValue })) as unknown as SpawnFn;
+const FLY_TOML_CONTENT = `app = "twilio-tool-sdk"
+primary_region = "iad"
+
+[build]
+  dockerfile = "packages/connector/Dockerfile"
+`;
+
+interface FakeCall {
+  command: string;
+  args: readonly string[];
+  options?: SpawnSyncOptions;
 }
 
-describe("applyFly", () => {
+interface FakeResponse {
+  status?: number | null;
+  stdout?: string;
+  stderr?: string;
+  error?: Error;
+}
+
+// A recording spawn that matches (command, args) against a response map.
+// If no match, returns { status: 0, stdout: "", stderr: "" } — a safe
+// default so tests that don't care about a specific step don't fail.
+function makeSpawn(responses: Array<{ match: (call: FakeCall) => boolean; response: FakeResponse }>): {
+  spawn: SpawnFn;
+  calls: FakeCall[];
+} {
+  const calls: FakeCall[] = [];
+  const spawn: SpawnFn = ((command: string, args: readonly string[], options?: SpawnSyncOptions) => {
+    calls.push({ command, args, options });
+    const match = responses.find((r) => r.match({ command, args, options }));
+    const r = match?.response ?? {};
+    return {
+      status: r.status ?? 0,
+      stdout: Buffer.from(r.stdout ?? ""),
+      stderr: Buffer.from(r.stderr ?? ""),
+      pid: 12345,
+      output: [],
+      signal: null,
+      error: r.error,
+    } as SpawnSyncReturns<Buffer>;
+  }) as SpawnFn;
+  return { spawn, calls };
+}
+
+function isFlyCmd(subcmd: string) {
+  return (c: FakeCall) => c.command === "fly" && c.args[0] === subcmd;
+}
+
+describe("applyFly — preflight", () => {
   let outDir: string;
 
   beforeEach(() => {
@@ -32,58 +70,236 @@ describe("applyFly", () => {
 
   afterEach(() => {
     rmSync(outDir, { recursive: true, force: true });
-    vi.restoreAllMocks();
   });
 
-  it("returns exit 1 when fly-deploy.sh is missing", () => {
-    // Empty tmpdir — no fly-deploy.sh. The wrapper must refuse to spawn
-    // (else operators get a confusing bash error about the missing file
-    // instead of a clear "run deploy init first" hint).
-    const spawn = fakeSpawn({});
-    const code = applyFly(outDir, spawn);
-    expect(code).toBe(1);
-    // Must NOT have attempted to spawn bash when the script is absent.
-    expect(spawn).not.toHaveBeenCalled();
-  });
-
-  it("spawns bash with fly-deploy.sh path and propagates exit code", () => {
-    writeFileSync(join(outDir, "fly-deploy.sh"), "#!/usr/bin/env bash\nexit 0\n");
-    const spawn = fakeSpawn({ status: 0 });
-
-    const code = applyFly(outDir, spawn);
-
-    expect(code).toBe(0);
-    expect(spawn).toHaveBeenCalledOnce();
-    const [cmd, args, opts] = (spawn as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(cmd).toBe("bash");
-    expect(args).toEqual([join(outDir, "fly-deploy.sh")]);
-    // stdio must be "inherit" so operators see build progress live. If this
-    // regressed to "pipe" the operator would see NOTHING until fly-deploy.sh
-    // exits — replicating the Bug B5 buffering problem we just solved.
-    expect(opts).toMatchObject({ cwd: outDir, stdio: "inherit" });
-  });
-
-  it("propagates a non-zero exit code from fly-deploy.sh", () => {
-    writeFileSync(join(outDir, "fly-deploy.sh"), "#!/usr/bin/env bash\nexit 42\n");
-    const spawn = fakeSpawn({ status: 42 });
-
-    // CI wrappers gate on this exit code — if the wrapper always returned 0
-    // regardless of the script's outcome, failed deploys would look green.
-    expect(applyFly(outDir, spawn)).toBe(42);
-  });
-
-  it("returns exit 1 when bash spawn itself errors (e.g. bash not on PATH)", () => {
-    writeFileSync(join(outDir, "fly-deploy.sh"), "#!/usr/bin/env bash\nexit 0\n");
-    const spawn = fakeSpawn({
-      status: null,
-      pid: 0,
-      error: new Error("ENOENT: bash not found"),
-    });
-
-    // Distinguishes "bash could not be spawned" from "bash ran and returned
-    // a non-zero code". Both are exit 1 to the caller today, but a specific
-    // error log helps operators diagnose.
+  it("returns exit 1 when fly.toml is missing", () => {
+    const { spawn, calls } = makeSpawn([]);
     expect(applyFly(outDir, spawn)).toBe(1);
+    // MUST NOT have spawned any fly command — preflight bails first.
+    expect(calls).toHaveLength(0);
+  });
+
+  it("returns exit 1 when flyctl (fly binary) is not on PATH", () => {
+    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    // Simulate `fly version` failing — spawn returns error (ENOENT-like).
+    const { spawn } = makeSpawn([
+      { match: (c) => c.command === "fly" && c.args[0] === "version", response: { error: new Error("ENOENT") } },
+    ]);
+    expect(applyFly(outDir, spawn)).toBe(1);
+  });
+
+  it("returns exit 1 when fly.toml is malformed (no app/region)", () => {
+    writeFileSync(join(outDir, "fly.toml"), "# not a real toml\n");
+    const { spawn } = makeSpawn([
+      { match: (c) => c.command === "fly" && c.args[0] === "version", response: { status: 0 } },
+    ]);
+    expect(applyFly(outDir, spawn)).toBe(1);
+  });
+
+  it("creates deploy/fly/connector.yaml if missing (fly.toml [[files]] block needs it)", () => {
+    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    // Provide happy responses for every fly command so applyFly proceeds
+    // through to the connector.yaml preflight step.
+    const { spawn } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      // apps list — return with the app already existing so we skip creates
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      // postgres attach — already-attached path (idempotent-swallow)
+      { match: (c) => c.args[0] === "postgres" && c.args[1] === "attach", response: { status: 1, stderr: "already exists" } },
+      // secrets list — return with the key already set
+      { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64      abc      2026-07-23\n" } },
+      // volumes list — return with state volume already present
+      { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
+      // fly deploy — succeed
+      { match: (c) => c.args[0] === "deploy", response: { status: 0 } },
+    ]);
+
+    applyFly(outDir, spawn);
+
+    // Post-condition: connector.yaml was auto-created
+    const created = join(outDir, "deploy", "fly", "connector.yaml");
+    expect(existsSync(created)).toBe(true);
+    expect(readFileSync(created, "utf8")).toContain("mcp_servers: []");
+  });
+});
+
+describe("applyFly — happy path", () => {
+  let outDir: string;
+
+  beforeEach(() => {
+    outDir = mkdtempSync(join(tmpdir(), "apply-fly-happy-"));
+    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true });
+    writeFileSync(
+      join(outDir, "deploy", "fly", "connector.yaml"),
+      "mcp_servers: []\npolicy:\n  fail_mode: fail_fast\n",
+    );
+  });
+
+  afterEach(() => {
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("spawns all 5 fly commands in order when nothing exists", () => {
+    const { spawn, calls } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      // Both apps list calls return empty — nothing exists
+      { match: isFlyCmd("apps"), response: { stdout: `[]` } },
+      // secrets list — no keys set yet
+      { match: isFlyCmd("secrets"), response: { stdout: "" } },
+      // volumes list — no volumes yet
+      { match: isFlyCmd("volumes"), response: { stdout: `[]` } },
+      // All mutating commands succeed
+      { match: (c) => c.args.includes("create") || c.args.includes("attach") || c.args.includes("set") || c.args[0] === "deploy", response: { status: 0 } },
+    ]);
+
+    expect(applyFly(outDir, spawn)).toBe(0);
+
+    // Order matters: preflight → apps create → postgres create → postgres
+    // attach → secrets set → volumes create → fly deploy
+    const mutations = calls.filter((c) =>
+      c.args.includes("create") || c.args[1] === "attach" || c.args[1] === "set" || c.args[0] === "deploy"
+    );
+    expect(mutations[0].args).toEqual(["apps", "create", "twilio-tool-sdk"]);
+    expect(mutations[1].args.slice(0, 4)).toEqual(["postgres", "create", "--name", "twilio-tool-sdk-db"]);
+    expect(mutations[2].args.slice(0, 3)).toEqual(["postgres", "attach", "twilio-tool-sdk-db"]);
+    expect(mutations[3].args[0]).toBe("secrets");
+    expect(mutations[3].args[1]).toBe("set");
+    expect(mutations[4].args.slice(0, 3)).toEqual(["volumes", "create", "state"]);
+    expect(mutations[5].args).toEqual(["deploy"]);
+  });
+
+  it("attaches Postgres with --variable-name POSTGRES_URL (Bug B3)", () => {
+    // The connector's env reader looks for POSTGRES_URL specifically —
+    // Fly's default variable name (DATABASE_URL) would silently break boot
+    // even though Postgres is attached. Pin the flag as an active argument.
+    const { spawn, calls } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      { match: isFlyCmd("apps"), response: { stdout: `[]` } },
+      { match: isFlyCmd("secrets"), response: { stdout: "" } },
+      { match: isFlyCmd("volumes"), response: { stdout: `[]` } },
+    ]);
+
+    applyFly(outDir, spawn);
+
+    const attach = calls.find((c) => c.args[0] === "postgres" && c.args[1] === "attach");
+    expect(attach).toBeDefined();
+    expect(attach!.args).toContain("--variable-name");
+    expect(attach!.args[attach!.args.indexOf("--variable-name") + 1]).toBe("POSTGRES_URL");
+  });
+
+  it("mints a 32-byte base64 key when CONNECTOR_KEY_B64 is not set", () => {
+    const { spawn, calls } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      { match: isFlyCmd("apps"), response: { stdout: `[]` } },
+      { match: isFlyCmd("secrets"), response: { stdout: "" } },
+      { match: isFlyCmd("volumes"), response: { stdout: `[]` } },
+    ]);
+    applyFly(outDir, spawn);
+
+    const setKey = calls.find((c) => c.args[0] === "secrets" && c.args[1] === "set");
+    expect(setKey).toBeDefined();
+    const keyArg = setKey!.args.find((a) => a.startsWith("CONNECTOR_KEY_B64="));
+    expect(keyArg).toBeDefined();
+    // Base64 of 32 raw bytes → 44 chars (32*4/3 rounded up, padded to /4).
+    const value = keyArg!.slice("CONNECTOR_KEY_B64=".length);
+    expect(value.length).toBe(44);
+    // Base64 alphabet + padding
+    expect(value).toMatch(/^[A-Za-z0-9+/=]+$/);
+  });
+});
+
+describe("applyFly — idempotency", () => {
+  let outDir: string;
+
+  beforeEach(() => {
+    outDir = mkdtempSync(join(tmpdir(), "apply-fly-idem-"));
+    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true });
+    writeFileSync(join(outDir, "deploy", "fly", "connector.yaml"), "mcp_servers: []\n");
+  });
+
+  afterEach(() => {
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("skips create-app when the app already exists", () => {
+    const { spawn, calls } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      // App already exists in the list
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64  x\n" } },
+      { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
+    ]);
+
+    applyFly(outDir, spawn);
+
+    // No `apps create` invocation
+    expect(calls.find((c) => c.args[0] === "apps" && c.args[1] === "create")).toBeUndefined();
+    // No `postgres create` invocation
+    expect(calls.find((c) => c.args[0] === "postgres" && c.args[1] === "create")).toBeUndefined();
+    // No `secrets set` invocation
+    expect(calls.find((c) => c.args[0] === "secrets" && c.args[1] === "set")).toBeUndefined();
+    // No `volumes create` invocation
+    expect(calls.find((c) => c.args[0] === "volumes" && c.args[1] === "create")).toBeUndefined();
+    // But `fly deploy` STILL runs — that's the point of re-run.
+    expect(calls.find((c) => c.args[0] === "deploy")).toBeDefined();
+  });
+
+  it("swallows 'already exists' on postgres attach and continues", () => {
+    // Postgres attach is not idempotent — re-run when already attached
+    // returns non-zero with "already exists" on stderr. The wrapper must
+    // treat that as a soft skip, not a hard failure.
+    const { spawn, calls } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: (c) => c.args[0] === "postgres" && c.args[1] === "attach", response: { status: 1, stderr: "postgres_attachments already exists" } },
+      { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64  x\n" } },
+      { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
+    ]);
+
+    // Continues past attach failure → runs deploy → exit 0.
+    expect(applyFly(outDir, spawn)).toBe(0);
+    expect(calls.find((c) => c.args[0] === "deploy")).toBeDefined();
+  });
+
+  it("fails hard if postgres attach fails with an unrecognized error", () => {
+    const { spawn } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: (c) => c.args[0] === "postgres" && c.args[1] === "attach", response: { status: 1, stderr: "Error: connection refused" } },
+    ]);
+    // Any error other than "already exists" is a real failure — don't
+    // silently proceed with a broken Postgres connection.
+    expect(applyFly(outDir, spawn)).toBe(1);
+  });
+});
+
+describe("applyFly — deploy failure propagation", () => {
+  let outDir: string;
+
+  beforeEach(() => {
+    outDir = mkdtempSync(join(tmpdir(), "apply-fly-fail-"));
+    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true });
+    writeFileSync(join(outDir, "deploy", "fly", "connector.yaml"), "mcp_servers: []\n");
+  });
+
+  afterEach(() => {
+    rmSync(outDir, { recursive: true, force: true });
+  });
+
+  it("propagates a non-zero exit code from fly deploy", () => {
+    // CI wrappers gate on this. If the wrapper always returned 0 regardless
+    // of the actual deploy outcome, failed deploys would look green.
+    const { spawn } = makeSpawn([
+      { match: isFlyCmd("version"), response: { status: 0 } },
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64  x\n" } },
+      { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
+      { match: (c) => c.args[0] === "deploy", response: { status: 42 } },
+    ]);
+    expect(applyFly(outDir, spawn)).toBe(42);
   });
 });
 
