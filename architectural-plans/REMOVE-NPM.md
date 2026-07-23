@@ -1,6 +1,8 @@
 # Pivot away from the NPM-package delivery model
 
-> **Status: TODO.** Drafted 2026-07-23. The `packages/connector` package.json has been publish-ready since day one (`bin`, `exports`, `files`, `name` all wired; only `"private": true` blocks publish). This plan retires the "customer imports the npm package into their existing Node service" story and commits fully to the container/k8s drop-in shape, offering customers **two first-class delivery paths**: derived image and volume mount.
+> **Status: completed 2026-07-23.** All 5 commits landed on `cleanup/remove-npm` and were merged to `main` via `git merge --no-ff`. Live-fire verification (commits 4 + 5) succeeded against the Fly.io controller at `https://twilio-conversation-agent-web.fly.dev` — both throwaway apps destroyed. Feature branch retained per project convention.
+>
+> Drafted 2026-07-23. The `packages/connector` package.json has been publish-ready since day one (`bin`, `exports`, `files`, `name` all wired; only `"private": true` blocks publish). This plan retires the "customer imports the npm package into their existing Node service" story and commits fully to the container/k8s drop-in shape, offering customers **two first-class delivery paths**: derived image and volume mount.
 
 ## Background & rationale (what this plan is about)
 

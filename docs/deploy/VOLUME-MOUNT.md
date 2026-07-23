@@ -279,7 +279,157 @@ rationale.
 
 ## Verified example
 
-A live-fire example against a real Fly deployment lives at the bottom
-of this file.
+Live-fired against Fly.io on 2026-07-23 with the exact commands below.
+Boots empty, W-L2 rescan picks up `hello-volume` after upload, second
+rescan picks up `world-late` — no machine restart, no redeploy.
 
-<!-- Verified example inserted by commit 5 of REMOVE-NPM.md -->
+### Directory layout
+
+```
+test/deploy/volume-mount/            # gitignored
+├── connector.yaml                   # tunnel: block + empty mcp_servers + policy
+├── fly.toml                         # env-mode, volume at drop-in path
+├── hello-volume/                    # uploaded first
+│   └── tools/
+│       └── hello.ts
+└── world-late/                      # uploaded after boot to prove hot rescan
+    └── tools/
+        └── world.ts
+```
+
+### fly.toml (relevant excerpts)
+
+```toml
+app = "mcp-shim-volume-test"
+primary_region = "iad"
+
+[env]
+  CONNECTOR_CREDS_SOURCE = "env"
+  CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
+  INSPECTOR_PORT = "9090"
+  INSPECTOR_BIND_ADDR = "::"
+
+# Mount the volume AT the drop-in path — this is the whole point.
+[[mounts]]
+  source = "customer_mcps"
+  destination = "/var/lib/mcp-connector/customer-mcps"
+
+[[files]]
+  guest_path = "/etc/mcp-connector/config.yaml"
+  local_path = "connector.yaml"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+
+[deploy]
+  strategy = "immediate"
+```
+
+### Deploy
+
+```bash
+# 1. Base image (from this repo's root)
+IMAGE=mcp-connector:local-npm-pivot PLATFORMS=linux/amd64 ./scripts/build-image.sh
+
+# 2. Fly app + secrets + volume
+cd test/deploy/volume-mount
+fly apps create mcp-shim-volume-test --org personal
+fly secrets set \
+  CONNECTOR_CREDS_SOURCE=env \
+  CONTROLLER_URL="$CONTROLLER_URL" \
+  CONNECTOR_NAME=mcp-shim-volume-test \
+  TUNNEL_AUTH_TOKEN="$TUNNEL_AUTH_TOKEN" \
+  -a mcp-shim-volume-test
+fly volumes create customer_mcps --size 1 --region iad -a mcp-shim-volume-test -y
+
+# 3. Deploy the base image (no derived layer — customer MCPs land via volume)
+fly deploy --local-only --image mcp-connector:local-npm-pivot -a mcp-shim-volume-test
+```
+
+Boot log shows 0 MCPs (volume is empty), tunnel connected, register-ack OK.
+
+### Upload first MCP (hello-volume)
+
+Fly's SFTP shim doesn't support recursive `put` or `mkdir`, so pre-create
+the target directory with a one-shot SSH command, then upload each file.
+
+```bash
+fly ssh console -a mcp-shim-volume-test \
+  -C 'mkdir -p /var/lib/mcp-connector/customer-mcps/hello-volume/tools'
+
+fly ssh sftp shell -a mcp-shim-volume-test <<'EOF'
+put hello-volume/tools/hello.ts /var/lib/mcp-connector/customer-mcps/hello-volume/tools/hello.ts
+EOF
+```
+
+### Trigger W-L2 rescan
+
+Two equivalent triggers — pick whichever fits your workflow.
+
+**Option A — Controller UI.** Connector detail → MCPs tab → **Refresh
+local MCPs**. Sends a `local-mcps-rescan` frame down the tunnel.
+
+**Option B — Inspector loopback via `fly proxy`.** No controller round-
+trip. This is what the tests below use.
+
+```bash
+fly proxy 9090:9090 -a mcp-shim-volume-test &
+curl -sS -X POST http://localhost:9090/mcp/rescan-local
+# → {"ok":true,"added":[{"name":"hello-volume","toolsCount":0}],"removed":[],"unchanged":[],"errors":[]}
+```
+
+`toolsCount: 0` at the rescan-response layer is expected — the drop-in
+approval gate withholds the tools from the manifest until the operator
+approves. In the connector logs you'll see the child spawn and the
+`mcp-discovered` frame emit with `toolCount: 1`.
+
+### Upload second MCP (world-late) and rescan hot
+
+```bash
+fly ssh console -a mcp-shim-volume-test \
+  -C 'mkdir -p /var/lib/mcp-connector/customer-mcps/world-late/tools'
+
+fly ssh sftp shell -a mcp-shim-volume-test <<'EOF'
+put world-late/tools/world.ts /var/lib/mcp-connector/customer-mcps/world-late/tools/world.ts
+EOF
+
+curl -sS -X POST http://localhost:9090/mcp/rescan-local
+# → {"ok":true,"added":[{"name":"world-late","toolsCount":0}],"removed":[],"unchanged":["hello-volume"],"errors":[]}
+```
+
+The `unchanged: ["hello-volume"]` field confirms the coordinator
+reconciled correctly against the already-spawned entry.
+
+### Verify from logs
+
+```bash
+fly logs -a mcp-shim-volume-test --no-tail | grep -E \
+  'spawning MCP child|mcp-discovered emitted|local-mcps rescan applied'
+```
+
+Expected sequence (per rescan):
+
+```
+… spawning MCP child … "name":"hello-volume","dropin":true
+… "component":"hello-volume" … "tools":["hello"] … listening
+… mcp-discovered emitted … "mcp":"hello-volume","toolCount":1
+… local-mcps rescan applied … "added":["hello-volume"]
+
+… spawning MCP child … "name":"world-late","dropin":true
+… "component":"world-late" … "tools":["world"] … listening
+… mcp-discovered emitted … "mcp":"world-late","toolCount":1
+… local-mcps rescan applied … "added":["world-late"] … "unchanged":["hello-volume"]
+```
+
+Both children keep running; no machine restart between uploads.
+
+### Cleanup
+
+```bash
+fly apps destroy mcp-shim-volume-test -y
+```
+
+The volume goes with the app.
+
