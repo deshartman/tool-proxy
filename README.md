@@ -4,6 +4,25 @@ A customer-side **MCP connector**: dials out to a controller URL via WSS, advert
 
 The controller is **outside this repo**. This repo is the customer side only.
 
+## Choose your delivery path
+
+Customers consume the connector as an OCI image and drop their own Type 1 MCPs into a well-known path inside the container. Two supported patterns land at the same path, use the same discovery code, and reach the same running connector — pick by ergonomics:
+
+| | Derived image | Volume mount |
+|---|---|---|
+| Ergonomics | Rebuild image to add an MCP | Edit file, click Refresh |
+| Best fit | Enterprise, image-signing shops, prod runbooks | Dev, staging, small teams |
+| Hot rescan | No (rebuild required) | Yes (W-L2 refresh) |
+| Version pinning | Image tag is authoritative | Tag + mount contents can diverge |
+| Fly.io friendliness | Simple | Volume/multi-region friction |
+| K8s friendliness | Simple | ConfigMap / PVC native |
+
+Walkthroughs:
+- [**Derived image**](docs/deploy/DERIVED-IMAGE.md) — `FROM twilio/mcp-connector:1.0` + `COPY ./my-mcps/ /var/lib/mcp-connector/customer-mcps/`, push your image, retarget your manifests.
+- [**Volume mount**](docs/deploy/VOLUME-MOUNT.md) — bind-mount a host directory / K8s PVC / Fly volume / AWS EFS / Azure Files at the same path.
+
+There is no "customer runs `npm install` on their own Node server" path — the connector is a daemon, not a library.
+
 ## Three ways to wire up an MCP
 
 The connector understands three integration patterns. Type 1 and Type 3 are configured in `connector.yaml`; Type 2 is configured in the **controller UI** and pushed to the connector over the WSS tunnel.

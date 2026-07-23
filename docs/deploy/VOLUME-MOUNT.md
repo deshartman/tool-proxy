@@ -1,0 +1,285 @@
+# Delivery path: volume mount
+
+One of two supported ways to ship customer-authored **Type 1** MCPs into a
+running connector. Sibling doc: [DERIVED-IMAGE.md](./DERIVED-IMAGE.md).
+
+## When to use
+
+- You want to add or edit a Type 1 MCP without rebuilding the container
+  image.
+- Dev / staging environments where the edit-and-refresh loop matters.
+- You want the controller's **Refresh local MCPs** button (W-L2 hot
+  rescan) to actually surface new MCPs live.
+- You're already provisioning persistent storage (PVCs / Fly volumes /
+  EFS) for other reasons and adding one more mount is cheap.
+
+Not the right fit when reproducibility matters more than iteration
+speed — use [DERIVED-IMAGE.md](./DERIVED-IMAGE.md) for that.
+
+## The mount point
+
+`/var/lib/mcp-connector/customer-mcps/` — this is `PROD_DEFAULT` in
+[`src/dropin.ts`](../../packages/connector/src/dropin.ts). Each
+subdirectory is one MCP; the folder name is the server name.
+
+The connector's drop-in scanner (`discoverDropins`) walks this path at
+boot and again on every `local-mcps-rescan` frame. No branching by
+delivery path — a derived-image `COPY` and a bind-mount hit the same
+code.
+
+## Per-platform recipes
+
+### Kubernetes — ConfigMap projection (small MCPs)
+
+Good for a handful of `.ts` files with no third-party deps.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: customer-mcps
+data:
+  hello-tools-hello.ts: |
+    import { z } from "zod";
+    import type { Tool } from "@mcp-shim/connector/sdk";
+    const hello: Tool = { /* ... */ };
+    export default hello;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-connector
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: connector
+          image: twilio/mcp-connector:1.0
+          volumeMounts:
+            - name: customer-mcps
+              mountPath: /var/lib/mcp-connector/customer-mcps
+              readOnly: true
+      volumes:
+        - name: customer-mcps
+          configMap:
+            name: customer-mcps
+            items:
+              - key: hello-tools-hello.ts
+                path: hello/tools/hello.ts
+```
+
+The `items[].path` mapping is how you materialize a
+`<mcp-name>/tools/<tool>.ts` tree from a flat ConfigMap. Re-apply the
+ConfigMap and the volume re-projects on the next kubelet sync — click
+**Refresh local MCPs** in the controller UI to pick up the change
+without a pod restart.
+
+Limits: ConfigMap size cap is 1 MiB per resource, no `node_modules`,
+projected files are read-only.
+
+### Kubernetes — PersistentVolumeClaim (deps + iteration)
+
+Good when Type 1 MCPs need their own `node_modules` or when you want a
+long-lived writable staging area.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: customer-mcps
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+Mount at the same path:
+
+```yaml
+      volumes:
+        - name: customer-mcps
+          persistentVolumeClaim:
+            claimName: customer-mcps
+```
+
+Populate the volume via an initContainer that pulls from git / a
+tarball / an object store, or via a sidecar job that periodically
+rsyncs from a source of truth. Common shapes:
+
+- **Git-clone initContainer** — clones your customer-mcps repo into the
+  volume before the connector container starts.
+- **rsync sidecar** — periodic pull loop against S3 / GCS.
+- **Manual `kubectl cp`** — quickest for staging, not for prod.
+
+### Kubernetes — emptyDir + initContainer (immutable per pod)
+
+If you don't want persistence but do want deps, an initContainer that
+tarball-extracts into an `emptyDir` at pod-start is the simplest shape:
+
+```yaml
+      initContainers:
+        - name: fetch-mcps
+          image: curlimages/curl:8.5.0
+          command:
+            - sh
+            - -c
+            - |
+              curl -fsSL https://internal.example.com/customer-mcps.tar.gz \
+                | tar -xzf - -C /var/lib/mcp-connector/customer-mcps
+          volumeMounts:
+            - name: customer-mcps
+              mountPath: /var/lib/mcp-connector/customer-mcps
+      volumes:
+        - name: customer-mcps
+          emptyDir: {}
+```
+
+Refresh requires a pod restart in this shape (the initContainer only
+runs at pod-start).
+
+### Fly.io
+
+Use a Fly volume attached to the machine. Note that Fly volumes are
+per-machine — the multi-region story is friction-heavy, and for teams
+running the connector across regions the [derived-image
+path](./DERIVED-IMAGE.md) is usually simpler on Fly specifically.
+
+```toml
+# fly.toml
+[[mounts]]
+  source = "customer_mcps"
+  destination = "/var/lib/mcp-connector/customer-mcps"
+```
+
+Provision + populate:
+
+```bash
+fly volumes create customer_mcps --size 1 --region <region> -a <app>
+fly deploy -a <app>
+fly ssh sftp shell -a <app>
+# put -r my-mcps /var/lib/mcp-connector/customer-mcps
+```
+
+After every SFTP change, click **Refresh local MCPs** in the controller
+UI to trigger a W-L2 rescan.
+
+### AWS Fargate — EFS
+
+Bind-mount an EFS file system into the task via
+`volumes[].efsVolumeConfiguration`:
+
+```json
+{
+  "volumes": [{
+    "name": "customer-mcps",
+    "efsVolumeConfiguration": {
+      "fileSystemId": "fs-01234567",
+      "rootDirectory": "/customer-mcps"
+    }
+  }],
+  "containerDefinitions": [{
+    "name": "connector",
+    "image": "twilio/mcp-connector:1.0",
+    "mountPoints": [{
+      "sourceVolume": "customer-mcps",
+      "containerPath": "/var/lib/mcp-connector/customer-mcps",
+      "readOnly": true
+    }]
+  }]
+}
+```
+
+Prerequisites: an EFS file system with a mount target in each subnet the
+Fargate task can reach, plus a security group opening NFS (TCP 2049) from
+the task's SG to the EFS mount target's SG. Populate EFS by mounting it
+on an EC2 bastion or via DataSync.
+
+### Azure Container Apps — Azure Files
+
+Attach an Azure Files share to the environment, then mount it in the app:
+
+```yaml
+properties:
+  configuration:
+    ingress: { external: false }   # inspector is loopback-only
+  template:
+    containers:
+      - image: twilio/mcp-connector:1.0
+        volumeMounts:
+          - volumeName: customer-mcps
+            mountPath: /var/lib/mcp-connector/customer-mcps
+    volumes:
+      - name: customer-mcps
+        storageType: AzureFile
+        storageName: my-mcps-share   # matches the env-level storage entry
+```
+
+Populate via `az storage file upload-batch` against the Azure Files
+share; refresh via the controller's **Refresh local MCPs** button.
+
+### docker-compose (single VM)
+
+Simplest recipe — bind-mount a host directory:
+
+```yaml
+services:
+  connector:
+    image: twilio/mcp-connector:1.0
+    volumes:
+      - ./mcp/local:/var/lib/mcp-connector/customer-mcps:ro
+    ports:
+      - "127.0.0.1:9090:9090"   # inspector loopback-only, do NOT bridge to 0.0.0.0
+```
+
+Edit files under `./mcp/local` on the host, click **Refresh local MCPs**
+in the controller UI, tools appear live. This is the fastest iteration
+loop of any deployment target.
+
+## Verifying the mount worked
+
+```bash
+# Kubernetes
+kubectl exec deploy/mcp-connector -- ls /var/lib/mcp-connector/customer-mcps
+
+# Fly
+fly ssh console -a <app> -C 'ls /var/lib/mcp-connector/customer-mcps'
+
+# docker-compose
+docker compose exec connector ls /var/lib/mcp-connector/customer-mcps
+
+# Fargate — one-shot task with the same image + volume, or check via
+# Session Manager on a bastion that mounts the same EFS path.
+```
+
+After confirming the directory has your MCP folder(s), click **Refresh
+local MCPs** in the controller UI (Connector detail → MCPs tab). The
+frame flows down the tunnel, the connector re-runs its drop-in scanner,
+and any new / removed / renamed folders reconcile against the running
+supervisor. Approval-gated per CLAUDE.md's "Customer drop-ins gated by
+controller approval" invariant — the operator has to click Approve on
+each newly-discovered MCP before its tools land on the manifest.
+
+## Interaction with W-L2 rescan
+
+This is where the volume-mount path earns its keep. Two triggers:
+
+- **Controller UI** — Connector detail → MCPs tab → **Refresh local
+  MCPs**. Emits a `local-mcps-rescan` frame; connector re-runs
+  `discoverDropins`; manifest changes ride the existing `manifest-delta`
+  path.
+- **Inspector loopback** — <http://localhost:9090/> → **MCP Status**
+  panel → **Refresh local MCPs**. Same coordinator method, no controller
+  round-trip. Useful when iterating locally.
+
+Operator-driven only — there is no filesystem watcher. See
+`packages/connector/README.md` §"Refresh without a restart" for the
+rationale.
+
+## Verified example
+
+A live-fire example against a real Fly deployment lives at the bottom
+of this file.
+
+<!-- Verified example inserted by commit 5 of REMOVE-NPM.md -->
