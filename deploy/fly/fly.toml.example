@@ -9,7 +9,10 @@
 #
 # See architectural-plans/CODE-DEPLOY.md §B1 for the full analysis. The
 # scaffold CLI (`mcp-connector deploy init --target fly`) writes to
-# `.` by default for this reason.
+# `.` by default for this reason. To then actually deploy, use
+# `mcp-connector deploy apply --target fly` (creates the app, attaches
+# Postgres, mints the master key, provisions the state volume, and runs
+# `fly deploy` — idempotent, safe to re-run).
 #
 # ── Load-bearing invariants ────────────────────────────────────────────
 # Do NOT relax these without reading architectural-plans/CODE-DEPLOY.md.

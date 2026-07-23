@@ -6,6 +6,24 @@
 >
 > **Status: implemented (2026-07-23).** All five design decisions (D1–D5) resolved. S1–S5 shipped. Live Fly deploy verified: connector + Fly Postgres + state volume + inspector reachable via `fly proxy`. **EK bundle NOT deployed** — deliberately out of scope; the Fly.io deploy target proves the connector's deploy shape works, EK on Fly is its own workstream (needs Ollama sidecar + pgvector Postgres). See §"Lessons learned" for every latent bug this exercise surfaced.
 >
+> **Post-merge CLI evolution (`feature/fly-scaffold-app-name`, 2026-07-23).**
+> Live operator testing exposed two UX problems: (1) `deploy scaffold` was
+> internal jargon leaking into the operator surface, (2) the emitted
+> `fly-deploy.sh` bash script was doing the actual deploy while the CLI
+> had no equivalent verb — two invocation surfaces for the same action.
+> Fixed by:
+> - Renaming the verb to `deploy init` and adding a paired `deploy apply`
+>   (matches `terraform init` / `apply`, git sub-verb pattern).
+> - Rewriting apply.ts to spawn Fly's CLI directly in Node — five commands
+>   with idempotency guards. Bash scripts (`fly-deploy.sh`,
+>   `fly-secrets-hint.sh`) removed from the scaffold output.
+> - `deploy init --target fly` now emits ONLY `fly.toml`. The customer
+>   flow is exactly two commands: `deploy init` then `deploy apply`.
+>
+> Other targets (fargate/gke/aca/compose) still emit manifests only; apply
+> is Fly-only today. Commits: `0c486df` (namespace + --app-name), `931e5c0`
+> (deploy apply wrapping bash), `14c0f07` (native-Node consolidation).
+>
 > **Self-describing.** A fresh-context Claude should be able to read this file + [CLAUDE.md](../CLAUDE.md) + [docs/deploy/README.md](../docs/deploy/README.md) and start work. No hidden context; every subtle interaction with a load-bearing property is called out inline.
 
 ## 1. Context — why Fly.io is a natural fit

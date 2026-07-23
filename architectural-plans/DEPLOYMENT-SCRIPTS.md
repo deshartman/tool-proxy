@@ -4,6 +4,25 @@ Status: completed 2026-07-22
 Started: 2026-07-22
 Branch: `feature/deployment-scripts`
 
+> **Post-completion evolution (2026-07-23).** This plan shipped the original
+> `mcp-connector deploy scaffold --target <t>` verb. Live testing on Fly
+> exposed two rough edges: (1) "scaffold" was internal jargon leaking into
+> operator UX, and (2) the emitted `fly-deploy.sh` bash script existed
+> alongside `deploy scaffold` with no CLI verb that actually deployed. Both
+> were resolved on `feature/fly-scaffold-app-name`:
+>
+> - Verb renamed to `deploy init` (paperwork) with a paired `deploy apply`
+>   (action) — matches `terraform init` / `terraform apply` and git's
+>   sub-verb pattern. See [CODE-DEPLOY.md §12](CODE-DEPLOY.md) for the
+>   retrospective and commits `0c486df`, `931e5c0`, `14c0f07` for the
+>   implementation.
+> - `deploy apply --target fly` now spawns Fly's CLI directly in Node
+>   (five commands with idempotency guards). `fly-deploy.sh` +
+>   `fly-secrets-hint.sh` were removed — `deploy init --target fly` writes
+>   only `fly.toml`, and everything else lives in the CLI verb. Other
+>   targets (fargate/gke/aca/compose) still emit manifests only; apply is
+>   Fly-only today.
+
 ## Motivation
 
 The dev-onboarding path is script-driven (`./scripts/start-connector.sh` boots
