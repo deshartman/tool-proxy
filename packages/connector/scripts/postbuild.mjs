@@ -4,16 +4,18 @@
 //      run directly as the `mcp-connector` bin. tsc strips/ignores shebangs
 //      in source, so we patch the compiled output.
 //   2. Copy the repo-root template files (`.env.example`,
-//      `connector.yaml.example`) into `packages/connector/` so they ship in
-//      the npm tarball via the `files:` allowlist. Source-of-truth lives at
-//      the repo root (dev's view — next to the live `.env` / `connector.yaml`
-//      they edit); this step propagates them to the package before publish.
-//      The `packages/connector/` copies are gitignored build artifacts.
+//      `connector.yaml.example`) into `packages/connector/` so they land
+//      in the runtime image via the `files:` allowlist. Source-of-truth
+//      lives at the repo root (dev's view — next to the live `.env` /
+//      `connector.yaml` they edit); this step propagates them to the
+//      package before the Dockerfile copies `packages/connector/` into
+//      the runtime layer. The `packages/connector/` copies are gitignored
+//      build artifacts.
 //
-// This runs after `tsc -b`. `npm pack` / `npm publish` see the copies in
-// place. Customers post-`npm i` find them at `node_modules/@mcp-shim/
-// connector/{.env,connector.yaml}.example`, which is what `findShippedEnvExample`
-// resolves via `import.meta.url`.
+// This runs after `tsc -b`. Inside the container, the templates live at
+// `/app/packages/connector/{.env,connector.yaml}.example` — which is
+// what `findShippedEnvExample` resolves via `import.meta.url` when
+// `mcp-connector init` runs (e.g. via `docker exec` or `fly ssh console`).
 import { readFileSync, writeFileSync, chmodSync, copyFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";

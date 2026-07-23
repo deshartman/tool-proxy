@@ -82,3 +82,10 @@ graphify-out/*
 .ollama-cache/
 
 .local/
+
+# Live-deploy scratch space for REMOVE-NPM commits 4 + 5. Holds
+# throwaway Dockerfiles / fly.tomls / sample MCPs used to verify the
+# derived-image and volume-mount paths against a real Fly controller.
+# Verified commands land in docs/deploy/{DERIVED-IMAGE,VOLUME-MOUNT}.md
+# as "Verified example" sections, not as tracked test fixtures.
+test/deploy/

@@ -87,10 +87,10 @@ then writes the YAML.
     const yamlText = renderYaml(controllerUrl, name, servers, dirname(outputPath));
     writeFileSync(outputPath, yamlText, "utf8");
 
-    // Scaffold .env next to the yaml, copying the shipped .env.example (so a
-    // customer running `npx mcp-connector init` gets a real template to edit
-    // without having to hunt inside node_modules/). Skip if .env already
-    // exists — we don't overwrite the customer's edits.
+    // Scaffold .env next to the yaml, copying the shipped .env.example (so
+    // a customer running `mcp-connector init` inside the container gets a
+    // real template to edit next to their mounted connector.yaml). Skip
+    // if .env already exists — we don't overwrite the customer's edits.
     const envPath = resolve(dirname(outputPath), ".env");
     const envCreated = scaffoldEnv(envPath);
 
@@ -114,10 +114,11 @@ then writes the YAML.
 // Resolve the shipped .env.example. Two locations, tried in order:
 //   1. `../.env.example` (sibling of `dist/`) — the ship location. Where
 //      `packages/connector/.env.example` sits after postbuild, and where
-//      `node_modules/@mcp-shim/connector/.env.example` sits post-publish.
+//      `/app/packages/connector/.env.example` sits in the runtime image.
 //   2. `../../../.env.example` (repo root) — the source-of-truth. Dev
-//      pre-postbuild only; a customer would never hit this because their
-//      package tree has no such ancestor.
+//      pre-postbuild only; a customer running inside the OCI image would
+//      never hit this because the image doesn't carry the repo root above
+//      `/app/packages/`.
 // The fallback exists so tests can run without a preceding `npm run build`.
 export function findShippedEnvExample(
   moduleUrl: string = import.meta.url
