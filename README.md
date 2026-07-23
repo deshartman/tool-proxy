@@ -82,10 +82,11 @@ Click Save. The controller shows the minted credentials once — copy.
 npm install
 npm run build
 
-# Connector-level config lives at the repo root — same shape a customer
-# gets post `npm i @mcp-shim/connector`. Templates live here too as the
-# tracked source-of-truth; postbuild.mjs copies them into
-# packages/connector/ so they ship in the npm tarball.
+# Connector-level config lives at the repo root — the connector reads
+# .env and connector.yaml from CWD. Templates live here as the tracked
+# source-of-truth; postbuild.mjs copies them into packages/connector/ so
+# they ship in the runtime image (where `mcp-connector init`, run inside
+# the container, copies them out to the customer's mounted config path).
 cp connector.yaml.example connector.yaml
 cp .env.example .env
 # edit .env. Always:

@@ -17,7 +17,7 @@ __pycache__/
 
 # Env files. Never commit; templates are *.env.example (source-of-truth at
 # the repo root; postbuild.mjs copies them into packages/connector/ so they
-# ship in the npm tarball).
+# ship in the runtime image).
 .env
 *.env.*
 !.env.example
@@ -26,9 +26,9 @@ __pycache__/
 .DS_Store
 
 # Connector live config — customer-authored copy of connector.yaml.example.
-# Lives at the repo root (dev) or the customer's project root (post `npm i`);
-# resolved from CWD by the connector. Gitignored; only the *.example template
-# ships.
+# Lives at the repo root (dev) or the container's mounted config path
+# (production); resolved from CWD by the connector. Gitignored; only the
+# *.example template ships.
 **/connector.yaml
 !**/connector.yaml.example
 
