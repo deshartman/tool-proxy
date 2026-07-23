@@ -427,6 +427,34 @@ All primary decisions (D1–D5 + Meta) resolved on 2026-07-22 — see the "Decis
 
 The core deploy plan (D1–D5) needed zero revision. What we didn't expect: nine latent bugs surfaced only by actually building and running the OCI image. Every one traces back to the same pattern — **"the local `npm run build` from the working tree resolves files or dependencies from the surrounding tree; the isolated Docker/Fly build context does not"**. Same class as [ENV-TO-DB.md](ENV-TO-DB.md)'s post-Step-12 discoveries: real-run pass surfaces stuff analysis can't. All fixed on `feature/fly-deploy`.
 
+### Fix summary — what changed and where
+
+Each row here is a bug surfaced by the deploy exercise, with the commit that fixed it and the file(s) touched. A dev picking this branch up can jump directly to any fix by SHA.
+
+| Bug | Symptom | Fix | Commit | Files |
+|---|---|---|---|---|
+| **A1** | `npm run build` → `ENOENT: /repo/.env.example` inside container | Dockerfile COPYs `.env.example` + `connector.yaml.example` from repo root before `npm run build` | [`b7a74f7`](https://github.com/twilio-internal/AgenticProcedure/commit/b7a74f7) | [`packages/connector/Dockerfile`](../packages/connector/Dockerfile) |
+| **A2** | `Cannot find package 'dotenv'` at container boot | Dockerfile also COPYs the workspace-nested `packages/connector/node_modules` (dotenv didn't hoist to root) | [`b7a74f7`](https://github.com/twilio-internal/AgenticProcedure/commit/b7a74f7) | [`packages/connector/Dockerfile`](../packages/connector/Dockerfile) |
+| **A3** | `CONNECTOR_KEY_FILE is required` at boot, even though the entrypoint wrote it | `ENV CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key` default in Dockerfile (symmetric with CONNECTOR_CONFIG) | [`b7a74f7`](https://github.com/twilio-internal/AgenticProcedure/commit/b7a74f7) | [`packages/connector/Dockerfile`](../packages/connector/Dockerfile) |
+| **B1** | `fly deploy` → `Dockerfile not found` when fly.toml lives at `deploy/fly/` | Scaffold `DEFAULT_OUT.fly = "."`; fly.toml lands at repo root so build context matches Dockerfile's `COPY` paths | [`f1408c4`](https://github.com/twilio-internal/AgenticProcedure/commit/f1408c4) | [`src/deploy/scaffold.ts`](../packages/connector/src/deploy/scaffold.ts), [`src/deploy/templates.ts`](../packages/connector/src/deploy/templates.ts) |
+| **B2** | `mcp_servers: Too small: expected array to have >=1 items` — blocks empty yaml | Schema `.min(1)` → `.default(() => [])`; empty array is legit when using only drop-ins / controller-pushed MCPs | [`5952c2f`](https://github.com/twilio-internal/AgenticProcedure/commit/5952c2f) | [`packages/connector/src/config.ts`](../packages/connector/src/config.ts), [`tests/config/empty-mcp-servers.test.ts`](../packages/connector/tests/config/empty-mcp-servers.test.ts) |
+| **B3** | `POSTGRES_URL is required` — Fly's default `DATABASE_URL` doesn't match | Scaffold's `fly-secrets-hint.sh` shows `--variable-name POSTGRES_URL` with a CRITICAL: callout | [`f1408c4`](https://github.com/twilio-internal/AgenticProcedure/commit/f1408c4) | [`src/deploy/templates.ts`](../packages/connector/src/deploy/templates.ts) |
+| **B4** | `fly proxy` returns HTTP 000 — inspector's 127.0.0.1 bind unreachable from Fly mesh | `INSPECTOR_BIND_ADDR` env var, default `127.0.0.1` preserved, Fly `[env]` overrides to `::` | [`24b5b76`](https://github.com/twilio-internal/AgenticProcedure/commit/24b5b76) + [`f1408c4`](https://github.com/twilio-internal/AgenticProcedure/commit/f1408c4) | [`src/inspector/server.ts`](../packages/connector/src/inspector/server.ts), scaffold's fly.toml template |
+| **B5** | `fly deploy` silently buffers stdout when piped — appears to hang | Scaffold hint + walkthrough show `nohup fly deploy > /tmp/fly-deploy.log 2>&1 &` + `tail -f` pattern | [`f1408c4`](https://github.com/twilio-internal/AgenticProcedure/commit/f1408c4) | [`src/deploy/templates.ts`](../packages/connector/src/deploy/templates.ts), [`docs/deploy/fly-io.md`](../docs/deploy/fly-io.md) |
+| **B6** | Fly build context transferring 400+ MB (was 1+ GB heading toward .venv) | `.dockerignore` slim: added `.venv/`, `.ollama-cache/`, Python caches, `mock/`, `graphify-out/`, `architectural-plans/`, `.playwright-mcp/`, `.local-backups/` | [`63c114e`](https://github.com/twilio-internal/AgenticProcedure/commit/63c114e) | [`.dockerignore`](../.dockerignore) |
+
+**Handing off to another dev:** every commit above has a self-contained message explaining the bug, the diagnostic path, and the fix. `git show <sha>` on any of them tells the full story. `git log --oneline main..feature/fly-deploy` gives the whole branch at a glance.
+
+### Fixes to templates + docs (not new bugs — folding lessons back into the surface a fresh customer sees)
+
+- **`INSPECTOR_BIND_ADDR = "::"`** in the scaffold-generated fly.toml [env] block (else Bug B4 recurs on every new deploy). Pinned by test regex.
+- **`--variable-name POSTGRES_URL`** callout in `fly-secrets-hint.sh` (else Bug B3 recurs).
+- **`nohup fly deploy > log` pattern** in the hint script + `docs/deploy/fly-io.md` (else Bug B5 recurs as a scary-looking "hang").
+- **fly.toml at repo root**, not `deploy/fly/`, is now the scaffold's default and documented in `deploy/fly/fly.toml.example`'s opening comment (else Bug B1 recurs).
+- **Footguns section** in `docs/deploy/fly-io.md` now includes "do NOT remove `INSPECTOR_BIND_ADDR = ::`" and "do NOT move fly.toml into a subdirectory" as top-tier rules.
+
+All in [`f1408c4`](https://github.com/twilio-internal/AgenticProcedure/commit/f1408c4).
+
 ### Phase A — local `docker build` + `docker run` (before Fly)
 
 **Bug A1 — `postbuild.mjs` reads from repo root, Dockerfile didn't COPY it.** The postbuild script (`packages/connector/scripts/postbuild.mjs`) copies `.env.example` + `connector.yaml.example` from `<repoRoot>/` into `packages/connector/` so the npm tarball ships them. The Dockerfile COPY'd `packages/connector/` and `tsconfig.base.json` but NOT the two repo-root template files. `npm run build` failed with `ENOENT: /repo/.env.example`. **Fix:** `COPY .env.example connector.yaml.example ./` in the node-build stage before `RUN npm run build`.
