@@ -8,7 +8,7 @@
 >
 > **Self-describing.** A fresh-context Claude should be able to read this file + [CLAUDE.md](../CLAUDE.md) + [docs/deploy/README.md](../docs/deploy/README.md) and start work. No hidden context; every subtle interaction with a load-bearing property is called out inline.
 
-## Context — why Fly.io is a natural fit
+## 1. Context — why Fly.io is a natural fit
 
 The connector's runtime shape maps cleanly onto Fly Machines:
 
@@ -24,7 +24,7 @@ The connector's runtime shape maps cleanly onto Fly Machines:
 
 **Cost frame.** A `shared-cpu-1x/512MB` Machine is ~$3/month idle. With Fly Postgres (dev tier, $0 through free allowance): ~$3–5/month all-in per connector. Cheaper than Fargate/ACA equivalents; comparable to a hand-run VM.
 
-## Env-file inventory (what moves where on Fly)
+## 2. Env-file inventory (what moves where on Fly)
 
 Six `.env` (or `.env.example`) files matter for a Fly deploy. Each has a different destination — some become Fly secrets, some become bundled into a per-app image, some vanish entirely.
 
@@ -41,7 +41,7 @@ Six `.env` (or `.env.example`) files matter for a Fly deploy. Each has a differe
 
 **One thing your current `./.env` gets wrong for Fly.** `POSTGRES_URL=postgres://ek:ek-dev-password@localhost:5433/enterprise_knowledge` is your local Postgres from the enterprise-knowledge dev compose — it collides two databases (mcp_connector schema + EK's pgvector) on the same instance for dev convenience, but `localhost` doesn't resolve inside a Fly Machine. Deployment step 3 replaces this with the Fly Postgres URL. If you later add EK to the same Fly deployment, keep the collision (single Postgres, two schemas) since the connector's `POSTGRES_SCHEMA` isolates them cleanly.
 
-## Load-bearing constraints (Fly-specific recap)
+## 3. Load-bearing constraints (Fly-specific recap)
 
 Every one of these comes from [CLAUDE.md](../CLAUDE.md) §"Architecturally load-bearing properties". Repeating them here because Fly's defaults would silently violate several:
 
@@ -51,7 +51,7 @@ Every one of these comes from [CLAUDE.md](../CLAUDE.md) §"Architecturally load-
 - **`replicas: 1` per `CONNECTOR_NAME`.** The controller's dup-name guard 409s a second Machine registering with the same name. Do NOT template `count = 2` in the Fly `[[processes]]` block. Multi-replica is [DEPLOY-ARCHITECTURE.md](DEPLOY-ARCHITECTURE.md) Stage G work and requires controller-side dispatch changes; it is out of scope here.
 - **Egress to `CONTROLLER_URL` over TLS 443.** Fly allows this by default; if the customer runs Fly's WireGuard-based egress restrictions, add the controller's hostname to their allowlist. Not applicable to standard Fly orgs.
 
-## Design decisions
+## 4. Design decisions
 
 Four choices shape the fly.toml + secrets + volume story. Each has a recommendation but needs explicit sign-off before implementation — the wrong pick here bakes friction into every future deploy.
 
@@ -151,7 +151,7 @@ For a live Fly demo, the mock has to go somewhere. Four options, evaluated again
 - **D5.2** — Does the mock app need its own `/livez` / `/readyz`? It already has `/healthz` returning `ok` — good enough for a Fly `[[http_service.checks]]` block if we decide to expose it publicly.
 - **D5.3** — Do we auto-provision the mock in the connector's `deploy scaffold --target fly`, or is it a separate `mcp-connector deploy scaffold --target fly-mock`? Recommend: separate target — keeps the connector deploy self-contained and lets a real customer skip the mock entirely.
 
-## Hosts and cross-app networking
+## 5. Hosts and cross-app networking
 
 The mock is private per the D5 invariant. The connector reaches it over Fly's private DNS — the same posture an on-prem connector would have reaching a `crm.internal.acme.corp` service behind the customer's firewall.
 
@@ -197,7 +197,7 @@ MOCK_CUSTOMERS_URL=http://mock-customers-<DEMO>.internal:7400
 - **Shared-bearer auth on the mock.** Mock refuses requests without `Authorization: Bearer <token>`; token is a Fly secret on both apps. ~10 lines in `mock/customers/server.ts`. Recommended as future work only if the demo Fly org grows beyond "just these two apps".
 - **Fly Machines Flycast with restricted policies.** More elaborate; overkill for a two-app demo. Not planned.
 
-## Reaching the inspector on Fly
+## 6. Reaching the inspector on Fly
 
 The inspector stays bound to `127.0.0.1:9090` inside the connector Machine — the loopback invariant from [CLAUDE.md](../CLAUDE.md) §"Architecturally load-bearing properties" never bends. On Fly, the operator reaches it via **`fly proxy`**, which opens a WireGuard-tunneled local port on the operator's laptop that forwards to the Machine's loopback.
 
@@ -232,7 +232,7 @@ open http://localhost:9090/
 - Do NOT tunnel via Cloudflare / ngrok / a second overlay network. Fly's own mesh already gives you this; extra hops just add moving parts and a second auth surface to lock down.
 - `fly ssh console -a mcp-connector-<CUSTOMER>` gets you a shell inside the Machine, but you'd then have to `curl 127.0.0.1:9090/api/...` blind — useful for `mcp-connector doctor` runs, not for the UI.
 
-## Recommended concrete shape
+## 7. Recommended concrete shape
 
 Assuming D1(a) + D2(a) + D3(b) + D4(a) — the demo/dev-ready path. The customer graduates D1 to managed Postgres when they hit prod.
 
@@ -371,7 +371,7 @@ Two Fly apps deployed in order — mock first (so its `.internal` DNS is live wh
 
 Verification: `fly ssh console -a mcp-connector-<CUSTOMER> -C "mcp-connector doctor"` returns exit 0; the inspector shows the crm drop-in as "Ready" and issuing a test `get_customer` returns the mocked Alice.
 
-## Step-by-step implementation (if approved)
+## 8. Step-by-step implementation
 
 Ordered by dependency; each step is a discrete PR-sized chunk.
 
@@ -389,7 +389,7 @@ Ordered by dependency; each step is a discrete PR-sized chunk.
 
 **Status.** All 8 steps (S1–S8) shipped on `feature/fly-deploy`. 478 tests pass, live deploy verified (connector runs on Fly, inspector reachable via `fly proxy`). Ready for real tunnel handshake test + merge to `main`.
 
-## Verification
+## 9. Verification
 
 Manual, following the "primary verification is interactive via the inspector UI" rule in [CLAUDE.md](../CLAUDE.md) §"Common commands":
 
@@ -401,7 +401,7 @@ Manual, following the "primary verification is interactive via the inspector UI"
 6. `fly ssh console -C "mcp-connector doctor"` — exit 0, all green.
 7. **MCP Server panel** — Type 1 drop-ins from the image (sample, if any) appear with "Ready" verdicts.
 
-## What we do NOT do (and why)
+## 10. What we do NOT do (and why)
 
 Enumerated because these are the Fly footguns a well-meaning customer will try:
 
@@ -413,7 +413,7 @@ Enumerated because these are the Fly footguns a well-meaning customer will try:
 - **Cross-Fly-org deployment.** The connector and mock MUST live in the same Fly org for `.internal` DNS to resolve. Split-org is technically supported but requires public exposure, which violates the mock's private-only invariant.
 - **Fly Postgres backup as the DR strategy.** Fly Postgres is unmanaged; if the customer graduates to prod, D1 needs to shift to managed. Documented as "when to graduate".
 
-## Open design questions
+## 11. Open design questions
 
 All primary decisions (D1–D5 + Meta) resolved on 2026-07-22 — see the "Decisions locked" block under §"Design decisions". Sub-questions still parked:
 
@@ -423,11 +423,11 @@ All primary decisions (D1–D5 + Meta) resolved on 2026-07-22 — see the "Decis
 - **Future — Postgres graduation.** When a real customer moves to prod, does the walkthrough recommend Neon, Supabase, RDS, or CloudSQL by default? Deferred until we have a first prod customer.
 - **Future — mock stricter than same-org.** Shared-bearer auth on the mock (~10 lines in `mock/customers/server.ts`) if the demo Fly org grows beyond just these two apps. Not planned; noted in §"Hosts and cross-app networking".
 
-## Lessons learned (2026-07-22 → 2026-07-23)
+## 12. Lessons learned (2026-07-22 → 2026-07-23)
 
 The core deploy plan (D1–D5) needed zero revision. What we didn't expect: nine latent bugs surfaced only by actually building and running the OCI image. Every one traces back to the same pattern — **"the local `npm run build` from the working tree resolves files or dependencies from the surrounding tree; the isolated Docker/Fly build context does not"**. Same class as [ENV-TO-DB.md](ENV-TO-DB.md)'s post-Step-12 discoveries: real-run pass surfaces stuff analysis can't. All fixed on `feature/fly-deploy`.
 
-### Fix summary — what changed and where
+### 12.1 Fix summary — what changed and where
 
 Each row here is a bug surfaced by the deploy exercise, with the commit that fixed it and the file(s) touched. A dev picking this branch up can jump directly to any fix by SHA.
 
@@ -445,7 +445,7 @@ Each row here is a bug surfaced by the deploy exercise, with the commit that fix
 
 **Handing off to another dev:** every commit above has a self-contained message explaining the bug, the diagnostic path, and the fix. `git show <sha>` on any of them tells the full story. `git log --oneline main..feature/fly-deploy` gives the whole branch at a glance.
 
-### Fixes to templates + docs (not new bugs — folding lessons back into the surface a fresh customer sees)
+### 12.2 Fixes to templates + docs (not new bugs — folding lessons back into the surface a fresh customer sees)
 
 - **`INSPECTOR_BIND_ADDR = "::"`** in the scaffold-generated fly.toml [env] block (else Bug B4 recurs on every new deploy). Pinned by test regex.
 - **`--variable-name POSTGRES_URL`** callout in `fly-secrets-hint.sh` (else Bug B3 recurs).
@@ -455,7 +455,7 @@ Each row here is a bug surfaced by the deploy exercise, with the commit that fix
 
 All in [`f1408c4`](https://github.com/twilio-internal/AgenticProcedure/commit/f1408c4).
 
-### Phase A — local `docker build` + `docker run` (before Fly)
+### 12.3 Phase A — local `docker build` + `docker run` (before Fly)
 
 **Bug A1 — `postbuild.mjs` reads from repo root, Dockerfile didn't COPY it.** The postbuild script (`packages/connector/scripts/postbuild.mjs`) copies `.env.example` + `connector.yaml.example` from `<repoRoot>/` into `packages/connector/` so the npm tarball ships them. The Dockerfile COPY'd `packages/connector/` and `tsconfig.base.json` but NOT the two repo-root template files. `npm run build` failed with `ENOENT: /repo/.env.example`. **Fix:** `COPY .env.example connector.yaml.example ./` in the node-build stage before `RUN npm run build`.
 
@@ -465,7 +465,7 @@ All in [`f1408c4`](https://github.com/twilio-internal/AgenticProcedure/commit/f1
 
 **Test coverage added:** [`packages/connector/tests/deploy/entrypoint.test.ts`](../packages/connector/tests/deploy/entrypoint.test.ts) — 4 cases pinning both branches (env-set decode + env-unset no-op).
 
-### Phase B — real Fly deploy
+### 12.4 Phase B — real Fly deploy
 
 **Bug B1 — `fly.toml` must live at repo root, not `deploy/fly/`.** Fly's `[build] dockerfile` path is resolved relative to the fly.toml's directory. Even with `fly deploy --config deploy/fly/fly.toml --dockerfile packages/connector/Dockerfile` from the repo root, Fly interpreted the Dockerfile path as `deploy/fly/packages/connector/Dockerfile` (doesn't exist). And Fly has no `--build-context` flag — build context is locked to the fly.toml's directory. Our Dockerfile COPYs `package.json`, `packages/connector/`, `mcp/`, `bundles/` — every one of those requires the repo root as context. **Workaround for this deploy:** moved `fly.toml` to the repo root. **Followup S6 (queued below):** scaffold template needs to emit `fly.toml` at repo root, not `deploy/fly/`.
 
@@ -479,7 +479,7 @@ All in [`f1408c4`](https://github.com/twilio-internal/AgenticProcedure/commit/f1
 
 **Bug B6 — `.dockerignore` was missing every dev-only cache we've added since it was written.** `.venv/` (961 MB), `.ollama-cache/` (262 MB), `graphify-out/`, `.playwright-mcp/`, `.local-backups/`, Python caches (`__pycache__`, `.pytest_cache`, `.egg-info`, `.ruff_cache`, `.mypy_cache`), and `mock/` (dev-only per D5). Build context ballooned to 400+ MB before `.venv` content even started transferring. First deploy on a fresh Fly builder took 5+ minutes just to send the context. **Fix:** slimmed [`.dockerignore`](../.dockerignore) — the missing patterns are documented at the additions. Rule: whenever `.gitignore` grows to exclude a new dev artifact directory, `.dockerignore` should grow with it.
 
-### Phase B addendum — real tunnel handshake + approval-gate validation
+### 12.5 Phase B addendum — real tunnel handshake + approval-gate validation
 
 After adding `MCP_DROPIN_DIR = /app/mcp/local` to the Fly env (so the shipped
 `mcp/local/sample/`, `agentic-memory/`, and `crm/` drop-ins get auto-discovered),
@@ -512,7 +512,7 @@ cold start (if the controller scales to zero). Not fixable connector-side, but
 scale-to-zero, connectors will see reconnect storms during controller cold
 starts. Pin `min_machines_running = 1` on the controller to avoid this.
 
-### Meta-lesson
+### 12.6 Meta-lesson
 
 **Every one of these nine bugs was invisible to local `npm test`, `npm run build`, and even a targeted `docker build` from the working tree.** The classes that trip an isolated build:
 
@@ -524,7 +524,7 @@ starts. Pin `min_machines_running = 1` on the controller to avoid this.
 
 Recommend adding a CI step that does `docker build` + `docker run <img> doctor` (or the closest equivalent). Build-only CI catches Bug A1 but not A2, A3, B2, B4. A real image run catches everything up to but not including B1/B3/B5/B6, which are Fly-specific and need a real Fly deploy to catch. The lessons are portable — the controller dev doing the same local check will hit some of these too (particularly A1, A2, A3, B5, B6).
 
-## Cross-references
+## 13. Cross-references
 
 - [CLAUDE.md](../CLAUDE.md) — Architecturally load-bearing properties; config-file shape; auth postures. Every subtle "why" here traces back.
 - [DEPLOY-ARCHITECTURE.md](DEPLOY-ARCHITECTURE.md) — Cross-cloud deployment plan; Fly.io is listed as green-light there, this doc drills in.
