@@ -26,7 +26,27 @@ Reach the inspector via `fly proxy 9090:9090 -a mcp-connector-<CUSTOMER>`.
    then update `mcp/local/crm/.env` with the private DNS URL before you build
    the connector image. See [`../../mock/customers/README.md`](../../mock/customers/README.md).
 
-## Deploy
+## Deploy — the short version
+
+Two commands. That's all most operators need:
+
+```bash
+# From the repo root:
+mcp-connector deploy init --target fly --name acme-prod \
+  --controller-url https://your-controller.example.com --yes
+mcp-connector deploy apply --target fly
+```
+
+`init` writes `fly.toml` at the repo root. `apply` runs the five Fly
+operations (`apps create`, `postgres create` + `attach --variable-name
+POSTGRES_URL`, `secrets set CONNECTOR_KEY_B64`, `volumes create state`,
+`fly deploy`) with idempotency guards — safe to re-run if a step is
+interrupted. Then continue at [step 7 (configure the tunnel)](#7-configure-the-tunnel-via-the-inspector).
+
+The rest of this section documents the same operations run by hand, for
+operators who need to run individual steps or diagnose failures.
+
+## Deploy — step by step (manual reference)
 
 ### 1. Copy the template and set the app name
 
@@ -44,7 +64,7 @@ sed -i.bak 's/<CUSTOMER>/acme-prod/g' fly.toml && rm fly.toml.bak
 Or use the scaffold CLI (also writes to repo root by default):
 
 ```bash
-mcp-connector deploy scaffold --target fly --name acme-prod \
+mcp-connector deploy init --target fly --name acme-prod \
   --controller-url https://your-controller.example.com --yes
 ```
 

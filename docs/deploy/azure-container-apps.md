@@ -2,9 +2,13 @@
 
 Run the connector as a Container App. Outbound-only.
 
-> `mcp-connector deploy scaffold --target aca` renders a bicep template
+> `mcp-connector deploy init --target aca` renders a bicep template
 > with your connector name + controller URL substituted in. The
 > walkthrough below covers the reasoning behind each choice.
+>
+> `mcp-connector deploy apply --target aca` is **not yet implemented** —
+> apply the emitted bicep with `az deployment group create`. Only
+> `--target fly` has a full apply verb today.
 
 ## Prereqs
 

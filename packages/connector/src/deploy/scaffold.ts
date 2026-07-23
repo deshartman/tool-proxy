@@ -1,11 +1,19 @@
-// `mcp-connector deploy scaffold --target <t>` — emits cloud-specific
+// `mcp-connector deploy init --target <t>` — emits cloud-specific
 // deployment manifests with the customer's CONNECTOR_NAME and
 // CONTROLLER_URL substituted in. Replaces the copy-paste-and-edit cycle
 // from docs/deploy/*.md with one command.
 //
+// Naming note: this file is still named scaffold.ts because the internal
+// concept — filling in a template + writing files to disk — is scaffolding.
+// The CLI verb was renamed from `deploy scaffold` to `deploy init` because
+// "scaffold" leaked internal jargon into operator-facing UX; the namespaced
+// `deploy <subverb>` shape (matches git/kubectl/docker) reserves room for
+// a future `deploy apply` companion that actually applies to the cloud.
+// Under the hood this is still a scaffold; the CLI just calls it clearer.
+//
 // Split into two entry points:
 //   scaffoldTo(target, vars, outDir)  — pure(-ish): renders + writes files
-//   runScaffold(argv)                 — CLI wrapper: parses argv, prompts
+//   runDeployInit(argv)               — CLI wrapper: parses argv, prompts
 //                                       for missing values, calls scaffoldTo
 //
 // The pure entry lets tests write to a tmpdir and assert file presence /
@@ -73,10 +81,12 @@ export async function scaffoldTo(
 }
 
 // CLI entry.
-const USAGE = `usage: mcp-connector deploy scaffold --target <t> [flags]
+const USAGE = `usage: mcp-connector deploy init --target <t> [flags]
 
-Emits cloud-specific deployment manifests for the connector, with your
-CONNECTOR_NAME and CONTROLLER_URL substituted in.
+Generates cloud-specific deployment manifests for the connector, with your
+CONNECTOR_NAME and CONTROLLER_URL substituted in. Does NOT touch the cloud —
+writes files locally for you to apply with the cloud's native tool
+(aws / kubectl / az / docker compose / fly).
 
 Targets:
   fargate    AWS Fargate task definition + Secrets Manager hint
@@ -89,7 +99,12 @@ Targets:
 
 Flags:
   --target <t>          required (one of the above)
-  --name <n>            CONNECTOR_NAME (prompts if omitted)
+  --name <n>            CONNECTOR_NAME (prompts if omitted); the identity
+                        the connector presents to the controller
+  --app-name <a>        Fly-only: the Fly.io app name. Defaults to
+                        "mcp-connector-<name>" (fly) or "mock-customers-<name>"
+                        (fly-mock). Set this if you want a custom, non-prefixed
+                        name — e.g. "twilio-tool-sdk". Ignored for non-Fly targets.
   --controller-url <u>  CONTROLLER_URL (prompts if omitted)
   --image <ref>         OCI image ref (default ghcr.io/twilio/mcp-connector:latest)
   --creds-source <s>    "db" (default) or "env"
@@ -99,16 +114,15 @@ Flags:
   --force               overwrite existing files
   -h, --help            show this help`;
 
-export async function runScaffold(argv: string[]): Promise<number> {
-  // Two verbs today: `deploy scaffold` (this) and — in future — other
-  // deploy-time verbs. Strip the "scaffold" subverb if present.
-  const args = argv[0] === "scaffold" ? argv.slice(1) : argv;
+export async function runDeployInit(argv: string[]): Promise<number> {
+  const args = argv;
 
   const { values } = parseArgs({
     args,
     options: {
       target: { type: "string" },
       name: { type: "string" },
+      "app-name": { type: "string" },
       "controller-url": { type: "string" },
       image: { type: "string" },
       "creds-source": { type: "string" },
@@ -159,9 +173,15 @@ export async function runScaffold(argv: string[]): Promise<number> {
         )
       : (values["controller-url"] ?? "");
 
+    // Fly app name: `--app-name` wins; otherwise default from target
+    // convention (`mcp-connector-<name>` / `mock-customers-<name>`).
+    // Non-Fly targets ignore this field but it's harmless to compute.
+    const appName = values["app-name"] ?? defaultAppName(target, name);
+
     const vars: ScaffoldVars = {
       name,
-      controllerUrl,
+      appName,
+      controllerUrl: normalizeControllerUrl(controllerUrl),
       image: values.image ?? "ghcr.io/twilio/mcp-connector:latest",
       credsSource: parseEnum(values["creds-source"], ["db", "env"], "db"),
       auth: parseEnum(values.auth, ["static", "oauth2"], "static"),
@@ -203,4 +223,39 @@ function parseEnum<T extends string>(raw: string | undefined, values: readonly T
     throw new Error(`invalid value "${raw}" (want one of: ${values.join(", ")})`);
   }
   return raw as T;
+}
+
+// Default Fly app name convention per target. Non-Fly targets return the
+// bare `name` — they don't reference {{APP_NAME}} in their templates so the
+// value is unused, but returning `name` keeps ScaffoldVars uniformly populated.
+function defaultAppName(target: ScaffoldTarget, name: string): string {
+  if (target === "fly") return `mcp-connector-${name}`;
+  if (target === "fly-mock") return `mock-customers-${name}`;
+  return name;
+}
+
+// Defensive normalization for --controller-url. The connector wants the
+// controller's HTTPS ROOT ONLY — it upgrades https:// → wss:// and appends
+// `/mcp-tunnel` itself in tunnel/client.ts. Customers copying the "connect
+// your connector" URL from a controller UI often paste the full path
+// (`https://controller.example.com/mcp-tunnel`), which then double-appends
+// at boot time (`wss://controller.example.com/mcp-tunnel/mcp-tunnel`) and
+// silently fails to dial. Strip the known suffix + warn. Keep the operator
+// noise loud so they know their paste was corrected.
+//
+// This is intentionally NOT a URL parser — it's a targeted defensive strip.
+// Other stray paths (`?query`, `/other-path`) are left alone; a full parser
+// would be over-engineering for the one path we know breaks.
+export function normalizeControllerUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, ""); // strip trailing slashes
+  if (trimmed.endsWith("/mcp-tunnel")) {
+    const stripped = trimmed.slice(0, -"/mcp-tunnel".length);
+    process.stderr.write(
+      `warn: --controller-url should be the HTTPS root only ` +
+      `(the connector appends "/mcp-tunnel" itself). ` +
+      `Stripping "/mcp-tunnel" — using "${stripped}".\n`,
+    );
+    return stripped;
+  }
+  return trimmed;
 }

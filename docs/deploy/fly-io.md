@@ -5,8 +5,8 @@ The connector's dial-out-only shape maps cleanly onto Fly Machines: single Firec
 If you want to skip the walkthrough and copy-paste, the CLI renders both apps' manifests for you:
 
 ```bash
-mcp-connector deploy scaffold --target fly --name <customer> --controller-url https://your-controller.example.com --yes
-mcp-connector deploy scaffold --target fly-mock --name <customer> --yes  # only for the demo mock backend
+mcp-connector deploy init --target fly --name <customer> --controller-url https://your-controller.example.com --yes
+mcp-connector deploy init --target fly-mock --name <customer> --yes  # only for the demo mock backend
 ```
 
 ## Deployment shape
@@ -35,42 +35,25 @@ Beyond the [common prereqs](README.md#prereqs-every-cloud):
 
 ## Deploy the connector
 
-Full runbook lives in [`deploy/fly/README.md`](../../deploy/fly/README.md). The condensed version:
+Two commands. That's it.
 
 ```bash
-# 1. Render the manifests. Default outDir is the repo root (`.`) — the
+# 1. Generate fly.toml. Default outDir is the repo root (`.`) — the
 #    generated fly.toml MUST live at repo root because Fly's build context
 #    is locked to the fly.toml's directory, and our Dockerfile needs the
 #    repo root as context (it COPYs package.json, packages/connector/,
 #    mcp/, bundles/).
-mcp-connector deploy scaffold --target fly --name acme-prod \
+mcp-connector deploy init --target fly --name acme-prod \
   --controller-url https://your-controller.example.com --yes
-# Result: ./fly.toml + ./fly-secrets-hint.sh at the repo root.
+# Result: ./fly.toml at the repo root.
 
-# 2. Create the Fly app (no deploy yet).
-fly launch --no-deploy --copy-config
-
-# 3. Provision Fly Postgres and attach as POSTGRES_URL (NOT DATABASE_URL —
-#    Fly's default var name doesn't match what the connector reads).
-fly postgres create --name mcp-connector-acme-prod-db --region iad --initial-cluster-size 1
-fly postgres attach mcp-connector-acme-prod-db \
-  --app mcp-connector-acme-prod \
-  --database-name mcp_connector \
-  --variable-name POSTGRES_URL
-
-# 4. Mint the master key and set as a Fly secret.
-fly secrets set CONNECTOR_KEY_B64="$(head -c 32 /dev/urandom | base64)" \
-  --app mcp-connector-acme-prod
-
-# 5. Create the state volume.
-fly volumes create state --region iad --size 1 --app mcp-connector-acme-prod
-
-# 6. Deploy. Redirect to a file — `fly deploy 2>&1 | tail` silently
-#    buffers because Fly's Depot builder only flushes on a real TTY.
-#    You want live progress during the ~3 min build:
-nohup fly deploy > /tmp/fly-deploy.log 2>&1 &
-tail -f /tmp/fly-deploy.log
+# 2. Deploy — creates the Fly app + Postgres + master key + state volume,
+#    then runs `fly deploy`. Idempotent — safe to re-run if any step is
+#    interrupted. Foreground so you see build progress live.
+mcp-connector deploy apply --target fly
 ```
+
+Under the hood `deploy apply` runs the five Fly operations you'd otherwise type by hand: `fly apps create`, `fly postgres create + attach --variable-name POSTGRES_URL` (Fly's default `DATABASE_URL` doesn't match what the connector reads), `fly secrets set CONNECTOR_KEY_B64`, `fly volumes create state`, and finally `fly deploy`. See [`packages/connector/src/deploy/apply.ts`](../../packages/connector/src/deploy/apply.ts) for the exact sequence.
 
 Then configure the tunnel via the inspector (below).
 
@@ -82,7 +65,7 @@ For the demo, the mock is a **private** Fly app in the same Fly organization —
 
 ```bash
 # 1. Render the mock's manifests.
-mcp-connector deploy scaffold --target fly-mock --name acme-prod \
+mcp-connector deploy init --target fly-mock --name acme-prod \
   --out ./mock/customers --yes
 
 # 2. Create the Fly app (no deploy yet). Must be in the same Fly org as
@@ -176,6 +159,8 @@ Fly's defaults would violate the connector's load-bearing invariants. The scaffo
 - **Cross-Fly-org deployment** — the mock's `.internal` DNS is only resolvable from apps in the same org. Split-org forces public exposure, breaking the private-only invariant.
 - **Removing `INSPECTOR_BIND_ADDR = "::"` from the connector's `[env]`** — the inspector's default bind is `127.0.0.1`, which is unreachable from `fly proxy` (Fly's WireGuard tunnel connects to the Machine's mesh IP, not loopback). Without this override the inspector runs happily inside the Machine but there's no way to reach it from your laptop. Safe to keep the override because `fly ips list` is empty — the mesh is Fly-private, same trust surface as `.internal` DNS.
 - **Moving `fly.toml` from repo root into a subdirectory** — Fly's build context is locked to the fly.toml's directory (no `--build-context` flag exists), and this connector's Dockerfile needs the repo root as context. Everything breaks with "Dockerfile not found" or missing-source errors.
+- **Pasting the full `/mcp-tunnel` path into `--controller-url`** — the controller UI often shows the WS endpoint as `https://<controller>/mcp-tunnel`, but the connector appends that path itself when dialing. Pasting the full path leads to `wss://.../mcp-tunnel/mcp-tunnel` and silent handshake failure. Use the HTTPS root only (`https://<controller>`). `deploy init` will strip the `/mcp-tunnel` suffix with a loud warn if you paste it, but only that exact suffix — custom paths are left alone.
+- **Port 9090 collision on `fly proxy`** — if you have a local dev inspector running (from `npm run start` in the connector repo), `fly proxy 9090:9090 -a <app>` fails with `bind: address already in use`. Either kill the local process (`lsof -i :9090` → `kill <PID>`) or use a different local port: `fly proxy 19090:9090 -a <app>` → `http://localhost:19090`.
 
 ## Reference
 

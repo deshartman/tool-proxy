@@ -6,27 +6,35 @@ required for the tunnel itself.
 
 ## Shortest path
 
-For most customers, three commands are enough:
+The Fly.io target has the tightest end-to-end story — two CLI commands
+create the app, attach Postgres, mint the master key, provision state,
+and deploy:
 
 ```bash
-mcp-connector deploy scaffold --target compose \
+mcp-connector deploy init  --target fly \
+  --name prod-us-east-1 --app-name my-connector \
+  --controller-url https://your-controller.example.com --yes
+mcp-connector deploy apply --target fly
+```
+
+For docker-compose (single VM):
+
+```bash
+mcp-connector deploy init --target compose \
   --name prod-us-east-1 \
   --controller-url https://your-controller.example.com \
   --out ./deploy/compose
 cd deploy/compose
 docker compose up -d
-```
-
-Then verify from inside the container:
-
-```bash
 docker compose exec connector mcp-connector doctor
 ```
 
-For Kubernetes and public clouds, the same `deploy scaffold` command emits
-`fargate`, `gke`, and `aca` targets. Terraform / Helm users can point
-straight at the modules under [`deploy/terraform/`](../../deploy/terraform/)
-and [`deploy/helm/`](../../deploy/helm/) instead — no scaffold step needed.
+For Kubernetes and other public clouds, `deploy init` emits `fargate`,
+`gke`, and `aca` targets. `deploy apply` is Fly-only today; for the
+others, apply the emitted manifests with `aws` / `kubectl` / `az`.
+Terraform / Helm users can point straight at the modules under
+[`deploy/terraform/`](../../deploy/terraform/) and [`deploy/helm/`](../../deploy/helm/)
+instead — no scaffold step needed.
 
 ## Prereqs (every cloud)
 
@@ -59,8 +67,8 @@ When the WSS is down (deploy, restart, blip), the controller returns 503 to the 
 ## Cloud-specific guides
 
 Each walkthrough covers footguns, reconnect strategy, and how to reach the
-inspector — for the manifest shapes themselves, prefer `deploy scaffold` or
-the IaC modules above.
+inspector — for the manifest shapes themselves, prefer `deploy init`
+(and `deploy apply` for `--target fly`) or the IaC modules above.
 
 - [AWS Fargate](./aws-fargate.md) — also see [`deploy/terraform/aws-fargate/`](../../deploy/terraform/aws-fargate/README.md).
 - [Azure Container Apps](./azure-container-apps.md)

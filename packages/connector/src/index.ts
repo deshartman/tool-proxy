@@ -4,7 +4,8 @@ import { boot } from "./boot/lifecycle.js";
 import { runDiscover } from "./discover.js";
 import { runDoctor } from "./doctor.js";
 import { runInit } from "./init.js";
-import { runScaffold } from "./deploy/scaffold.js";
+import { runDeployInit } from "./deploy/scaffold.js";
+import { runDeployApply } from "./deploy/apply.js";
 import { createLogger } from "./logger.js";
 import { envString } from "./env.js";
 
@@ -17,7 +18,9 @@ commands:
   init                    interactive wizard to write connector.yaml
   discover                connect to MCP servers and print tools/list
   doctor                  run preflight checks against your .env and connector.yaml
-  deploy scaffold         emit cloud deployment manifests (fargate/gke/aca/compose)
+  deploy init             generate cloud deployment manifests (fargate/gke/aca/compose/fly).
+                          Does NOT touch the cloud — writes files for the operator to apply.
+  deploy apply            actually deploy to the cloud (fly today; other targets forthcoming).
   version                 print the connector version
 
 start options:
@@ -50,8 +53,37 @@ async function dispatch(): Promise<void> {
       process.exit(code);
     }
     case "deploy": {
-      const code = await runScaffold(rest);
-      process.exit(code);
+      // Namespaced sub-verbs — matches git/kubectl/docker conventions where
+      // related actions cluster under one top-level command. Today: `init`
+      // (scaffold config files). Reserved: `apply` (actually deploy).
+      const subverb = rest[0];
+      const subrest = rest.slice(1);
+      if (!subverb || subverb === "-h" || subverb === "--help") {
+        console.log(
+          `usage: mcp-connector deploy <subcommand> [options]\n\n` +
+          `subcommands:\n` +
+          `  init    generate cloud deployment manifests (does NOT touch the cloud)\n` +
+          `  apply   actually deploy to the cloud using config from a prior init\n\n` +
+          `Run \`mcp-connector deploy init --help\` or \`deploy apply --help\` for flags.`,
+        );
+        process.exit(subverb ? 0 : 2);
+      }
+      switch (subverb) {
+        case "init": {
+          const code = await runDeployInit(subrest);
+          process.exit(code);
+        }
+        case "apply": {
+          const code = await runDeployApply(subrest);
+          process.exit(code);
+        }
+        default: {
+          console.error(
+            `unknown deploy sub-command: ${subverb}. Try: init, apply\n\n${USAGE}`,
+          );
+          process.exit(2);
+        }
+      }
     }
     case "help":
     case "-h":

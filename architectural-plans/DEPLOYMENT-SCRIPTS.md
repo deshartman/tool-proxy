@@ -4,6 +4,25 @@ Status: completed 2026-07-22
 Started: 2026-07-22
 Branch: `feature/deployment-scripts`
 
+> **Post-completion evolution (2026-07-23).** This plan shipped the original
+> `mcp-connector deploy scaffold --target <t>` verb. Live testing on Fly
+> exposed two rough edges: (1) "scaffold" was internal jargon leaking into
+> operator UX, and (2) the emitted `fly-deploy.sh` bash script existed
+> alongside `deploy scaffold` with no CLI verb that actually deployed. Both
+> were resolved on `feature/fly-scaffold-app-name`:
+>
+> - Verb renamed to `deploy init` (paperwork) with a paired `deploy apply`
+>   (action) — matches `terraform init` / `terraform apply` and git's
+>   sub-verb pattern. See [CODE-DEPLOY.md §12](CODE-DEPLOY.md) for the
+>   retrospective and commits `0c486df`, `931e5c0`, `14c0f07` for the
+>   implementation.
+> - `deploy apply --target fly` now spawns Fly's CLI directly in Node
+>   (five commands with idempotency guards). `fly-deploy.sh` +
+>   `fly-secrets-hint.sh` were removed — `deploy init --target fly` writes
+>   only `fly.toml`, and everything else lives in the CLI verb. Other
+>   targets (fargate/gke/aca/compose) still emit manifests only; apply is
+>   Fly-only today.
+
 ## Motivation
 
 The dev-onboarding path is script-driven (`./scripts/start-connector.sh` boots
@@ -85,9 +104,9 @@ run. All of that belongs in a later `--deep` mode.
   (all env set), missing var per mode, invalid key file (wrong length),
   Postgres unreachable, port already bound.
 
-### 2. `mcp-connector deploy scaffold --target <t>` — cloud manifests
+### 2. `mcp-connector deploy init --target <t>` — cloud manifests
 
-**Verb.** `mcp-connector deploy scaffold --target {fargate|gke|aca|compose|terraform|helm} [--name X] [--controller-url URL] [--out DIR]`.
+**Verb.** `mcp-connector deploy init --target {fargate|gke|aca|compose|terraform|helm} [--name X] [--controller-url URL] [--out DIR]`.
 
 **Purpose.** Replace three parallel copy-paste walkthroughs with one command
 that emits the right shape with the right variables filled in.
@@ -120,7 +139,7 @@ substitution is a documented variable, so introducing a template engine
 would obscure the shape of what we emit.
 
 **Implementation surface.**
-- `packages/connector/src/deploy/scaffold.ts` — `runScaffold(argv)`.
+- `packages/connector/src/deploy/scaffold.ts` — `runDeployInit(argv)`.
 - `packages/connector/src/deploy/templates/` — literal template files
   loaded as strings; substitutions via `String.replace`.
 - One `dispatch` case in `index.ts` (`deploy` verb → subcommand `scaffold`).
@@ -217,7 +236,7 @@ uses semver via git tags; no separate module registry publish for v1.
 ## Docs updates (final commit before merge)
 
 - `README.md` — new "Deployment" section with three lines: `doctor`,
-  `deploy scaffold`, `docker compose up -d`. Everything else defers to
+  `deploy init`, `docker compose up -d`. Everything else defers to
   `docs/deploy/`.
 - `docs/deploy/README.md` — restructured. Opens with the CLI verbs;
   cloud pages become "here's what the scaffold produced, here's how to
@@ -237,7 +256,7 @@ leave the branch in a bad state:
 
 1. `docs: add DEPLOYMENT-SCRIPTS plan` (this file)
 2. `feat(cli): mcp-connector doctor` (+ tests)
-3. `feat(cli): mcp-connector deploy scaffold` (+ tests + templates)
+3. `feat(cli): mcp-connector deploy init` (+ tests + templates)
 4. `feat(deploy): docker-compose.prod.yml` (+ compose-lint test)
 5. `feat(deploy): terraform module + helm chart` (+ lint tests)
 6. `docs: rewrite deploy docs to lead with CLI` (docs + CLAUDE.md)
@@ -262,12 +281,12 @@ A customer starting from a fresh `docker pull` should get to a running
 connector in three commands:
 
 ```bash
-mcp-connector deploy scaffold --target compose --name prod-us-east-1 \
+mcp-connector deploy init --target compose --name prod-us-east-1 \
   --controller-url https://controller.example.com
 cd deploy/compose
 docker compose up -d
 ```
 
-If `deploy scaffold` requires editing the emitted files before that
+If `deploy init` requires editing the emitted files before that
 `compose up` works, we haven't shipped the plan. The scaffold output is
 runnable-as-emitted or the plan is incomplete.

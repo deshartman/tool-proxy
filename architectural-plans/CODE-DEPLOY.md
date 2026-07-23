@@ -6,6 +6,24 @@
 >
 > **Status: implemented (2026-07-23).** All five design decisions (D1–D5) resolved. S1–S5 shipped. Live Fly deploy verified: connector + Fly Postgres + state volume + inspector reachable via `fly proxy`. **EK bundle NOT deployed** — deliberately out of scope; the Fly.io deploy target proves the connector's deploy shape works, EK on Fly is its own workstream (needs Ollama sidecar + pgvector Postgres). See §"Lessons learned" for every latent bug this exercise surfaced.
 >
+> **Post-merge CLI evolution (`feature/fly-scaffold-app-name`, 2026-07-23).**
+> Live operator testing exposed two UX problems: (1) `deploy scaffold` was
+> internal jargon leaking into the operator surface, (2) the emitted
+> `fly-deploy.sh` bash script was doing the actual deploy while the CLI
+> had no equivalent verb — two invocation surfaces for the same action.
+> Fixed by:
+> - Renaming the verb to `deploy init` and adding a paired `deploy apply`
+>   (matches `terraform init` / `apply`, git sub-verb pattern).
+> - Rewriting apply.ts to spawn Fly's CLI directly in Node — five commands
+>   with idempotency guards. Bash scripts (`fly-deploy.sh`,
+>   `fly-secrets-hint.sh`) removed from the scaffold output.
+> - `deploy init --target fly` now emits ONLY `fly.toml`. The customer
+>   flow is exactly two commands: `deploy init` then `deploy apply`.
+>
+> Other targets (fargate/gke/aca/compose) still emit manifests only; apply
+> is Fly-only today. Commits: `0c486df` (namespace + --app-name), `931e5c0`
+> (deploy apply wrapping bash), `14c0f07` (native-Node consolidation).
+>
 > **Self-describing.** A fresh-context Claude should be able to read this file + [CLAUDE.md](../CLAUDE.md) + [docs/deploy/README.md](../docs/deploy/README.md) and start work. No hidden context; every subtle interaction with a load-bearing property is called out inline.
 
 ## 1. Context — why Fly.io is a natural fit
@@ -149,7 +167,7 @@ For a live Fly demo, the mock has to go somewhere. Four options, evaluated again
 **Open sub-questions:**
 - **D5.1** — Should the mock app's fly.toml + Dockerfile ship in this repo (`mock/customers/fly.toml`, gitignored like the rest of `mock/`) or in a separate demo-infra repo? Recommend: in this repo, gitignored, next to `mock/customers/server.ts` — same trust posture as the mock itself.
 - **D5.2** — Does the mock app need its own `/livez` / `/readyz`? It already has `/healthz` returning `ok` — good enough for a Fly `[[http_service.checks]]` block if we decide to expose it publicly.
-- **D5.3** — Do we auto-provision the mock in the connector's `deploy scaffold --target fly`, or is it a separate `mcp-connector deploy scaffold --target fly-mock`? Recommend: separate target — keeps the connector deploy self-contained and lets a real customer skip the mock entirely.
+- **D5.3** — Do we auto-provision the mock in the connector's `deploy init --target fly`, or is it a separate `mcp-connector deploy init --target fly-mock`? Recommend: separate target — keeps the connector deploy self-contained and lets a real customer skip the mock entirely.
 
 ## 5. Hosts and cross-app networking
 
@@ -523,6 +541,22 @@ starts. Pin `min_machines_running = 1` on the controller to avoid this.
 - **Ignore-file drift**: `.dockerignore` decays as the repo adds new dev caches — audit it whenever `.gitignore` changes.
 
 Recommend adding a CI step that does `docker build` + `docker run <img> doctor` (or the closest equivalent). Build-only CI catches Bug A1 but not A2, A3, B2, B4. A real image run catches everything up to but not including B1/B3/B5/B6, which are Fly-specific and need a real Fly deploy to catch. The lessons are portable — the controller dev doing the same local check will hit some of these too (particularly A1, A2, A3, B5, B6).
+
+### 12.7 Customer-facing UX lessons (post-CLI-consolidation live test, 2026-07-23)
+
+Two additional footguns surfaced when the operator ran the finalized `deploy init` + `deploy apply` flow live on Fly. Neither is a deploy-mechanics bug (A/B series) — both are UX gaps in how the CLI + docs shepherd the operator through the flow. Fixed in commit sequence following the consolidation.
+
+| ID | Symptom | Root cause | Fix |
+|---|---|---|---|
+| **C1** | `deploy init --controller-url https://.../mcp-tunnel` succeeds, deploy succeeds, but the WS never opens — no obvious error | Operator pastes the "connect your connector" URL from the controller UI verbatim, including `/mcp-tunnel`. The connector then appends `/mcp-tunnel` itself when dialing (per [`packages/connector/src/tunnel/client.ts`](../packages/connector/src/tunnel/client.ts)), producing `wss://.../mcp-tunnel/mcp-tunnel`. Silent handshake failure. | Defensive strip in [`scaffold.ts::normalizeControllerUrl`](../packages/connector/src/deploy/scaffold.ts) — strips the known-broken `/mcp-tunnel` suffix + writes a loud WARN to stderr so the operator knows their paste was corrected. Pinned by `normalizeControllerUrl` tests in [`tests/deploy/scaffold.test.ts`](../packages/connector/tests/deploy/scaffold.test.ts). |
+| **C2** | `fly proxy 9090:9090 -a <app>` → `Error: listen tcp 127.0.0.1:9090: bind: address already in use` | Operator has a local dev inspector running on the same port (from `npm run start` in this repo). Fly's proxy tries to bind localhost:9090 and collides. The proxy syntax alone is also non-obvious — first attempt was `fly proxy` with no args and the error message was flyctl's usage help, not the specific fix. | Post-deploy summary block in [`apply.ts::printPostDeployNextSteps`](../packages/connector/src/deploy/apply.ts) now shows the exact `fly proxy 9090:9090 -a <app>` command AND the fallback `fly proxy 19090:9090 -a <app>` for the collision case. Pinned by the "prints an explicit next-steps block" test in [`tests/deploy/apply.test.ts`](../packages/connector/tests/deploy/apply.test.ts). |
+
+**Common thread — "operators forget the step the CLI didn't run for them."** Both fixes push the guidance INTO the CLI output rather than only into docs. When the operator finishes `deploy apply`, the exact next commands are on their terminal, not buried in a walkthrough. Same pattern as the `deploy init` warn-on-`/mcp-tunnel`: correct in code and tell the operator loudly, rather than leaving the failure mode silent.
+
+### 12.8 What we intentionally did NOT do
+
+- **Auto-run `fly proxy` from `deploy apply`.** Proxy is a foreground long-running process; embedding it in a one-shot verb creates process-lifecycle problems (blocks return, ambiguous cleanup on ctrl-c). Kept as a separate step, but the CLI prints the exact command.
+- **Full URL parser in `normalizeControllerUrl`.** Only strip the ONE path we know breaks. Other stray path segments (custom routes, query strings) are left alone; a full parser would over-engineer for the one recurring paste.
 
 ## 13. Cross-references
 

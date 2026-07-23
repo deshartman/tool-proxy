@@ -6,9 +6,14 @@ needed for the tunnel itself.
 > **Skip the copy-paste below** if you use Terraform — the module at
 > [`deploy/terraform/aws-fargate/`](../../deploy/terraform/aws-fargate/README.md)
 > emits the same shape and manages log group + Secrets Manager slot + task
-> definition + service. Alternatively `mcp-connector deploy scaffold
+> definition + service. Alternatively `mcp-connector deploy init
 > --target fargate` renders a hand-editable `task-definition.json` with
 > your name and controller URL substituted in.
+>
+> `mcp-connector deploy apply --target fargate` is **not yet implemented** —
+> apply the manifest with `aws ecs register-task-definition && aws ecs
+> update-service` (or Terraform). Only `--target fly` has a full apply verb
+> today.
 
 ## Prereqs
 
