@@ -95,7 +95,7 @@ fi
 # Note: if you bump a dep version in package.json but node_modules
 # already exists, this loop won't notice — run `npm install` in that
 # folder yourself to pick up the new version.
-for dir in "$ROOT"/mcp/local/*/ "$ROOT"/mcp/bundled/*/; do
+for dir in "$ROOT"/mcp/local/*/ "$ROOT"/bundled-mcps/*/; do
   [ -f "$dir/package.json" ] || continue
   depcount=$(node -e "console.log(Object.keys(require('$dir/package.json').dependencies||{}).length)" 2>/dev/null || echo 0)
   [ "$depcount" = "0" ] && continue
@@ -126,14 +126,15 @@ fi
 
 # Type 3 bundles: when running on the host (not in the connector image), the
 # in-image path /opt/bundled-mcps/<name>/ doesn't exist. For each bundle
-# under bundles/<name>/ (where the source lives) that ships a dev-launch.sh,
-# auto-export BUNDLE_DEV_OVERRIDE_<UPPER_NAME> so the connector spawns the
-# local working tree's venv instead. Each bundle's README documents creating
-# that venv (`uv venv .venv` + `uv pip install -e .`); the launcher requires
-# it. (mcp/bundled/<name>/ on the runtime path holds only the .env stub.)
-for launcher in "$ROOT"/bundles/*/dev-launch.sh; do
+# under bundled-mcps/<name>/source/ (where the source lives) that ships a
+# dev-launch.sh, auto-export BUNDLE_DEV_OVERRIDE_<UPPER_NAME> so the connector
+# spawns the local working tree's venv instead. Each bundle's README documents
+# creating that venv (`uv venv .venv` + `uv pip install -e .`); the launcher
+# requires it.
+for launcher in "$ROOT"/bundled-mcps/*/source/dev-launch.sh; do
   [ -x "$launcher" ] || continue
-  bundle_name="$(basename "$(dirname "$launcher")")"
+  # launcher = bundled-mcps/<name>/source/dev-launch.sh — <name> is TWO dirs up
+  bundle_name="$(basename "$(dirname "$(dirname "$launcher")")")"
   upper_name="$(printf "%s" "$bundle_name" | tr 'a-z-' 'A-Z_')"
   var="BUNDLE_DEV_OVERRIDE_${upper_name}"
   # Don't clobber a user-supplied override.

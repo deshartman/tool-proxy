@@ -1,7 +1,7 @@
 # AGENTIC-MEMORY-MOCK — Controller-side handoff
 
 > **Status:** v1 (2026-07-17) — mocked reference implementation only
-> **Repo location:** `mcp/local/agentic-memory/` (drop-in) + `connector/tests/integration/agentic-memory-smoke.test.ts` (spec walk)
+> **Repo location:** `bundled-mcps/agentic-memory/` (drop-in) + `connector/tests/integration/agentic-memory-smoke.test.ts` (spec walk)
 > **Implements:** [MEMORY-MCP-INTERFACE.md v2 (2026-07-16)](../.claude/plans/MEMORY-MCP-INTERFACE.md) — the customer-side of §§4–7, §10, §11
 
 This document is what the Controller team consumes to integrate against a running instance of the agentic-memory mock. It describes the **actual wire shape** the connector advertises, not the spec-idealised shape — read §2 first.
@@ -10,9 +10,9 @@ This document is what the Controller team consumes to integrate against a runnin
 
 ## 1. What this mock is
 
-A single Type 1 drop-in inside the MCP shim (`mcp/local/agentic-memory/`) that implements every tool, prompt, and resource a memory + identity provider should expose. It's:
+A single Type 1 drop-in inside the MCP shim (`bundled-mcps/agentic-memory/`) that implements every tool, prompt, and resource a memory + identity provider should expose. It's:
 
-- **Persistent** — state lives in a JSON file (`mcp/local/agentic-memory/.state.json`, gitignored). Survives connector restarts.
+- **Persistent** — state lives in a JSON file (`bundled-mcps/agentic-memory/.state.json`, gitignored). Survives connector restarts.
 - **Deterministic** — `externalId` is `sha1(channel + '::' + normalisedValue).slice(0, 12)`; same identifier always maps to the same identity, even after `.state.json` is deleted.
 - **Complete** — implements all 12 required tools AND both optional tools (`memory_semantic_prune_refs`, `memory_semantic_merge_identities`). The capability advertisement says `supportsPruneRefs: true` and `supportsIdentityMerge: true`.
 - **Non-authoritative** — fake data only. No real backing store, no vector search, no PII policy, no audit trail. Use it as a wire-shape reference and a smoke-test target — not as a production dependency.
@@ -215,7 +215,7 @@ It boots the drop-in exactly the way the connector does (`loadCategory` + `loadC
 
 To exercise it through the running connector (real WS tunnel, real controller mock, real inspector UI):
 
-1. Ensure `mcp/local/agentic-memory/` is present (it is — this is the drop-in itself).
+1. Ensure `bundled-mcps/agentic-memory/` is present (it is — this is the drop-in itself).
 2. Start the connector: `./scripts/start-connector.sh` from the repo root.
 3. Open <http://localhost:9090/> → the Available Tools panel lists all 14; the Frames panel shows the initialize handshake with `experimental.agentic-memory` intact.
 

@@ -27,7 +27,7 @@ Production-ready. LlamaIndex backend with pgvector and Ollama embedding sidecar.
 From the connector repo root:
 
 ```bash
-cd bundles/enterprise-knowledge
+cd bundled-mcps/enterprise-knowledge/source
 uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e .
 .venv/bin/customer-ek-mcp   # speaks MCP over stdio
@@ -67,7 +67,7 @@ Step 2 ignores all configuration — the stub backend has nothing to configure. 
 | `EK_PGVECTOR_DSN` | Postgres connection string for vector store |
 | `EK_OLLAMA_MODEL` | Model name; default `nomic-embed-text` (768-dim) |
 
-See [.env.example](../../mcp/bundled/enterprise-knowledge/.env.example) for the full list.
+Creds are delivered via the controller UI in production or the inspector's session-creds paste in dev — this bundle does not ship a `.env.example`.
 
 ## Provisioning the Embedding Sidecar
 
@@ -155,7 +155,7 @@ The bundle reads pre-minted OAuth tokens; it deliberately does NOT run the brows
 2. **Run the helper** on a machine with a browser:
 
    ```bash
-   cd bundles/enterprise-knowledge
+   cd bundled-mcps/enterprise-knowledge/source
    uv pip install -e .[gdrive]
    python scripts/mint-gdrive-token.py \
        --client-secrets ~/Downloads/oauth-client.json \

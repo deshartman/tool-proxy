@@ -265,10 +265,10 @@ def _refuse_mixed_mode_env(auth_mode: str) -> None:
     if leaked:
         raise RuntimeError(
             f"{ENV_AUTH}={auth_mode!r} but env vars from the other auth "
-            f"mode are also set: {leaked}. Two auth blocks' creds in one "
-            f".env is almost always a misconfiguration. Pick one mode and "
-            f"remove the other block from "
-            f"mcp/bundled/enterprise-knowledge/.env."
+            f"mode are also set: {leaked}. Two auth blocks' creds set "
+            f"simultaneously is almost always a misconfiguration. Pick one "
+            f"mode and clear the other block's env vars in the controller "
+            f"creds UI (prod) or inspector session-creds paste (dev)."
         )
 
 

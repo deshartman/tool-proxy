@@ -16,7 +16,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 // (which construct the singleton Store at module-load time) are DEFERRED
 // via dynamic import inside beforeAll — the env var MUST be set first.
 
-const DROPIN_DIR = resolve(__dirname, "../../..", "mcp/local/agentic-memory");
+const DROPIN_DIR = resolve(__dirname, "../../..", "bundled-mcps/agentic-memory");
 
 async function callTool(
   client: Client,

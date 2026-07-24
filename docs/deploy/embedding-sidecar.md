@@ -301,5 +301,5 @@ See "Corporate IT Policies & TLS Inspection" section above.
 
 ## See Also
 
-- Enterprise Knowledge bundle README: `bundles/enterprise-knowledge/README.md`
+- Enterprise Knowledge bundle README: `bundled-mcps/enterprise-knowledge/source/README.md`
 - LlamaIndex Ollama embeddings: https://docs.llamaindex.ai/en/stable/examples/embeddings/ollama/

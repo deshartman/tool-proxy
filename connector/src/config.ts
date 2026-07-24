@@ -185,11 +185,11 @@ export interface BundledMcpEntry {
   command: string[];
 }
 export const BUNDLED_MCPS: Record<string, BundledMcpEntry> = {
-  // Pinned to the bundle source in the sibling repo `mcp-shim-bundled/`.
-  // The Dockerfile (connector/Dockerfile) installs each entry
-  // here into its own venv at the path below. Local-dev override:
+  // Type 3 (Python venv) bundle sources live at bundled-mcps/<name>/source/;
+  // the connector Dockerfile's bundle-build stage `pip install`s each into
+  // its own venv at /opt/bundled-mcps/<name>/.venv/. Local-dev override:
   //   BUNDLE_DEV_OVERRIDE_ENTERPRISE_KNOWLEDGE=/abs/path/to/dev-launch.sh
-  // See BUNDLES.md for the bundle inventory.
+  // See docs/BUNDLES.md for the bundle inventory.
   "enterprise-knowledge": {
     command: ["/opt/bundled-mcps/enterprise-knowledge/.venv/bin/customer-ek-mcp"],
   },

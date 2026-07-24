@@ -1,25 +1,23 @@
 # Multi-stage build. Stages:
 #   1. node-build      — workspace install + connector TS compile + per-MCP npm deps
-#   2. bundle-build    — Python venv per Type 3 bundle (installs from `bundles` build context)
-#   3. runtime         — final image with connector dist + mcp/ tree + bundle venvs
+#   2. bundle-build    — Python venv per Type 3 bundle (installs from bundled-mcps/<name>/source/)
+#   3. runtime         — final image with connector dist + bundled-mcps/ + bundle venvs
 #
 # What ends up in the runtime image:
 #   - the connector's compiled JS + its prod node_modules (incl. tsx)
 #   - the inspector UI assets
-#   - mcp/local/* trees so Type 1 entries in connector.yaml can spawn from
-#     them. tools/*.ts files are read at runtime by tsx (no build per
-#     MCP).
-#   - mcp/bundled/* tree for Type 3 .env stubs. The yaml's dir: points here
-#     so per-entry .env loading works. Type 2 (3rd-party) MCPs come from the
-#     controller UI per docs/MCP-PROTOCOL.md v1.1, not from yaml/disk.
-#   - /opt/bundled-mcps/<name>/.venv/ — one venv per Type 3 bundle
-#     registered in BUNDLED_MCPS (see connector/src/config.ts).
-#     Source lives in-tree at mcp/bundled/<name>/ and is installed by the
-#     bundle-build stage below.
+#   - bundled-mcps/<name>/ trees so Twilio-authored MCPs (Type 1 and Type 3)
+#     can spawn / resolve dir: paths at runtime. Type 3 sub-tree stays under
+#     source/ so pip has a clean install root.
+#   - /opt/bundled-mcps/<name>/.venv/ — one venv per Type 3 bundle registered
+#     in BUNDLED_MCPS (see connector/src/config.ts). Populated by the
+#     bundle-build stage below from bundled-mcps/<name>/source/.
+#   - Type 2 (3rd-party) MCPs arrive via controller push per
+#     docs/MCP-PROTOCOL.md v1.1; they have no on-disk presence.
 #
-# In production, the customer mounts their own connector.yaml at
-# CONNECTOR_CONFIG and supplies env via container env. dir: paths in that
-# yaml are resolved against the yaml file's directory.
+# Customer drop-ins land at /var/lib/mcp-connector/customer-mcps/ via the
+# derived-image or volume-mount delivery paths — never inside the image the
+# connector ships from Twilio.
 
 # ── Node build stage ───────────────────────────────────────────────────────
 FROM node:22-alpine AS node-build
@@ -48,22 +46,16 @@ RUN npm run build
 # Strip workspace dev deps for the runtime copy.
 RUN npm prune --omit=dev --workspaces --include-workspace-root
 
-# MCP tree: Type 1 source folders (mcp/local/) + Type 3 .env stubs
-# (mcp/bundled/). Per-entry deps install below for any folder that carries
-# its own package.json so deps don't leak across MCPs and the workspace
-# install graph stays clean. Type 2 (3rd-party) MCPs come from the controller
-# UI per docs/MCP-PROTOCOL.md v1.1 — they have no on-disk presence.
-COPY mcp mcp
-
-# Type 3 bundle source. Lives outside mcp/ deliberately — bundle source is a
-# build input (read by pip), not a runtime artifact (the connector spawns
-# from /opt/bundled-mcps/<name>/.venv/, populated in bundle-build below).
-# Keeping it under bundles/ here means the runtime stage's `COPY mcp` doesn't
-# carry pyproject.toml + src/ + migrations/ as dead weight.
-COPY bundles bundles
+# Bundled MCPs (Twilio-authored). Type 1 (Node/TS) bundles live at
+# bundled-mcps/<name>/; Type 3 (Python venv) bundles keep their source under
+# bundled-mcps/<name>/source/ so pip has a clean install root. The bundle-build
+# stage below reads Type 3 sources via `--from=node-build`. Per-entry Node deps
+# install after the copy so deps don't leak across MCPs. Type 2 (3rd-party) MCPs
+# come from the controller UI per docs/MCP-PROTOCOL.md v1.1 — no on-disk presence.
+COPY bundled-mcps bundled-mcps
 
 RUN set -e; \
-    for dir in mcp/local/*/ mcp/bundled/*/; do \
+    for dir in bundled-mcps/*/; do \
       [ -f "$dir/package.json" ] || continue; \
       depcount=$(node -e \
         "console.log(Object.keys(require('./$dir/package.json').dependencies||{}).length)"); \
@@ -79,8 +71,8 @@ RUN set -e; \
 # duplicating the venv-build pattern below and registering the bundle in
 # connector/src/config.ts.
 #
-# Bundle source comes from the in-tree `mcp/bundled/<name>/` folder — the
-# node-build stage already copied `mcp/` so we mount it via `--from=node-build`.
+# Bundle source comes from the in-tree `bundled-mcps/<name>/source/` folder — the
+# node-build stage already copied `bundled-mcps/` so we mount it via `--from=node-build`.
 #
 # Alpine + python3 works for the stub backend (deps: mcp, pydantic).
 # When LlamaIndex lands (real backend) it brings native deps (psycopg,
@@ -90,12 +82,12 @@ RUN set -e; \
 FROM python:3.12-alpine AS bundle-build
 WORKDIR /opt/bundled-mcps
 
-# enterprise-knowledge — installed from mcp/bundled/enterprise-knowledge/.
+# enterprise-knowledge — installed from bundled-mcps/enterprise-knowledge/source/.
 # The entrypoint `customer-ek-mcp` is declared in the bundle's pyproject.toml;
 # `python -m venv` + `pip install <path>` lays it down at the venv's
 # bin/customer-ek-mcp, which is what BUNDLED_MCPS["enterprise-knowledge"]
 # in config.ts points at.
-RUN --mount=type=bind,from=node-build,source=/repo/bundles/enterprise-knowledge,target=/bundle-src \
+RUN --mount=type=bind,from=node-build,source=/repo/bundled-mcps/enterprise-knowledge/source,target=/bundle-src \
     python -m venv --copies /opt/bundled-mcps/enterprise-knowledge/.venv \
  && /opt/bundled-mcps/enterprise-knowledge/.venv/bin/pip install --no-cache-dir /bundle-src
 # `--copies` makes the venv's bin/python a real binary instead of a
@@ -126,14 +118,15 @@ COPY --from=node-build /repo/connector/public             ./connector/public
 COPY --from=node-build /repo/connector/package.json       ./connector/package.json
 COPY --from=node-build /repo/package.json                          ./package.json
 
-# MCP tree: Type 1 source (mcp/local/) + Type 3 .env stubs (mcp/bundled/).
-# Required so the customer's yaml can resolve dir: paths to
-# /app/mcp/local/<name>/ for Type 1 spawning and /app/mcp/bundled/<name>/
-# for per-entry .env merging. Type 2 (3rd-party) MCPs come from the
-# controller UI per docs/MCP-PROTOCOL.md v1.1 — no on-disk presence.
-# Customers extending the image with their own MCPs can drop additional
-# folders under mcp/local/.
-COPY --from=node-build /repo/mcp ./mcp
+# Bundled MCPs (Twilio-authored): Type 1 (Node) + Type 3 (Python) configs.
+# The customer's runtime config resolves dir: paths against /app/bundled-mcps/<name>/
+# for Type 1 spawning and per-entry .env merging. Type 3 bundle source is
+# duplicated here so runtime env-file loading works even though the running
+# Python code lives in /opt/bundled-mcps/<name>/.venv/. Type 2 (3rd-party)
+# MCPs come from the controller UI per docs/MCP-PROTOCOL.md v1.1 — no on-disk
+# presence. Customers extending the image with their own MCPs drop folders
+# under /var/lib/mcp-connector/customer-mcps/ instead.
+COPY --from=node-build /repo/bundled-mcps ./bundled-mcps
 
 # Bundle venvs — one directory per Type 3 bundle registered in
 # BUNDLED_MCPS. The connector spawns each via stdio at the path baked

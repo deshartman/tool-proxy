@@ -4,7 +4,7 @@ This file lists the [Type 3 bundled MCPs](../CLAUDE.md) that the connector image
 
 | Bundle | Source | Entrypoint (in image) | `.env` stub |
 |---|---|---|---|
-| `enterprise-knowledge` | [`bundles/enterprise-knowledge/`](../bundles/enterprise-knowledge/) | `/opt/bundled-mcps/enterprise-knowledge/.venv/bin/customer-ek-mcp` | [`mcp/bundled/enterprise-knowledge/.env.example`](../mcp/bundled/enterprise-knowledge/.env.example) |
+| `enterprise-knowledge` | [`bundled-mcps/enterprise-knowledge/source/`](../bundled-mcps/enterprise-knowledge/source/) | `/opt/bundled-mcps/enterprise-knowledge/.venv/bin/customer-ek-mcp` | [`bundled-mcps/enterprise-knowledge/.env.example`](../bundled-mcps/enterprise-knowledge/.env.example) |
 
 ## What ships vs. what doesn't
 

@@ -31,7 +31,7 @@ The connector understands three integration patterns. Type 1 and Type 3 are conf
 - **Type 2 — connect to an existing MCP (controller-pushed).** Operator clicks **New 3rd Party MCP** in the controller (Name, Transport, URL or command, Auth shape, optional extra envKeys). The controller persists + pushes the entry to this connector via `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](docs/MCP-PROTOCOL.md) v1.1. No yaml edit, no folder under `mcp/`. Useful for off-the-shelf MCPs (e.g. Salesforce, Atlassian, public npm packages like `aviation-weather-mcp`).
 - **Type 3 — bundled, Twilio-authored Python venv, pre-installed in this image.** The entry just sets `bundled: <name>`; the connector resolves it against a registry of bundles laid down at image-build time. Bundle source lives in-tree at `bundles/<name>/` (deliberately outside `mcp/` so the runtime image carries only the installed venv, not the build inputs). Customer supplies only a per-bundle `.env` under `mcp/bundled/<name>/`.
 
-`mcp/bundled/` carries Twilio-shipped MCPs. Today only the Type 3 Python-venv bundle `mcp/bundled/enterprise-knowledge/` lives there — the prior Type 1 Node bundle (`mcp/bundled/twilio/`, retired 2026-06-30) was replaced by the standalone `@deshartman/twilio-mcp` + `@deshartman/segment-mcp` npm packages, loaded as Type 2 controller-config entries via the UI. The folder still marks "who ships it" if Twilio reintroduces a Node bundle; the YAML entry shape decides "how it's wired". The connector adds an `author: "twilio" | "customer"` field to each MCP on the wire (derived from `bundled:` resolution) so the controller can group Twilio-shipped MCPs separately from customer-authored ones in its UI.
+`mcp/bundled/` carries Twilio-shipped MCPs. Today only the Type 3 Python-venv bundle `bundled-mcps/enterprise-knowledge/` lives there — the prior Type 1 Node bundle (`mcp/bundled/twilio/`, retired 2026-06-30) was replaced by the standalone `@deshartman/twilio-mcp` + `@deshartman/segment-mcp` npm packages, loaded as Type 2 controller-config entries via the UI. The folder still marks "who ships it" if Twilio reintroduces a Node bundle; the YAML entry shape decides "how it's wired". The connector adds an `author: "twilio" | "customer"` field to each MCP on the wire (derived from `bundled:` resolution) so the controller can group Twilio-shipped MCPs separately from customer-authored ones in its UI.
 
 ### Receiving webhooks
 
@@ -73,7 +73,7 @@ mcp/
     crm/                      Type 1 — get_customer / get_recent / issue_refund (thin client over mock/customers/)
   bundled/
     twilio/                   Type 1 (Node) — Twilio-authored; ships its own twilio SDK locally
-    enterprise-knowledge/     Type 3 (Python venv) — .env stub only (source lives at bundles/enterprise-knowledge/)
+    enterprise-knowledge/     Type 3 (Python venv) — .env stub only (source lives at bundled-mcps/enterprise-knowledge/source/)
 bundles/
   enterprise-knowledge/       Type 3 source — pip-installed into the image's bundled-mcps venv
 docs/deploy/                  per-cloud deployment guides
@@ -152,10 +152,10 @@ See [docs/MCP-PROTOCOL.md](docs/MCP-PROTOCOL.md) §"v1.1 — 3rd-party MCP roste
 ```yaml
 - name: enterprise_knowledge
   bundled: enterprise-knowledge
-  dir: ../../mcp/bundled/enterprise-knowledge   # for the .env
+  dir: ../../bundled-mcps/enterprise-knowledge   # for the .env
 ```
 
-The bundle's source lives in-tree at [`bundles/enterprise-knowledge/`](bundles/enterprise-knowledge/). The connector image installs it into `/opt/bundled-mcps/enterprise-knowledge/`; in dev, `start-connector.sh` auto-points at the bundle's `dev-launch.sh` in the working tree.
+The bundle's source lives in-tree at [`bundled-mcps/enterprise-knowledge/source/`](bundled-mcps/enterprise-knowledge/source/). The connector image installs it into `/opt/bundled-mcps/enterprise-knowledge/`; in dev, `start-connector.sh` auto-points at the bundle's `dev-launch.sh` in the working tree.
 
 **Twilio + Segment MCPs** are not in this repo anymore — they're standalone npm packages (`@deshartman/twilio-mcp`, `@deshartman/segment-mcp`) wired as Type 2 controller-config entries via the controller UI. The prior in-repo `mcp/bundled/twilio/` Type 1 bundle was retired 2026-06-30.
 

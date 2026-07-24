@@ -21,7 +21,7 @@ Scope: drive.readonly. Matches what GoogleDriveReader uses internally
 script can't drift from the reader's expectations).
 
 Usage:
-    cd bundles/enterprise-knowledge && source .venv/bin/activate
+    cd bundled-mcps/enterprise-knowledge/source && source .venv/bin/activate
     python scripts/mint-gdrive-token.py \\
         --client-secrets ~/Downloads/oauth-client.json \\
         --output ~/.config/mcp-connector/gdrive-token.json

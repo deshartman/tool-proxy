@@ -23,7 +23,7 @@ def load() -> Settings:
     dsn = os.environ.get("EK_PGVECTOR_DSN", "").strip()
     if not dsn:
         raise RuntimeError(
-            "EK_PGVECTOR_DSN is required. Set it in "
-            "mcp/bundled/enterprise-knowledge/.env (see .env.example)."
+            "EK_PGVECTOR_DSN is required. Set it via the controller's creds "
+            "UI (prod) or the inspector's session-creds paste (dev)."
         )
     return Settings(pgvector_dsn=dsn)
