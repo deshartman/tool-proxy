@@ -325,10 +325,10 @@ CONNECTOR_CONFIG=./connector.yaml \
 
 ## Production deployment
 
-See [docs/deploy/README.md](../../docs/deploy/README.md) plus the per-cloud guides:
-[AWS Fargate](../../docs/deploy/aws-fargate.md),
-[Azure Container Apps](../../docs/deploy/azure-container-apps.md),
-[GCP GKE](../../docs/deploy/gcp-gke.md).
+See [deploy/README.md](../../deploy/README.md) plus the per-cloud guides:
+[AWS Fargate](../../deploy/terraform/README.md),
+[Azure Container Apps](../../deploy/aca/README.md),
+[GCP GKE](../../deploy/helm/README.md).
 
 ## Out of scope (production hardening)
 

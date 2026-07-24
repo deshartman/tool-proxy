@@ -1,7 +1,7 @@
 // `mcp-connector deploy init --target <t>` — emits cloud-specific
 // deployment manifests with the customer's CONNECTOR_NAME and
 // CONTROLLER_URL substituted in. Replaces the copy-paste-and-edit cycle
-// from docs/deploy/*.md with one command.
+// from deploy/**/*.md with one command.
 //
 // Naming note: this file is still named scaffold.ts because the internal
 // concept — filling in a template + writing files to disk — is scaffolding.

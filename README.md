@@ -18,8 +18,8 @@ Customers consume the connector as an OCI image and drop their own Type 1 MCPs i
 | K8s friendliness | Simple | ConfigMap / PVC native |
 
 Walkthroughs:
-- [**Derived image**](docs/deploy/DERIVED-IMAGE.md) — `FROM twilio/mcp-connector:1.0` + `COPY ./my-mcps/ /var/lib/mcp-connector/customer-mcps/`, push your image, retarget your manifests.
-- [**Volume mount**](docs/deploy/VOLUME-MOUNT.md) — bind-mount a host directory / K8s PVC / Fly volume / AWS EFS / Azure Files at the same path.
+- [**Derived image**](deploy/DERIVED-IMAGE.md) — `FROM twilio/mcp-connector:1.0` + `COPY ./my-mcps/ /var/lib/mcp-connector/customer-mcps/`, push your image, retarget your manifests.
+- [**Volume mount**](deploy/VOLUME-MOUNT.md) — bind-mount a host directory / K8s PVC / Fly volume / AWS EFS / Azure Files at the same path.
 
 There is no "customer runs `npm install` on their own Node server" path — the connector is a daemon, not a library.
 
@@ -76,7 +76,7 @@ mcp/
     enterprise-knowledge/     Type 3 (Python venv) — .env stub only (source lives at bundled-mcps/enterprise-knowledge/source/)
 bundles/
   enterprise-knowledge/       Type 3 source — pip-installed into the image's bundled-mcps venv
-docs/deploy/                  per-cloud deployment guides
+deploy/                  per-cloud deployment guides
 scripts/
   start-connector.sh          boots the connector. Auto-registers with the controller on first run
                               (writes registrationToken to .connector-state.json), reconnects by token after.
@@ -197,7 +197,7 @@ Three shapes, in order of increasing surface area:
 2. **CLI-driven deploy.** Two commands: `mcp-connector deploy init --target {fargate|gke|aca|compose|fly}` emits manifests with your `CONNECTOR_NAME` + `CONTROLLER_URL` substituted in; then `mcp-connector deploy apply --target <t>` actually applies to the cloud. `apply` is implemented for `--target fly` today (spawns Fly's CLI directly with idempotency guards); other targets return "not yet implemented" — apply their emitted manifests manually with `aws` / `kubectl` / `az` / `docker compose`.
 3. **IaC modules.** [`deploy/terraform/aws-fargate/`](deploy/terraform/aws-fargate/README.md) and [`deploy/helm/mcp-connector/`](deploy/helm/mcp-connector/README.md) for teams whose infrastructure is already declared in Terraform / Helm.
 
-Per-cloud walkthroughs remain in [docs/deploy/](docs/deploy/README.md): [AWS Fargate](docs/deploy/aws-fargate.md), [Azure Container Apps](docs/deploy/azure-container-apps.md), [GCP GKE](docs/deploy/gcp-gke.md). Run `mcp-connector doctor` from inside any deployment to verify the environment before starting.
+Per-cloud walkthroughs remain in [deploy/](deploy/README.md): [AWS Fargate](deploy/terraform/README.md), [Azure Container Apps](deploy/aca/README.md), [GCP GKE](deploy/helm/README.md). Run `mcp-connector doctor` from inside any deployment to verify the environment before starting.
 
 ## What's load-bearing
 

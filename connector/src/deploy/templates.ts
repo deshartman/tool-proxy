@@ -8,7 +8,7 @@
 // These are LITERAL cloud manifests, not exhaustive infrastructure — they
 // cover the connector container, its config mount, its state volume, and
 // its secrets. Everything else (cluster, network, DNS) the customer
-// supplies. See docs/deploy/*.md for the reasoning.
+// supplies. See deploy/**/*.md for the reasoning.
 
 export type ScaffoldTarget = "fargate" | "gke" | "aca" | "compose" | "fly" | "fly-mock";
 
@@ -469,7 +469,7 @@ Before running, populate Secrets Manager per \`secrets-hint.sh\` and replace
 \`REPLACE_WITH_SECRETS_MANAGER_ARN\` in the task-definition.json. Same for
 \`REPLACE_WITH_REGION\` in the awslogs config.
 
-See docs/deploy/aws-fargate.md for the full walkthrough (ECS Exec for
+See deploy/terraform/README.md for the full walkthrough (ECS Exec for
 inspector access, orchestrator-vs-built-in reconnect, etc.).
 `,
   },
@@ -494,7 +494,7 @@ Apply in order:
 
 Reach the inspector: \`kubectl port-forward -n mcp-connector-{{NAME}} deploy/mcp-connector 9090:9090\`
 
-See docs/deploy/gcp-gke.md for the reasoning behind each choice.
+See deploy/helm/README.md for the reasoning behind each choice.
 `,
   },
 
@@ -514,7 +514,7 @@ typical), then:
 
 Before deployment, populate a Key Vault with the tunnel bearer and replace
 \`REPLACE_WITH_KEYVAULT_URL\` in containerapp.bicep. See
-docs/deploy/azure-container-apps.md for the full walkthrough.
+deploy/aca/README.md for the full walkthrough.
 `,
   },
 
@@ -543,7 +543,7 @@ Verify: \`docker compose exec connector mcp-connector doctor\`
 
 \`fly.toml\` landed AT REPO ROOT (Fly's build context is locked to the
 fly.toml's directory, and the Dockerfile needs repo root — see
-docs/deploy/fly-io.md for the reasoning).
+deploy/fly/README.md for the reasoning).
 
 **Deploy:**
 
@@ -555,7 +555,7 @@ mid-step failure interrupts the flow.
 
 Reach the inspector: \`fly proxy 9090:9090 -a {{APP_NAME}}\` → http://localhost:9090/
 
-See docs/deploy/fly-io.md for the full walkthrough (mock backend, private
+See deploy/fly/README.md for the full walkthrough (mock backend, private
 DNS, rotation, graduation to managed Postgres).
 `,
   },

@@ -19,7 +19,7 @@ speed — use [DERIVED-IMAGE.md](./DERIVED-IMAGE.md) for that.
 ## The mount point
 
 `/var/lib/mcp-connector/customer-mcps/` — this is `PROD_DEFAULT` in
-[`src/dropin.ts`](../../connector/src/dropin.ts). Each
+[`src/dropin.ts`](../connector/src/dropin.ts). Each
 subdirectory is one MCP; the folder name is the server name.
 
 The connector's drop-in scanner (`discoverDropins`) walks this path at

@@ -12,8 +12,8 @@
 //     Customers land Type 1 MCPs at this path via one of two supported
 //     patterns: derived image (`FROM twilio/mcp-connector` + `COPY`) or
 //     volume mount (K8s ConfigMap / PVC, Fly volume, AWS EFS, Azure
-//     Files, docker-compose bind mount). See docs/deploy/DERIVED-IMAGE.md
-//     and docs/deploy/VOLUME-MOUNT.md.
+//     Files, docker-compose bind mount). See deploy/DERIVED-IMAGE.md
+//     and deploy/VOLUME-MOUNT.md.
 //   * Local dev: defaults to mcp/local/ relative to the connector package
 //     so the bundled `sample` drop-in works without a new mount.
 

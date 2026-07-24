@@ -85,7 +85,7 @@ def load_embedder() -> LoadedEmbedder:
         raise RuntimeError(
             f"EK_EMBEDDER={provider!r} was removed. The bundle now uses "
             f"Ollama exclusively. Set EK_EMBEDDER=ollama and ensure the "
-            f"Ollama sidecar is running (see docs/deploy/embedding-sidecar.md). "
+            f"Ollama sidecar is running (see bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md). "
             f"Re-index existing sources with sources_refresh(force=true)."
         )
 

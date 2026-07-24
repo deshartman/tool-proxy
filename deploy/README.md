@@ -33,7 +33,7 @@ For Kubernetes and other public clouds, `deploy init` emits `fargate`,
 `gke`, and `aca` targets. `deploy apply` is Fly-only today; for the
 others, apply the emitted manifests with `aws` / `kubectl` / `az`.
 Terraform / Helm users can point straight at the modules under
-[`deploy/terraform/`](../../deploy/terraform/) and [`deploy/helm/`](../../deploy/helm/)
+[`deploy/terraform/`](../deploy/terraform/) and [`deploy/helm/`](../deploy/helm/)
 instead — no scaffold step needed.
 
 ## Prereqs (every cloud)
@@ -70,10 +70,10 @@ Each walkthrough covers footguns, reconnect strategy, and how to reach the
 inspector — for the manifest shapes themselves, prefer `deploy init`
 (and `deploy apply` for `--target fly`) or the IaC modules above.
 
-- [AWS Fargate](./aws-fargate.md) — also see [`deploy/terraform/aws-fargate/`](../../deploy/terraform/aws-fargate/README.md).
-- [Azure Container Apps](./azure-container-apps.md)
-- [GCP GKE](./gcp-gke.md) — also see [`deploy/helm/mcp-connector/`](../../deploy/helm/mcp-connector/README.md).
-- [Fly.io](./fly-io.md) — also see [`deploy/fly/`](../../deploy/fly/README.md). Cheapest path for demos; ships private-mock deploy alongside the connector.
+- [AWS Fargate](./terraform/README.md) — Terraform module reference at [`terraform/aws-fargate/`](./terraform/aws-fargate/README.md).
+- [Azure Container Apps](./aca/README.md)
+- [GCP GKE](./helm/README.md) — Helm chart reference at [`helm/mcp-connector/`](./helm/mcp-connector/README.md).
+- [Fly.io](./fly/README.md) — operator runbook at [`fly/OPERATOR-RUNBOOK.md`](./fly/OPERATOR-RUNBOOK.md). Cheapest path for demos; ships private-mock deploy alongside the connector.
 
 ## Your cloud isn't listed?
 

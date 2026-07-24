@@ -11,7 +11,7 @@ Production-ready. LlamaIndex backend with pgvector and Ollama embedding sidecar.
 ## Prerequisites
 
 1. **Postgres with pgvector** — see `EK_PGVECTOR_DSN` below.
-2. **Ollama embedding sidecar** — required for embeddings. See [docs/deploy/embedding-sidecar.md](../../docs/deploy/embedding-sidecar.md) for deployment shapes (Docker Compose, Kubernetes, Fly.io).
+2. **Ollama embedding sidecar** — required for embeddings. See [bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md](../../bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md) for deployment shapes (Docker Compose, Kubernetes, Fly.io).
 
 ## Tools
 
@@ -71,7 +71,7 @@ Creds are delivered via the controller UI in production or the inspector's sessi
 
 ## Provisioning the Embedding Sidecar
 
-The bundle requires an Ollama sidecar for generating embeddings. See [docs/deploy/embedding-sidecar.md](../../docs/deploy/embedding-sidecar.md) for:
+The bundle requires an Ollama sidecar for generating embeddings. See [bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md](../../bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md) for:
 - Docker Compose (single-host)
 - Kubernetes (Deployment + Service + PVC)
 - Fly.io (separate app with persistent volume)
