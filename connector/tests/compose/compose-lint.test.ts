@@ -13,7 +13,7 @@ import { resolve as resolvePath } from "node:path";
 //      password is sourced from a file secret, not committed inline.
 
 const REPO_ROOT = resolvePath(new URL("../../../", import.meta.url).pathname);
-const COMPOSE_PATH = resolvePath(REPO_ROOT, "docker-compose.prod.yml");
+const COMPOSE_PATH = resolvePath(REPO_ROOT, "deploy/compose/docker-compose.prod.yml");
 
 function dockerAvailable(): boolean {
   try {

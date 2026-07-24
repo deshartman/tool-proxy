@@ -17,7 +17,7 @@ Docker Compose, Kubernetes, and Fly.io.
 
 ## Local Development
 
-Docker Compose service (already in `docker-compose.dev.yml`):
+Docker Compose service (already in `deploy/compose/docker-compose.dev.yml`):
 
 ```yaml
 embedding:
@@ -46,7 +46,7 @@ OLLAMA_URL=http://localhost:11434
 
 Start:
 ```bash
-docker compose -f docker-compose.dev.yml up -d embedding
+docker compose -f deploy/compose/docker-compose.dev.yml up -d embedding
 ```
 
 The first boot pulls the model (~1 minute, ~274MB download). The cache directory

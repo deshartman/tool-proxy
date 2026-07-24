@@ -8,7 +8,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "Twilio" }]
 
 # Default deps: Ollama sidecar embedder. The model runs in a separate
-# container (see docker-compose.dev.yml); the bundle only needs the HTTP
+# container (see deploy/compose/docker-compose.dev.yml); the bundle only needs the HTTP
 # adapter. No cloud API keys, no outbound embedding calls, no heavyweight
 # in-process ML deps.
 dependencies = [

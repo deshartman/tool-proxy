@@ -193,7 +193,7 @@ mcp-connector version               print the connector version
 
 Three shapes, in order of increasing surface area:
 
-1. **Single VM / docker compose.** Copy [`docker-compose.prod.yml`](docker-compose.prod.yml) + [`compose.env.example`](compose.env.example), mint a master key, run `docker compose up -d`. See the header comments in the compose file.
+1. **Single VM / docker compose.** See [`deploy/compose/README.md`](deploy/compose/README.md) — copy `deploy/compose/docker-compose.prod.yml` + `.env.example` from that directory, mint a master key, `docker compose -f deploy/compose/deploy/compose/docker-compose.prod.yml up -d`.
 2. **CLI-driven deploy.** Two commands: `mcp-connector deploy init --target {fargate|gke|aca|compose|fly}` emits manifests with your `CONNECTOR_NAME` + `CONTROLLER_URL` substituted in; then `mcp-connector deploy apply --target <t>` actually applies to the cloud. `apply` is implemented for `--target fly` today (spawns Fly's CLI directly with idempotency guards); other targets return "not yet implemented" — apply their emitted manifests manually with `aws` / `kubectl` / `az` / `docker compose`.
 3. **IaC modules.** [`deploy/terraform/aws-fargate/`](deploy/terraform/aws-fargate/README.md) and [`deploy/helm/mcp-connector/`](deploy/helm/mcp-connector/README.md) for teams whose infrastructure is already declared in Terraform / Helm.
 

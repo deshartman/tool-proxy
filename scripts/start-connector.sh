@@ -113,9 +113,9 @@ set -a; source "$ENV_FILE"; set +a
 # Preflight: if EK_EMBEDDER is set (bundle enabled), ensure Ollama sidecar
 # is running. Cleaner failure than a mysterious first-query timeout.
 if [ "${EK_EMBEDDER:-}" = "ollama" ]; then
-  if ! docker compose -f "$ROOT/docker-compose.dev.yml" ps embedding --status running --format json 2>/dev/null | grep -q "mcp-shim-embedding"; then
+  if ! docker compose -f "$ROOT/deploy/compose/docker-compose.dev.yml" ps embedding --status running --format json 2>/dev/null | grep -q "mcp-shim-embedding"; then
     echo "[start-connector] ERROR: EK_EMBEDDER=ollama but the 'embedding' service is not running." >&2
-    echo "[start-connector] Start it with: docker compose -f docker-compose.dev.yml up -d embedding" >&2
+    echo "[start-connector] Start it with: docker compose -f deploy/compose/docker-compose.dev.yml up -d embedding" >&2
     exit 1
   fi
   echo "[start-connector] Ollama embedding sidecar is running"
