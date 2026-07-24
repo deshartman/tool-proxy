@@ -227,7 +227,7 @@ Keep individual tool files **unaware** of creds gating — register them or don'
 
 Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 / Type 3 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker.
 
-1. **Plain object of zod fields, NOT `z.object({...})`.** SDK convention — wrapping in `z.object` changes the inferred argument type and breaks the handler signature. See [`mcp/local/sample/tools/weather.ts`](../../mcp/local/sample/tools/weather.ts) for the canonical shape.
+1. **Plain object of zod fields, NOT `z.object({...})`.** SDK convention — wrapping in `z.object` changes the inferred argument type and breaks the handler signature. See [`examples/demos/sample/tools/weather.ts`](../../examples/demos/sample/tools/weather.ts) for the canonical shape.
 2. **Every field gets `.describe(...)`.** This is the contract authors read in the controller UI.
 3. **Return both `content[]` AND `structuredContent` on success.** `content[0].text` is the human-readable form (LLM consumption); `structuredContent` is the machine-shaped sibling field that the controller's `projectPath()` reads from directly. Mismatch between the two is a bug — they should serialize to the same data.
 4. **Schema describes the projection target, not the upstream SDK response.** For tools that wrap an external API, list *only* the fields the handler currently returns. Widen later if a procedure needs more.
@@ -237,7 +237,7 @@ Type 2 tools (external `endpoint:` / `command:` MCPs) advertise whatever their u
 
 #### Prompts and resources (v1.2)
 
-Both follow the same author shape as tools — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. **In drop-in folders** (the default authoring shape) the runner auto-discovers `prompts/*.ts` and `resources/*.ts` siblings of `tools/`; nothing else needed. Worked examples in [`mcp/local/sample/prompts/weather-briefing.ts`](../../mcp/local/sample/prompts/weather-briefing.ts) and [`mcp/local/sample/resources/uuids-recent.ts`](../../mcp/local/sample/resources/uuids-recent.ts).
+Both follow the same author shape as tools — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. **In drop-in folders** (the default authoring shape) the runner auto-discovers `prompts/*.ts` and `resources/*.ts` siblings of `tools/`; nothing else needed. Worked examples in [`examples/demos/sample/prompts/weather-briefing.ts`](../../examples/demos/sample/prompts/weather-briefing.ts) and [`examples/demos/sample/resources/uuids-recent.ts`](../../examples/demos/sample/resources/uuids-recent.ts).
 
 ```
 mcp/local/my-mcp/

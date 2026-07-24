@@ -29,7 +29,7 @@ The [orders MCP](../../mcp/local/orders/) reads from this service via
 ## Seeded customers
 
 The **focal customer** (first row) is env-driven — set `DEMO_CUSTOMER_NAME` /
-`DEMO_CUSTOMER_SURNAME` / `DEMO_CUSTOMER_PHONE` in `mock/customers/.env` when
+`DEMO_CUSTOMER_SURNAME` / `DEMO_CUSTOMER_PHONE` in `examples/mock-backend/.env` when
 you want live calls or SMS from your own phone to route through the demo.
 With those unset, the fallback is `Dana Demo` on a 555 reserved-range number
 that can't collide with a real subscriber. Copy `.env.example` to `.env` to

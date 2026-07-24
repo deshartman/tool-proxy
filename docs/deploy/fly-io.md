@@ -66,12 +66,12 @@ For the demo, the mock is a **private** Fly app in the same Fly organization —
 ```bash
 # 1. Render the mock's manifests.
 mcp-connector deploy init --target fly-mock --name acme-prod \
-  --out ./mock/customers --yes
+  --out ./examples/mock-backend --yes
 
 # 2. Create the Fly app (no deploy yet). Must be in the same Fly org as
 #    mcp-connector-acme-prod — cross-org apps can't reach each other's
 #    .internal DNS.
-cd ./mock/customers && fly launch --no-deploy --copy-config
+cd ./examples/mock-backend && fly launch --no-deploy --copy-config
 
 # 3. Set the demo customer identity.
 fly secrets set \

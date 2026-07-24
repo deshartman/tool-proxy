@@ -70,7 +70,7 @@ packages/
 mcp/
   local/
     sample/                   Type 1 — now, slow_echo, uuid, weather
-    crm/                      Type 1 — get_customer / get_recent / issue_refund (thin client over mock/customers/)
+    crm/                      Type 1 — get_customer / get_recent / issue_refund (thin client over examples/mock-backend/)
   bundled/
     twilio/                   Type 1 (Node) — Twilio-authored; ships its own twilio SDK locally
     enterprise-knowledge/     Type 3 (Python venv) — .env stub only (source lives at bundled-mcps/enterprise-knowledge/source/)

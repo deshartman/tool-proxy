@@ -42,7 +42,7 @@ const DEFAULT_OUT: Record<ScaffoldTarget, string> = {
   // fly-mock output lives in-tree with the mock source it packages. The
   // mock's Dockerfile sits right next to its fly.toml, so the build
   // context is self-contained — no repo-root requirement.
-  "fly-mock": "./mock/customers",
+  "fly-mock": "./examples/mock-backend",
 };
 
 export interface ScaffoldWriteResult {

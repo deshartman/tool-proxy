@@ -39,7 +39,7 @@ CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
 # ship inside connector/ and are the source `init` copies from.
 ENV_FILE="$ROOT/.env"
 YAML_FILE="$ROOT/connector.yaml"
-MOCK_DATA_FILE="$ROOT/mock/customers/data.ts"
+MOCK_DATA_FILE="$ROOT/examples/mock-backend/data.ts"
 
 # Rebuild if dist/ is missing OR stale relative to source. Without this, a
 # source-only edit (e.g. a fix to src/boot/lifecycle.ts) silently runs the
@@ -83,19 +83,16 @@ if [ ! -f "$MOCK_DATA_FILE" ]; then
   exit 1
 fi
 
-# Per-MCP install: every Type 1 folder that ships its own package.json with
-# third-party SDK deps is self-contained — those SDKs live in the folder's
-# own node_modules so they never hoist into the connector workspace. On
-# first run (or any time a folder's node_modules has been blown away)
-# install its deps before booting. The Dockerfile runs the same loop at
-# image-build time; this is the dev-mode mirror.
-# Folders with no package.json, or with an empty `dependencies` block
-# (sample, crm today) skip cleanly — their imports (zod, the connector
-# SDK) resolve via Node's parent-dir walk to the workspace root.
-# Note: if you bump a dep version in package.json but node_modules
-# already exists, this loop won't notice — run `npm install` in that
-# folder yourself to pick up the new version.
-for dir in "$ROOT"/mcp/local/*/ "$ROOT"/bundled-mcps/*/; do
+# Per-MCP deps install: every folder under bundled-mcps/ or customer-mcps/
+# that ships its own package.json with third-party SDK deps installs into its
+# own node_modules so those SDKs never hoist into the connector workspace.
+# The Dockerfile runs the same loop at image-build time; this is the dev-mode
+# mirror. Folders with no package.json or an empty dependencies block skip
+# cleanly — framework imports (zod, the connector SDK) resolve via Node's
+# parent-dir walk to the workspace root. Bump a dep version in package.json
+# while node_modules already exists? This loop won't notice — run
+# `npm install` in that folder yourself.
+for dir in "$ROOT"/bundled-mcps/*/ "$ROOT"/customer-mcps/*/; do
   [ -f "$dir/package.json" ] || continue
   depcount=$(node -e "console.log(Object.keys(require('$dir/package.json').dependencies||{}).length)" 2>/dev/null || echo 0)
   [ "$depcount" = "0" ] && continue

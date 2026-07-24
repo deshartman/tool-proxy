@@ -150,7 +150,7 @@ export default recentOrders;
 
 Tools in the same folder can `import { recordOrder } from "../resources/recent-orders.js"` and call it on every successful order operation — the resource then reflects the latest state on every read.
 
-For URI templates with variables (e.g. `crm://customers/{id}`), use the SDK's `ResourceTemplate` type — see [`mcp/local/sample/resources/uuids-recent.ts`](../mcp/local/sample/resources/uuids-recent.ts) for the canonical pattern.
+For URI templates with variables (e.g. `crm://customers/{id}`), use the SDK's `ResourceTemplate` type — see [`examples/demos/sample/resources/uuids-recent.ts`](../examples/demos/sample/resources/uuids-recent.ts) for the canonical pattern.
 
 ## Restart vs. refresh
 
@@ -233,7 +233,7 @@ These are validated at boot by [src/manifest/validate.ts](../connector/src/manif
 
 1. **Each file default-exports a `Tool` / `Prompt` / `Resource` object.** Named exports work too — the runner picks the first one matching the matching shape.
 2. **Tools we author declare `outputSchema`.** Lets controller-side procedure authors write `{{ hydrate:<server>.<tool>.<field> }}` and have it type-checked.
-3. **Wrap single-scalar outputs in `{ value }`.** Stable field name regardless of tool semantics — see [`mcp/local/sample/tools/now.ts`](../mcp/local/sample/tools/now.ts) for the canonical example.
+3. **Wrap single-scalar outputs in `{ value }`.** Stable field name regardless of tool semantics — see [`examples/demos/sample/tools/now.ts`](../examples/demos/sample/tools/now.ts) for the canonical example.
 4. **Return `structuredContent` AND `content`.** The first is the schema-typed JSON; the second is the human-readable rendering.
 5. **`envKeys` lists the env vars your tool reads.** Optional but strongly recommended — the controller UI uses it to render the right form fields.
 6. **Prompts and resources don't declare `outputSchema`.** That field is tools-only. The MCP protocol's `prompts/get` and `resources/read` are typed by the prompt's `argsSchema` and the resource's `mimeType` respectively.
@@ -241,7 +241,7 @@ These are validated at boot by [src/manifest/validate.ts](../connector/src/manif
 
 ## Live examples
 
-- [`mcp/local/sample/`](../mcp/local/sample/) — `tools/` (`now`, `slow_echo`, `uuid`, `weather`), `prompts/weather-briefing.ts`, `resources/uuids-recent.ts`. The fullest worked example — all three sibling categories. No external services. Live drop-in: no `server.ts`, no `package.json`, no yaml entry.
+- [`examples/demos/sample/`](../examples/demos/sample/) — `tools/` (`now`, `slow_echo`, `uuid`, `weather`), `prompts/weather-briefing.ts`, `resources/uuids-recent.ts`. The fullest worked example — all three sibling categories. No external services. Live drop-in: no `server.ts`, no `package.json`, no yaml entry.
 
 ## Cross-references
 

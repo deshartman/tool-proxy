@@ -8,7 +8,7 @@
 //   DEMO_CUSTOMER_SURNAME    family name          default "Demo"
 //   DEMO_CUSTOMER_PHONE      E.164 phone          default "+15551239999"
 //
-// Set these in mock/customers/.env (gitignored) when you want live calls
+// Set these in examples/mock-backend/.env (gitignored) when you want live calls
 // or SMS from your own phone to route through the demo. With nothing set,
 // the mock still boots — falls back to Dana Demo on a 555 reserved-range
 // number that can't collide with a real subscriber.

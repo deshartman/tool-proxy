@@ -417,7 +417,7 @@ app = "{{APP_NAME}}"
 primary_region = "iad"
 
 [build]
-  # Built from mock/customers/Dockerfile (see sibling file).
+  # Built from examples/mock-backend/Dockerfile (see sibling file).
   dockerfile = "Dockerfile"
 
 [env]

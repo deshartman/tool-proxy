@@ -13,7 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const sampleDir = resolve(here, "..", "mcp", "local", "sample");
+const sampleDir = resolve(here, "..", "examples", "demos", "sample");
 const tsxBin = resolve(here, "..", "node_modules", "tsx", "dist", "cli.mjs");
 
 const port = "7901";
