@@ -103,7 +103,7 @@ npm run build
 
 # Connector-level config lives at the repo root — the connector reads
 # .env and connector.yaml from CWD. Templates live here as the tracked
-# source-of-truth; postbuild.mjs copies them into packages/connector/ so
+# source-of-truth; postbuild.mjs copies them into connector/ so
 # they ship in the runtime image (where `mcp-connector init`, run inside
 # the container, copies them out to the customer's mounted config path).
 cp connector.yaml.example connector.yaml
@@ -170,12 +170,12 @@ To pick up changes to `mcp_servers`, restart the script — those connections ha
 ## Tests
 
 ```bash
-cd packages/connector
+cd connector
 npm test            # one-shot vitest run
 npm run test:watch  # watch mode
 ```
 
-Tests live at `packages/connector/tests/**/*.test.ts` (peer-tests, not colocated — keeps tests outside `tsconfig.json`'s `rootDir: "src"` so they don't compile into `dist/` and ship in the OCI image). Suite is regression-driven: cases are added when manual scenarios surface real bugs, not for coverage.
+Tests live at `connector/tests/**/*.test.ts` (peer-tests, not colocated — keeps tests outside `tsconfig.json`'s `rootDir: "src"` so they don't compile into `dist/` and ship in the OCI image). Suite is regression-driven: cases are added when manual scenarios surface real bugs, not for coverage.
 
 ## CLI
 
@@ -206,7 +206,7 @@ Per-cloud walkthroughs remain in [docs/deploy/](docs/deploy/README.md): [AWS Far
 - **Inspector binds to 127.0.0.1 only.** It carries the bcrypt-protected webhook URL with a copy button by design. Reach it via port-forward / exec, never via a public LB.
 - **No LLM, no agent loop, no document handling.** This is a tool dispatcher with policy.
 
-See [CLAUDE.md](CLAUDE.md) and [packages/connector/README.md](packages/connector/README.md) for details.
+See [CLAUDE.md](CLAUDE.md) and [connector/README.md](connector/README.md) for details.
 
 ## Reference branch
 

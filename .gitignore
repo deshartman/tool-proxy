@@ -16,7 +16,7 @@ __pycache__/
 .mypy_cache/
 
 # Env files. Never commit; templates are *.env.example (source-of-truth at
-# the repo root; postbuild.mjs copies them into packages/connector/ so they
+# the repo root; postbuild.mjs copies them into connector/ so they
 # ship in the runtime image).
 .env
 *.env.*
@@ -38,13 +38,13 @@ __pycache__/
 **/fly.toml
 !**/fly.toml.example
 
-# The packages/connector/ copies of the templates are BUILD ARTIFACTS
-# written by scripts/postbuild.mjs — the tracked source lives at the repo
-# root. These rules must come AFTER the un-ignore lines above (git respects
-# the last matching rule), otherwise the templates would be tracked in two
-# places and drift.
-packages/connector/.env.example
-packages/connector/connector.yaml.example
+# The connector/ copies of the templates are BUILD ARTIFACTS written by
+# scripts/postbuild.mjs — the tracked source lives at the repo root. These
+# rules must come AFTER the un-ignore lines above (git respects the last
+# matching rule), otherwise the templates would be tracked in two places
+# and drift.
+connector/.env.example
+connector/connector.yaml.example
 
 # EK bundle's declarative source list — customer-authored copy of
 # sources.yaml.example. Lives at mcp/bundled/enterprise-knowledge/sources.yaml.

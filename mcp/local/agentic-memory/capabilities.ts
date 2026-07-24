@@ -2,7 +2,7 @@
 // MEMORY-MCP-INTERFACE.md §7. Wrapped under `experimental."agentic-memory"`
 // because MCP's ServerCapabilitiesSchema strips unknown top-level keys —
 // see the docstring on CreateMcpHttpServerOptions.capabilities in
-// packages/connector/src/sdk/http-server.ts.
+// connector/src/sdk/http-server.ts.
 //
 // The Controller-side handoff for this shape lives in
 // docs/AGENTIC-MEMORY-MOCK.md.

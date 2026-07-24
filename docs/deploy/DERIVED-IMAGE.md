@@ -23,7 +23,7 @@ connector's drop-in scanner picks them up at boot with **zero connector
 changes**.
 
 Mount point: `/var/lib/mcp-connector/customer-mcps/` (the `PROD_DEFAULT`
-in [`src/dropin.ts`](../../packages/connector/src/dropin.ts)). Folder name
+in [`src/dropin.ts`](../../connector/src/dropin.ts)). Folder name
 = MCP name.
 
 ## Prerequisites

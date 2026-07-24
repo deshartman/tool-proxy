@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
-// Tests live in a peer `packages/connector/tests/` directory mirroring `src/`,
+// Tests live in a peer `connector/tests/` directory mirroring `src/`,
 // not colocated `*.test.ts` files. Reasoning is documented in
 // `.claude/plans/TEST-SUITE.md` — short version: the connector's
 // `tsconfig.json` has `rootDir: "src"`, so colocated tests would compile into
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 // next case. Set globally so individual tests don't need afterEach plumbing.
 //
 // `resolve.alias` mirrors the `paths` block in `tsconfig.base.json` so a
-// test at `packages/connector/tests/mcp-tools/apis/email/email_fetch.test.ts`
+// test at `connector/tests/mcp-tools/apis/email/email_fetch.test.ts`
 // can write `import { emailFetch } from "@mcp/bundled/twilio/email/tools/email_fetch.js"`
 // instead of an unreadable `../../../../../../mcp/bundled/...` chain. Vitest
 // resolves these via Vite at test runtime; the matching tsconfig paths give
@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 const here = fileURLToPath(new URL(".", import.meta.url));
 export default defineConfig({
   test: {
-    include: ["packages/connector/tests/**/*.test.ts"],
+    include: ["connector/tests/**/*.test.ts"],
     environment: "node",
     unstubEnvs: true,
   },
@@ -34,7 +34,7 @@ export default defineConfig({
     alias: [
       // Source trees we test against. Order matters: more specific first so
       // `@connector/sdk` does not match `@mcp/...`.
-      { find: /^@connector\/(.*)$/, replacement: `${here}packages/connector/src/$1` },
+      { find: /^@connector\/(.*)$/, replacement: `${here}connector/src/$1` },
       { find: /^@mcp\/(.*)$/, replacement: `${here}mcp/$1` },
     ],
   },

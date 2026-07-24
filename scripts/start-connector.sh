@@ -5,7 +5,7 @@
 # root — resolved from CWD by the connector; production containers mount
 # config at /etc/mcp-connector/ instead).
 #
-# To add an MCP, edit ./connector.yaml — see packages/connector/connector.yaml.example
+# To add an MCP, edit ./connector.yaml — see connector/connector.yaml.example
 # for the two patterns (Type 1 / Type 2).
 
 set -euo pipefail
@@ -31,12 +31,12 @@ for pid in $(pgrep -f 'scripts/start-connector\.sh' 2>/dev/null); do
 done
 sleep 1
 
-CONNECTOR_DIR="$ROOT/packages/connector"
+CONNECTOR_DIR="$ROOT/connector"
 CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
 # Live config lives at the repo root — the connector resolves .env and
 # connector.yaml from CWD. In production containers, the customer mounts
 # these at /etc/mcp-connector/ (or a custom path). The *.example templates
-# ship inside packages/connector/ and are the source `init` copies from.
+# ship inside connector/ and are the source `init` copies from.
 ENV_FILE="$ROOT/.env"
 YAML_FILE="$ROOT/connector.yaml"
 MOCK_DATA_FILE="$ROOT/mock/customers/data.ts"

@@ -1,7 +1,7 @@
 # AGENTIC-MEMORY-MOCK — Controller-side handoff
 
 > **Status:** v1 (2026-07-17) — mocked reference implementation only
-> **Repo location:** `mcp/local/agentic-memory/` (drop-in) + `packages/connector/tests/integration/agentic-memory-smoke.test.ts` (spec walk)
+> **Repo location:** `mcp/local/agentic-memory/` (drop-in) + `connector/tests/integration/agentic-memory-smoke.test.ts` (spec walk)
 > **Implements:** [MEMORY-MCP-INTERFACE.md v2 (2026-07-16)](../.claude/plans/MEMORY-MCP-INTERFACE.md) — the customer-side of §§4–7, §10, §11
 
 This document is what the Controller team consumes to integrate against a running instance of the agentic-memory mock. It describes the **actual wire shape** the connector advertises, not the spec-idealised shape — read §2 first.
@@ -201,13 +201,13 @@ Empty values throw `invalid_identifier`.
 The full smoke suite lives at:
 
 ```
-packages/connector/tests/integration/agentic-memory-smoke.test.ts
+connector/tests/integration/agentic-memory-smoke.test.ts
 ```
 
 Run it:
 
 ```bash
-cd packages/connector
+cd connector
 npm test -- tests/integration/agentic-memory-smoke.test.ts
 ```
 

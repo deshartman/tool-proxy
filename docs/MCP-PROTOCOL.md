@@ -12,7 +12,7 @@
 >   - **Local MCPs rescan** — adds `local-mcps-rescan` (controller → connector) and `local-mcps-rescan-ack` (connector → controller) for operator-triggered drop-in folder rescans without a connector restart. See §"v1.2 — Local MCP rescan".
 > - **v1.3** (this revision): **Customer drop-in approval gate** — adds `mcp-discovered` (connector → controller), `mcp-enable` (controller → connector), `mcp-disable` (controller → connector), `mcp-enable-ack` (connector → controller). Customer-authored drop-in MCPs no longer auto-enable when the connector finds the folder; their tools are withheld from the manifest until the controller sends `mcp-enable`. The controller becomes the gate for what surfaces to the LLM. See §"v1.3 — Customer drop-in approval gate".
 >
-> Pre-existing frames (`register`, `register-ack`, `manifest-delta`, `rpc`, `heartbeat`, `goodbye`, `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`) are documented in [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) and [CLAUDE.md](../CLAUDE.md).
+> Pre-existing frames (`register`, `register-ack`, `manifest-delta`, `rpc`, `heartbeat`, `goodbye`, `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`) are documented in [connector/src/tunnel/frames.ts](../connector/src/tunnel/frames.ts) and [CLAUDE.md](../CLAUDE.md).
 
 ## Transport
 
@@ -204,7 +204,7 @@ Two protocol-visible consequences:
 
 2. **Tool count changes over time.** When the controller pushes `creds-update` with the missing keys, the supervisor restarts the child; the child registers tools this time; the connector emits a `manifest-delta` to the controller. Conversely, when the operator removes creds, the next restart yields an empty tool list and the connector emits a delta removing them.
 
-**Server-level `envKeys` declaration.** A creds-gated MCP MUST declare its required keys at the server level (`createMcpHttpServer({ envKeys: [...] })`), not just per-tool. Why: when no tools are registered, per-tool aggregation is empty; the connector's `creds-request` would advertise zero envKeys; the controller would have nothing to fill in even when its tunnel-security row holds the right values. The server-level declaration is what tells the controller *what to populate* before any tool exists. The SDK aggregator at [packages/connector/src/sdk/http-server.ts](../packages/connector/src/sdk/http-server.ts) prefers server-level over per-tool when both are set.
+**Server-level `envKeys` declaration.** A creds-gated MCP MUST declare its required keys at the server level (`createMcpHttpServer({ envKeys: [...] })`), not just per-tool. Why: when no tools are registered, per-tool aggregation is empty; the connector's `creds-request` would advertise zero envKeys; the controller would have nothing to fill in even when its tunnel-security row holds the right values. The server-level declaration is what tells the controller *what to populate* before any tool exists. The SDK aggregator at [connector/src/sdk/http-server.ts](../connector/src/sdk/http-server.ts) prefers server-level over per-tool when both are set.
 
 **Gating granularity — per-service group, not per-tool or whole-bundle.** The Twilio bundle splits into two independent credential groups:
 
@@ -237,8 +237,8 @@ When the controller has no value for an `envKeys`-requested key, the reply MUST 
 
 **Why:**
 
-- The connector's project-wide rule (see [packages/connector/src/env.ts](../packages/connector/src/env.ts)) treats empty string as "not set," so the gating check `!process.env[key]` returns true either way and the bundle behaves identically — zero tools register for the SendGrid group.
-- BUT the connector's no-op-skip restart guard ([mcp-supervisor.ts](../packages/connector/src/mcp-supervisor.ts) `envEquals`) compares the previously-applied `controllerEnv` to the new one by exact key set + value equality. `{}` and `{SENDGRID_API_KEY: ""}` are NOT equal — so two identical "no SendGrid creds" pushes (e.g. controller redelivering after a WS reconnect) thrash the child even though nothing changed.
+- The connector's project-wide rule (see [connector/src/env.ts](../connector/src/env.ts)) treats empty string as "not set," so the gating check `!process.env[key]` returns true either way and the bundle behaves identically — zero tools register for the SendGrid group.
+- BUT the connector's no-op-skip restart guard ([mcp-supervisor.ts](../connector/src/mcp-supervisor.ts) `envEquals`) compares the previously-applied `controllerEnv` to the new one by exact key set + value equality. `{}` and `{SENDGRID_API_KEY: ""}` are NOT equal — so two identical "no SendGrid creds" pushes (e.g. controller redelivering after a WS reconnect) thrash the child even though nothing changed.
 - The empty-string shape is also visually confusing in the inspector and audit log: "controller says: empty value" reads differently from "controller has no value." Keep them distinct on the wire.
 
 **Symmetric rule for `creds-update`:** same — omit, don't empty-string.
@@ -283,7 +283,7 @@ The connector advertises the union of `envKeys` an MCP needs in its `creds-reque
 **Per-tool (default).** Each tool can declare its own keys; the SDK aggregates and de-dupes them.
 
 ```ts
-// packages/connector/src/sdk/tool.ts
+// connector/src/sdk/tool.ts
 export interface Tool {
   name: string;
   envKeys?: string[];   // optional; env vars this tool needs
@@ -301,7 +301,7 @@ await createMcpHttpServer({
 });
 ```
 
-When both shapes are set, **server-level wins** (it's the authoritative declaration). The SDK aggregator: [packages/connector/src/sdk/http-server.ts](../packages/connector/src/sdk/http-server.ts).
+When both shapes are set, **server-level wins** (it's the authoritative declaration). The SDK aggregator: [connector/src/sdk/http-server.ts](../connector/src/sdk/http-server.ts).
 
 Authoring guidance:
 - Declare every env var the tool/server reads at runtime.
@@ -504,7 +504,7 @@ No restart, no error, WS stays open.
 
 ## Pre-existing frames (orientation only)
 
-The frames below are unchanged by this revision. See [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) for current schemas:
+The frames below are unchanged by this revision. See [connector/src/tunnel/frames.ts](../connector/src/tunnel/frames.ts) for current schemas:
 
 - `register` — connector → controller, first frame after WS open
 - `register-ack` — controller → connector, ack with `connectorId` (and optional error code on rejection)
@@ -660,7 +660,7 @@ type McpAuthSpec =
       scopes?: string[] };
       // Connector mints + caches a JWT via client_credentials grant against
       // env[tokenUrlEnvKey] and attaches `Authorization: Bearer <jwt>`.
-      // Reuses packages/connector/src/auth/oauth-provider.ts.
+      // Reuses connector/src/auth/oauth-provider.ts.
 ```
 
 **Auth shape is on the wire; values are not.** The controller stores creds in its existing per-org credential surface. When the connector asks for them via `creds-request` (v1), the response fills the env keys this entry declared. The same `creds-update` push path applies to rotations.
@@ -672,7 +672,7 @@ type McpAuthSpec =
 | `stdio` + `command` | Type 2 stdio (`transport: "stdio"`, `command: [...]`) — same as today's `aviation-weather` |
 | `http` + `url` | Type 2 http (`transport: "http"`, `endpoint: <url>`, `headers: {...}` synthesized from auth) |
 | `streamable-http` + `url` | Same as `http` (the SDK transport choice; connector treats them identically on the spec layer) |
-| `sse` + `url` | Type 2 sse — supervisor `transport: "http"` spec with internal `__transportKind: "sse"` marker; routed to `connectSse` in [`servers/connect.ts`](../packages/connector/src/servers/connect.ts). Auth headers flow through `requestInit.headers` on the recurring POST requests. |
+| `sse` + `url` | Type 2 sse — supervisor `transport: "http"` spec with internal `__transportKind: "sse"` marker; routed to `connectSse` in [`servers/connect.ts`](../connector/src/servers/connect.ts). Auth headers flow through `requestInit.headers` on the recurring POST requests. |
 | `websocket` + `url` | Type 2 websocket — supervisor `transport: "http"` spec with internal `__transportKind: "websocket"` marker; routed to `connectWebSocket`. Separate from the connector ↔ controller `/mcp-tunnel` WS. **Auth must be embedded in the URL** (token query param, basic-auth in URL userinfo, etc.) — the SDK's WebSocket transport accepts no headers; resolved auth headers are dropped with a warn. |
 
 > **WebSocket clarification (CRITICAL).** A `transport: "websocket"` 3rd-party MCP means the **connector dials a separate WS** out to the upstream MCP server's URL to talk JSON-RPC. This is **completely independent** from the connector ↔ controller `/mcp-tunnel` WS that this entire protocol rides on. They share no auth, no socket, no lifecycle.
@@ -683,7 +683,7 @@ For HTTP-family transports, the connector resolves the `auth` shape into outboun
 
 - `kind: "bearer"` → `Authorization: Bearer ${env[envKey]}`
 - `kind: "header"` → `${headerName}: ${env[envKey]}`
-- `kind: "oauth2-client-credentials"` → connector mints a JWT via the `client_credentials` grant against `env[tokenUrlEnvKey]`, caches with <60s pre-expiry refresh (reuses [packages/connector/src/auth/oauth-provider.ts](../packages/connector/src/auth/oauth-provider.ts)), attaches `Authorization: Bearer <jwt>`.
+- `kind: "oauth2-client-credentials"` → connector mints a JWT via the `client_credentials` grant against `env[tokenUrlEnvKey]`, caches with <60s pre-expiry refresh (reuses [connector/src/auth/oauth-provider.ts](../connector/src/auth/oauth-provider.ts)), attaches `Authorization: Bearer <jwt>`.
 
 For stdio, the connector passes the env vars to the subprocess (existing path); auth is the upstream subprocess's responsibility (e.g. aviation-weather-mcp reads its own API keys from env).
 
@@ -951,7 +951,7 @@ The connector's boot soft-wait expects a snapshot to arrive within ~5s of regist
 
 ## v1.2 — Local MCP rescan (controller-triggered)
 
-The customer-authored "local" MCP shape is folders under `${MCP_DROPIN_DIR}/<name>/{tools,prompts,resources}/*.ts` discovered by the connector at boot (see [src/dropin.ts](../packages/connector/src/dropin.ts) and the authoring walkthrough at [docs/AUTHOR-LOCAL-MCP.md](AUTHOR-LOCAL-MCP.md)). Without an explicit refresh frame, dropping a new folder into a running connector requires a process restart for the controller to see it. v1.2 closes that gap with a single round-trip on the existing tunnel.
+The customer-authored "local" MCP shape is folders under `${MCP_DROPIN_DIR}/<name>/{tools,prompts,resources}/*.ts` discovered by the connector at boot (see [src/dropin.ts](../connector/src/dropin.ts) and the authoring walkthrough at [docs/AUTHOR-LOCAL-MCP.md](AUTHOR-LOCAL-MCP.md)). Without an explicit refresh frame, dropping a new folder into a running connector requires a process restart for the controller to see it. v1.2 closes that gap with a single round-trip on the existing tunnel.
 
 Two frames, both opaque to the customer:
 
@@ -1160,7 +1160,7 @@ interface McpDiscoveredFrame {
 Sent at two emission points:
 
 1. **Boot.** After `register` is sent (so the controller has a `connectorId` to scope against), one frame per drop-in MCP discovered on disk. The connector emits this for ALL drop-ins, including ones the controller may have approved previously — the connector has no persistent approval state, and trusts the controller to reply `mcp-enable` for the ones it has on file.
-2. **Runtime rescan.** When [`LocalMcpsCoordinator.rescan()`](../packages/connector/src/tunnel/local-mcps-coordinator.ts) discovers a new drop-in folder and spawns its child, one frame per added MCP.
+2. **Runtime rescan.** When [`LocalMcpsCoordinator.rescan()`](../connector/src/tunnel/local-mcps-coordinator.ts) discovers a new drop-in folder and spawns its child, one frame per added MCP.
 
 **Deliberately NOT in the payload:**
 - `inputSchema` / `outputSchema` — the actual call surface; withheld until approval.
@@ -1397,7 +1397,7 @@ When adding a frame, update this document FIRST, then implement.
 
 ## Cross-references
 
-- [packages/connector/src/tunnel/frames.ts](../packages/connector/src/tunnel/frames.ts) — TypeScript type definitions for all frames.
-- [packages/connector/src/tunnel/client.ts](../packages/connector/src/tunnel/client.ts) — connector-side WS client.
+- [connector/src/tunnel/frames.ts](../connector/src/tunnel/frames.ts) — TypeScript type definitions for all frames.
+- [connector/src/tunnel/client.ts](../connector/src/tunnel/client.ts) — connector-side WS client.
 - [docs/AUTHOR-LOCAL-MCP.md](AUTHOR-LOCAL-MCP.md) — author-side walkthrough for the v1.2 drop-in shape (tools, prompts, resources).
 - [CLAUDE.md](../CLAUDE.md) — connector architecture, "Wire protocol — frames" section.

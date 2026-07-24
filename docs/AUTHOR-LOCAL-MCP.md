@@ -18,7 +18,7 @@ mcp/local/<name>/
     └── <resource>.ts
 ```
 
-The folder name (`<name>`) becomes the MCP's name. Each file default-exports a `Tool`, `Prompt`, or `Resource` object — the connector's drop-in scanner ([packages/connector/src/dropin.ts](../packages/connector/src/dropin.ts)) discovers the folder, and the synthesized child runtime ([packages/connector/src/sdk/dropin-runner.ts](../packages/connector/src/sdk/dropin-runner.ts)) wires every item into a per-folder subprocess. The three sibling categories are independently optional — a tools-only folder is the most common shape.
+The folder name (`<name>`) becomes the MCP's name. Each file default-exports a `Tool`, `Prompt`, or `Resource` object — the connector's drop-in scanner ([connector/src/dropin.ts](../connector/src/dropin.ts)) discovers the folder, and the synthesized child runtime ([connector/src/sdk/dropin-runner.ts](../connector/src/sdk/dropin-runner.ts)) wires every item into a per-folder subprocess. The three sibling categories are independently optional — a tools-only folder is the most common shape.
 
 **Why split prompts and resources from tools.** They are different in kind:
 
@@ -229,7 +229,7 @@ No in-repo MCP currently uses the third-party-SDK shape; the prior `mcp/bundled/
 
 ## Authoring rules to know
 
-These are validated at boot by [src/manifest/validate.ts](../packages/connector/src/manifest/validate.ts):
+These are validated at boot by [src/manifest/validate.ts](../connector/src/manifest/validate.ts):
 
 1. **Each file default-exports a `Tool` / `Prompt` / `Resource` object.** Named exports work too — the runner picks the first one matching the matching shape.
 2. **Tools we author declare `outputSchema`.** Lets controller-side procedure authors write `{{ hydrate:<server>.<tool>.<field> }}` and have it type-checked.
@@ -245,6 +245,6 @@ These are validated at boot by [src/manifest/validate.ts](../packages/connector/
 
 ## Cross-references
 
-- [packages/connector/README.md](../packages/connector/README.md) — connector overview + boot / build / inspect.
+- [connector/README.md](../connector/README.md) — connector overview + boot / build / inspect.
 - [docs/MCP-PROTOCOL.md](MCP-PROTOCOL.md) — wire-format contract between connector and controller. §"v1.2 — MCP server-method extension" covers prompts / resources / completions / logging on the wire; §"v1.2 — Local MCP rescan" describes the **Refresh local MCPs** frame; §"v1.3 — Customer drop-in approval gate" describes the approval handshake.
 - [CLAUDE.md](../CLAUDE.md) — connector architecture, "Three MCP integration patterns" section.

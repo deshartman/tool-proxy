@@ -2,7 +2,7 @@
 
 Demo MCP server backing the **Refund Eligibility** procedure. Thin client over the mock customer service at [mock/customers/](../../../mock/customers/).
 
-Authoring shape: **drop-in**. The folder ships only `tools/*.ts` (and this README). The connector's drop-in scanner ([packages/connector/src/dropin.ts](../../../packages/connector/src/dropin.ts)) discovers it at boot and the synthesized child runtime ([packages/connector/src/sdk/dropin-runner.ts](../../../packages/connector/src/sdk/dropin-runner.ts)) wires the tools — no `server.ts`, no `package.json`, no yaml entry. The folder name (`crm`) becomes the MCP name.
+Authoring shape: **drop-in**. The folder ships only `tools/*.ts` (and this README). The connector's drop-in scanner ([connector/src/dropin.ts](../../../connector/src/dropin.ts)) discovers it at boot and the synthesized child runtime ([connector/src/sdk/dropin-runner.ts](../../../connector/src/sdk/dropin-runner.ts)) wires the tools — no `server.ts`, no `package.json`, no yaml entry. The folder name (`crm`) becomes the MCP name.
 
 | Tool | Role | Purpose |
 |------|------|---------|
@@ -28,8 +28,8 @@ Then the connector (terminal 2):
 
 ```bash
 npm install && npm run build
-cp packages/connector/connector.yaml.example packages/connector/connector.yaml
-cp packages/connector/.env.example packages/connector/.env
+cp connector/connector.yaml.example connector/connector.yaml
+cp connector/.env.example connector/.env
 ./scripts/start-connector.sh
 ```
 

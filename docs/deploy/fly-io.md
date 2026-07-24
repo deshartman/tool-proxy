@@ -41,7 +41,7 @@ Two commands. That's it.
 # 1. Generate fly.toml. Default outDir is the repo root (`.`) — the
 #    generated fly.toml MUST live at repo root because Fly's build context
 #    is locked to the fly.toml's directory, and our Dockerfile needs the
-#    repo root as context (it COPYs package.json, packages/connector/,
+#    repo root as context (it COPYs package.json, connector/,
 #    mcp/, bundles/).
 mcp-connector deploy init --target fly --name acme-prod \
   --controller-url https://your-controller.example.com --yes
@@ -53,7 +53,7 @@ mcp-connector deploy init --target fly --name acme-prod \
 mcp-connector deploy apply --target fly
 ```
 
-Under the hood `deploy apply` runs the five Fly operations you'd otherwise type by hand: `fly apps create`, `fly postgres create + attach --variable-name POSTGRES_URL` (Fly's default `DATABASE_URL` doesn't match what the connector reads), `fly secrets set CONNECTOR_KEY_B64`, `fly volumes create state`, and finally `fly deploy`. See [`packages/connector/src/deploy/apply.ts`](../../packages/connector/src/deploy/apply.ts) for the exact sequence.
+Under the hood `deploy apply` runs the five Fly operations you'd otherwise type by hand: `fly apps create`, `fly postgres create + attach --variable-name POSTGRES_URL` (Fly's default `DATABASE_URL` doesn't match what the connector reads), `fly secrets set CONNECTOR_KEY_B64`, `fly volumes create state`, and finally `fly deploy`. See [`connector/src/deploy/apply.ts`](../../connector/src/deploy/apply.ts) for the exact sequence.
 
 Then configure the tunnel via the inspector (below).
 

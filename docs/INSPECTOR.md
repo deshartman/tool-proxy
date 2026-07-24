@@ -103,7 +103,7 @@ If the controller has a value for `TWILIO_AUTH_TOKEN`, that's what the child see
 
 ### What never leaks
 
-The session creds view is built around a strict no-leak contract. Pinned by the test pack at [`packages/connector/tests/inspector/session-creds-leak.test.ts`](../packages/connector/tests/inspector/session-creds-leak.test.ts):
+The session creds view is built around a strict no-leak contract. Pinned by the test pack at [`connector/tests/inspector/session-creds-leak.test.ts`](../connector/tests/inspector/session-creds-leak.test.ts):
 
 - Pasted values **never** appear in any HTTP response from the inspector (apply, clear, env-keys, events, frames, manifest).
 - Pasted values **never** appear in pino log lines (the logger has a redact config; runtime backstop for accidental `log.info({env}, ...)` slips).

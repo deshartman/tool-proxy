@@ -55,9 +55,9 @@ if (!process.env.POSTGRES_URL || !process.env.CONNECTOR_KEY_FILE) {
   process.exit(1);
 }
 
-const { ConfigStore } = await import(`${ROOT}/packages/connector/dist/config-store/index.js`);
-const { resolveMasterKey } = await import(`${ROOT}/packages/connector/dist/config-store/master-key.js`);
-const { initSodium } = await import(`${ROOT}/packages/connector/dist/config-store/seal.js`);
+const { ConfigStore } = await import(`${ROOT}/connector/dist/config-store/index.js`);
+const { resolveMasterKey } = await import(`${ROOT}/connector/dist/config-store/master-key.js`);
+const { initSodium } = await import(`${ROOT}/connector/dist/config-store/seal.js`);
 
 await initSodium();
 const masterKey = resolveMasterKey();

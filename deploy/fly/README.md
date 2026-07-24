@@ -105,7 +105,7 @@ fly secrets set CONNECTOR_KEY_B64="$KEY_B64" --app mcp-connector-acme-prod
 ```
 
 The entrypoint decodes this into `/etc/mcp-connector/connector.key` at boot.
-See `packages/connector/entrypoint.sh` for the decode logic.
+See `connector/entrypoint.sh` for the decode logic.
 
 ### 5. Create the state volume
 

@@ -19,7 +19,7 @@ speed — use [DERIVED-IMAGE.md](./DERIVED-IMAGE.md) for that.
 ## The mount point
 
 `/var/lib/mcp-connector/customer-mcps/` — this is `PROD_DEFAULT` in
-[`src/dropin.ts`](../../packages/connector/src/dropin.ts). Each
+[`src/dropin.ts`](../../connector/src/dropin.ts). Each
 subdirectory is one MCP; the folder name is the server name.
 
 The connector's drop-in scanner (`discoverDropins`) walks this path at
@@ -274,7 +274,7 @@ This is where the volume-mount path earns its keep. Two triggers:
   round-trip. Useful when iterating locally.
 
 Operator-driven only — there is no filesystem watcher. See
-`packages/connector/README.md` §"Refresh without a restart" for the
+`connector/README.md` §"Refresh without a restart" for the
 rationale.
 
 ## Verified example
