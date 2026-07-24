@@ -44,8 +44,15 @@ export async function buildManifest(
   // `__dropin: true` marker; we don't repeat that classification here.
   // Boot wiring threads through `discoverDropins()` output keyed by name.
   dropinSpecsByName?: Map<string, unknown>,
+  // Additional specs discovered outside the yaml (bundled-mcps/ + drop-ins).
+  // Author classification (authorOf) sees these — a bundled entry needs its
+  // __author marker preserved so ServerDescriptor.author is "twilio".
+  additionalSpecs?: Iterable<import("../config.js").McpServerSpec>,
 ): Promise<ToolManifest> {
   const specByName = new Map(config.mcp_servers.map((server) => [server.name, server]));
+  if (additionalSpecs) {
+    for (const spec of additionalSpecs) specByName.set(spec.name, spec);
+  }
 
   const allEntries: Array<ServerDescriptor | undefined> = await Promise.all(
     [...servers.values()].map(async (server) => {

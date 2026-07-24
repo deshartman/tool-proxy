@@ -69,6 +69,13 @@ connector/connector.yaml.example
 # identity + memory data. Deterministic externalIds mean deleting this
 # file rehydrates cleanly on next call; safe to gitignore.
 bundled-mcps/agentic-memory/.state.json
+
+# customer-mcps/ is the runtime drop-zone for customer-authored Type 1 MCPs.
+# Its README ships (tracked below) so a customer clone shows the shape; every
+# actual drop-in stays local — this is a runtime mount point, not a place
+# where the customer repo carries other people's code.
+customer-mcps/*
+!customer-mcps/README.md
 graphify-out/*
 
 # Architectural planning docs. Historical plans landed in git through mid-2026;

@@ -34,7 +34,7 @@ import { LocalMcpsCoordinator } from "../tunnel/local-mcps-coordinator.js";
 import { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
 import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
-import { discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
+import { discoverBundled, discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
 import { resolveAuthFromEnv, resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
@@ -182,19 +182,28 @@ async function bootFromEnv(): Promise<void> {
     startInspector(inspectorPort, inspector);
   }
 
-  // 2a. Discover MCP_DROPIN_DIR folders that aren't already named in the
-  // yaml. Drop-ins coexist with hand-written Type 1 entries: the yaml
-  // entry wins for the same folder name, and a folder with server.ts
-  // present is treated as today's hand-written Type 1.
+  // 2a. Discover MCPs from two scanners: MCP_BUNDLED_DIR (Twilio-shipped,
+  // always on — D1 of CUSTOMER-REPO-CARVE-OUT) and MCP_DROPIN_DIR (customer
+  // drop-ins). Both coexist with hand-written yaml entries: the yaml entry
+  // wins for a same-name folder, and a folder with server.ts is treated as
+  // today's hand-written Type 1.
   const yamlNames = new Set(config.mcp_servers.map((s) => s.name));
-  const dropins = discoverDropins({ yamlNames });
+  const bundled = discoverBundled({ yamlNames });
+  const dropinYamlNames = new Set([...yamlNames, ...bundled.map((b) => b.name)]);
+  const dropins = discoverDropins({ yamlNames: dropinYamlNames });
+  if (bundled.length > 0) {
+    log.info(
+      { bundled: bundled.map((b) => b.name) },
+      `discovered bundled MCPs from ${envOptional("MCP_BUNDLED_DIR") ?? "default dir"}`,
+    );
+  }
   if (dropins.length > 0) {
     log.info(
       { dropins: dropins.map((d) => d.name) },
       `discovered drop-in MCPs from ${envOptional("MCP_DROPIN_DIR") ?? "default dir"}`,
     );
   }
-  const allSpecs: SupervisedSpec[] = [...config.mcp_servers, ...dropins];
+  const allSpecs: SupervisedSpec[] = [...config.mcp_servers, ...bundled, ...dropins];
 
   // v1.3 — drop-in name set, threaded through every buildManifest call so
   // the gate predicate knows which entries to consult `isApproved` for.
@@ -340,6 +349,7 @@ async function bootFromEnv(): Promise<void> {
     (name) => supervisor.fetchEnvKeys(name),
     (name) => approval.isApproved(name),
     dropinSpecsByName,
+    [...bundled, ...dropinSpecsByName.values()],
   );
   // Manifest-time advisory: one log.warn per shipped MCP whose tools lack
   // outputSchema. Tools without a schema are still callable — the controller
@@ -724,6 +734,7 @@ async function bootFromEnv(): Promise<void> {
         (name) => supervisor.fetchEnvKeys(name),
         (name) => approval.isApproved(name),
         dropinSpecsByName,
+        [...bundled, ...dropinSpecsByName.values()],
       );
       inspector?.setManifest(manifest);
 
@@ -757,6 +768,7 @@ async function bootFromEnv(): Promise<void> {
         (name) => supervisor.fetchEnvKeys(name),
         (name) => approval.isApproved(name),
         dropinSpecsByName,
+        [...bundled, ...dropinSpecsByName.values()],
       );
       const delta = diffManifest(manifest, nextManifest);
       manifest = nextManifest;
@@ -906,16 +918,28 @@ async function bootFromDb(): Promise<void> {
     }));
   }
 
-  // Discover drop-in MCPs
+  // Discover MCPs from two scanners: MCP_BUNDLED_DIR (Twilio-shipped,
+  // always on — D1 of CUSTOMER-REPO-CARVE-OUT) and MCP_DROPIN_DIR (customer
+  // drop-ins). Bundled entries also exclude their own names from the
+  // customer-drop-in scan so a drop-in that happens to share a bundled name
+  // doesn't collide.
   const yamlNames = new Set(config.mcp_servers.map((s) => s.name));
-  const dropins = discoverDropins({ yamlNames });
+  const bundled = discoverBundled({ yamlNames });
+  const dropinYamlNames = new Set([...yamlNames, ...bundled.map((b) => b.name)]);
+  const dropins = discoverDropins({ yamlNames: dropinYamlNames });
+  if (bundled.length > 0) {
+    log.info(
+      { bundled: bundled.map((b) => b.name) },
+      `discovered bundled MCPs from ${envOptional("MCP_BUNDLED_DIR") ?? "default dir"}`,
+    );
+  }
   if (dropins.length > 0) {
     log.info(
       { dropins: dropins.map((d) => d.name) },
       `discovered drop-in MCPs from ${envOptional("MCP_DROPIN_DIR") ?? "default dir"}`,
     );
   }
-  const allSpecs: SupervisedSpec[] = [...config.mcp_servers, ...dropins];
+  const allSpecs: SupervisedSpec[] = [...config.mcp_servers, ...bundled, ...dropins];
 
   const dropinSpecsByName = new Map<string, DropinSpec>(dropins.map((spec) => [spec.name, spec]));
 
@@ -1004,6 +1028,7 @@ async function bootFromDb(): Promise<void> {
     (name) => supervisor.fetchEnvKeys(name),
     (name) => approval.isApproved(name),
     dropinSpecsByName,
+    [...bundled, ...dropinSpecsByName.values()],
   );
   validateManifestSchemas(manifest, config);
   log.info({ tools: countTools(manifest) }, `built manifest`);
@@ -1329,6 +1354,7 @@ async function bootFromDb(): Promise<void> {
         (name) => supervisor.fetchEnvKeys(name),
         (name) => approval.isApproved(name),
         dropinSpecsByName,
+        [...bundled, ...dropinSpecsByName.values()],
       );
       inspector?.setManifest(manifest);
 
@@ -1362,6 +1388,7 @@ async function bootFromDb(): Promise<void> {
         (name) => supervisor.fetchEnvKeys(name),
         (name) => approval.isApproved(name),
         dropinSpecsByName,
+        [...bundled, ...dropinSpecsByName.values()],
       );
       const delta = diffManifest(manifest, nextManifest);
       manifest = nextManifest;

@@ -147,7 +147,7 @@ WORKDIR /app/connector
 # Default config location — mount the customer's yaml at this path. dir:
 # entries inside the yaml are resolved relative to the yaml's directory,
 # so a yaml at /etc/mcp-connector/config.yaml referencing
-# dir: /app/mcp/local/sample works.
+# dir: /app/bundled-mcps/enterprise-knowledge works.
 ENV CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
 # Default master-key location — matches the path the entrypoint script
 # writes to when $CONNECTOR_KEY_B64 is set (Fly.io / ACA / any secret-as-env
@@ -156,6 +156,11 @@ ENV CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
 # the connector's env-loader fails with "CONNECTOR_KEY_FILE is required"
 # even though the entrypoint just wrote the key to the default path.
 ENV CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key
+# Bundled MCPs dir. The runtime image copies bundled-mcps/ to /app/bundled-mcps
+# at build time, and the connector's scanner (discoverBundled) reads this path
+# to auto-register Twilio-shipped MCPs. Override at deploy time only when
+# extending the image via volume mount rather than derived-image COPY.
+ENV MCP_BUNDLED_DIR=/app/bundled-mcps
 
 EXPOSE 9090
 ENTRYPOINT ["/usr/local/bin/mcp-connector-entrypoint.sh"]

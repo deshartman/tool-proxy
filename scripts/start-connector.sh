@@ -141,13 +141,22 @@ for launcher in "$ROOT"/bundled-mcps/*/source/dev-launch.sh; do
   fi
 done
 
-# Drop-in MCP dir: in dev we point at mcp/local/ so tools/*.ts folders that
-# don't carry a hand-written server.ts get auto-discovered by the connector
-# (W-A1/A2 of MCP-LOADING). Production images use the customer-mount path
-# /var/lib/mcp-connector/customer-mcps/. Don't clobber a user-supplied value.
+# Drop-in MCP dir: in dev we point at customer-mcps/ so tools/*.ts folders
+# get auto-discovered by the connector (W-A1/A2 of MCP-LOADING). Production
+# images use the customer-mount path /var/lib/mcp-connector/customer-mcps/.
+# Don't clobber a user-supplied value.
 if [ -z "${MCP_DROPIN_DIR:-}" ]; then
-  export MCP_DROPIN_DIR="$ROOT/mcp/local"
+  export MCP_DROPIN_DIR="$ROOT/customer-mcps"
   echo "[start-connector] MCP_DROPIN_DIR=$MCP_DROPIN_DIR"
+fi
+
+# Bundled MCP dir: in dev we point at bundled-mcps/ so Twilio-shipped MCPs
+# (agentic-memory, enterprise-knowledge stub) get auto-discovered. Production
+# images bake this to /app/bundled-mcps via the Dockerfile's ENV directive.
+# D1 (always on) — no allowlist, no gate; every folder here registers.
+if [ -z "${MCP_BUNDLED_DIR:-}" ]; then
+  export MCP_BUNDLED_DIR="$ROOT/bundled-mcps"
+  echo "[start-connector] MCP_BUNDLED_DIR=$MCP_BUNDLED_DIR"
 fi
 
 echo "[start-connector] starting connector with CONNECTOR_CONFIG=$YAML_FILE"

@@ -158,9 +158,11 @@ export function isType3Bundled(
 
 // Derive the MCP's author from its spec — surfaced on the wire as
 // ServerDescriptor.author so the controller can group Twilio-shipped MCPs
-// separately from customer-authored ones in the UI. Today only Type 3
-// bundles (entries with `bundled:` set) classify as "twilio" — they're
-// pre-installed in the connector image and definitionally Twilio-shipped.
+// separately from customer-authored ones in the UI. Two classifiers:
+//   1. Type 3 bundles (stdio + `bundled:` set) → pre-installed in the
+//      connector image, definitionally Twilio-shipped.
+//   2. Type 1 drop-ins discovered under MCP_BUNDLED_DIR — the scanner tags
+//      them via the __author marker on DropinSpec (see dropin.ts).
 // Everything else is "customer". The prior `dir:` → `mcp/bundled/`
 // classifier branch was retired with the bundled-twilio MCP on 2026-06-30;
 // the standalone @deshartman/twilio-mcp + @deshartman/segment-mcp packages
@@ -168,6 +170,7 @@ export function isType3Bundled(
 // tags author-side, no path-sniffing required.
 export function authorOf(spec: McpServerSpec): string {
   if (spec.transport === "stdio" && spec.bundled) return "twilio";
+  if ((spec as { __author?: string }).__author === "twilio") return "twilio";
   return "customer";
 }
 
