@@ -69,6 +69,12 @@ packages/connector/connector.yaml.example
 mcp/local/agentic-memory/.state.json
 graphify-out/*
 
+# Architectural planning docs. Historical plans landed in git through mid-2026;
+# going forward, new plans live on-disk only and never ship in the customer
+# carve-out repo. Existing tracked plans stay tracked (gitignore only affects
+# untracked files) — this rule prevents new plans from entering git.
+architectural-plans/
+
 # Snapshot tarballs written by scripts/snapshot-crm.sh.
 .local-backups/
 
