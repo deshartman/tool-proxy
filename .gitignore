@@ -15,36 +15,29 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
-# Env files. Never commit; templates are *.env.example (source-of-truth at
-# the repo root; postbuild.mjs copies them into connector/ so they
-# ship in the runtime image).
+# Env files. Never commit any .env — deployment platforms provide secrets
+# via their own mechanism (K8s Secret, Docker Compose secrets, Fly secrets,
+# etc.), so there is no customer-authored .env.example at repo root anymore.
+# Per-bundle .env.example templates under bundled-mcps/<name>/ or
+# customer-mcps/<name>/ stay allowlisted for authors who use dir/.env as
+# a dev escape hatch.
 .env
 *.env.*
-!.env.example
 !*.env.example
 
 .DS_Store
 
-# Connector live config — customer-authored copy of connector.yaml.example.
-# Lives at the repo root (dev) or the container's mounted config path
-# (production); resolved from CWD by the connector. Gitignored; only the
-# *.example template ships.
+# Connector live config — legacy dev-only. In production, MCPs come from the
+# controller push, bundled-mcps/ auto-discovery, and customer-mcps/ drop-ins.
+# The tracked source-of-truth template was retired in the customer-repo
+# carve-out; a personal working-tree copy at ./connector.yaml stays gitignored.
 **/connector.yaml
-!**/connector.yaml.example
 
-# Fly.io generated fly.toml (customer-specific; template lives at
-# fly.toml.example). Scaffold output for --target fly / fly-mock lands
-# here; deploy/fly/ ships the .example reference only.
-**/fly.toml
+# Fly.io generated fly.toml. `mcp-connector deploy init --target fly` writes
+# it at the repo root; deploy/fly/fly.toml.example ships as the tracked
+# reference.
+/fly.toml
 !**/fly.toml.example
-
-# The connector/ copies of the templates are BUILD ARTIFACTS written by
-# scripts/postbuild.mjs — the tracked source lives at the repo root. These
-# rules must come AFTER the un-ignore lines above (git respects the last
-# matching rule), otherwise the templates would be tracked in two places
-# and drift.
-connector/.env.example
-connector/connector.yaml.example
 
 # EK bundle's declarative source list — legacy customer-authored yaml.
 # Retiring in EK-SOURCES-CONSUMER-UI.md (persistence moves to Postgres +

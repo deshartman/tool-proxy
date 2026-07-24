@@ -266,69 +266,10 @@ ${minimalSuffix}
     expect(config.tunnel?.auth_token).toBe("ts_real_token");
   });
 
-  it("SHIPPED connector.yaml.example loads cleanly with no tunnel env vars set (would have caught the original Step 8 bug)", () => {
-    // This is the specific test the plan's Step 8 skipped ("trivially
-    // eyeball-verifiable at boot"). It exercises the ACTUAL file that ships
-    // in the repo, not an inline string — so a future edit that reverts
-    // `${VAR:-}` back to a bare `${VAR}` in connector.yaml.example (or that
-    // adds a new bare-interpolator anywhere in the tunnel: block) fails HERE,
-    // where a customer would otherwise hit it on first boot after following
-    // the env→db migration doc. The inline-yaml tests above pin the schema
-    // contract; this test pins the yaml TEMPLATE that customers actually get.
-    //
-    // Load the real file, splice in one mcp_server (the shipped example has
-    // its Type 3 entry commented out and the schema requires min(1)), then
-    // parse under an empty tunnel-env — exactly the target end state a
-    // db-mode operator lands in once CONTROLLER_URL / CONNECTOR_NAME /
-    // TUNNEL_AUTH_TOKEN have been stripped from .env.
-    const here = dirname(fileURLToPath(import.meta.url));
-    const shippedYamlPath = resolve(here, "../../..", "connector.yaml.example");
-    const shipped = readFileSync(shippedYamlPath, "utf8");
-
-    // TRULY unset every tunnel-related env var — a db-mode operator finishing
-    // migration will have removed these lines from .env entirely, so at boot
-    // `process.env.CONTROLLER_URL` is undefined (NOT ""). This distinction
-    // matters: the interpolator returns "" verbatim if the var is present-
-    // but-empty, but THROWS if the var is truly undefined and has no ${VAR:-}
-    // default. Testing with "" masked a real regression: a bare ${CONTROLLER_URL}
-    // in a comment slipped through with vi.stubEnv("", "") but exploded on
-    // real boot. Pass undefined to force the "genuinely absent" scenario.
-    vi.stubEnv("CONTROLLER_URL", undefined as unknown as string);
-    vi.stubEnv("CONNECTOR_NAME", undefined as unknown as string);
-    vi.stubEnv("TUNNEL_AUTH_TOKEN", undefined as unknown as string);
-
-    // The shipped yaml has mcp_servers with only comments and no actual
-    // entries. Zod .min(1) needs at least one entry. Inject a stub as the
-    // first entry so this test isolates the tunnel-block behavior and
-    // doesn't also fail on the mcp_servers gate (which is a separate concern
-    // with its own tests). Append-at-end would land inside `policy:` and
-    // break YAML — inject right after `mcp_servers:` instead.
-    const withStub = shipped.replace(
-      /^mcp_servers:$/m,
-      "mcp_servers:\n  - name: stub\n    transport: http\n    endpoint: http://127.0.0.1:9999/mcp",
-    );
-    // Sanity: the replacement must have hit exactly once. If yaml.example
-    // ever renames the block, this test should fail loudly, not silently.
-    expect(withStub).not.toBe(shipped);
-
-    const yamlPath = writeYaml(withStub);
-
-    // The moment of truth: with no env vars set, the shipped yaml.example
-    // MUST NOT throw on load. Prior to the Step 8 fix, this would throw
-    // `Missing env var \${CONTROLLER_URL} at ...:44` on the first
-    // interpolator hit.
-    expect(() => loadConfig(yamlPath)).not.toThrow();
-
-    const config = loadConfig(yamlPath);
-
-    // The block parses to empty-string fields — bootFromDb's WARN branch
-    // catches this ("legacy tunnel: block ignored under db mode"), and
-    // bootFromEnv's guard throws with a clear message (tested separately).
-    expect(config.tunnel).toBeDefined();
-    expect(config.tunnel?.controller_url).toBe("");
-    expect(config.tunnel?.name).toBe("");
-    expect(config.tunnel?.auth_token).toBeUndefined();
-  });
+  // Note: the prior "SHIPPED connector.yaml.example loads cleanly with no
+  // tunnel env vars set" pin retired with the customer-repo carve-out —
+  // there is no connector.yaml.example anymore. The remaining inline-yaml
+  // tests above still cover the ${VAR:-} interpolator contract.
 });
 
 describe("loadConfig — per-entry .env isolation (the 'highest-risk piece' per CLAUDE.md)", () => {

@@ -20,8 +20,6 @@
   "files": [
     "dist",
     "public",
-    ".env.example",
-    "connector.yaml.example",
     "README.md"
   ],
   "scripts": {

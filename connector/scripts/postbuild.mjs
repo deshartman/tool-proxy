@@ -1,29 +1,18 @@
-// Two build fix-ups on `connector/`:
+// Prepend `#!/usr/bin/env node` + chmod +x on dist/index.js so it can run
+// directly as the `mcp-connector` bin. tsc strips/ignores shebangs in source,
+// so we patch the compiled output. This runs after `tsc -b`.
 //
-//   1. Prepend `#!/usr/bin/env node` + chmod +x on dist/index.js so it can
-//      run directly as the `mcp-connector` bin. tsc strips/ignores shebangs
-//      in source, so we patch the compiled output.
-//   2. Copy the repo-root template files (`.env.example`,
-//      `connector.yaml.example`) into `connector/` so they land in the
-//      runtime image via the `files:` allowlist. Source-of-truth lives at
-//      the repo root (dev's view — next to the live `.env` / `connector.yaml`
-//      they edit); this step propagates them to the package before the
-//      Dockerfile copies `connector/` into the runtime layer. The
-//      `connector/` copies are gitignored build artifacts.
-//
-// This runs after `tsc -b`. Inside the container, the templates live at
-// `/app/connector/{.env,connector.yaml}.example` — which is what
-// `findShippedEnvExample` resolves via `import.meta.url` when
-// `mcp-connector init` runs (e.g. via `docker exec` or `fly ssh console`).
-import { readFileSync, writeFileSync, chmodSync, copyFileSync } from "node:fs";
+// The template-copy loop that used to live here (propagating .env.example +
+// connector.yaml.example into connector/ for the runtime image) retired with
+// the `init` subcommand in the customer-repo carve-out: the deployment
+// platform provides secrets via its own mechanism, so there are no
+// customer-authored templates to copy anymore.
+import { readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const pkgRoot = resolve(here, "..");   // connector/
-const repoRoot = resolve(pkgRoot, ".."); // repo root
-
-// (1) shebang + chmod on the bin
+const pkgRoot = resolve(here, "..");  // connector/
 const target = resolve(pkgRoot, "dist", "index.js");
 const SHEBANG = "#!/usr/bin/env node\n";
 const body = readFileSync(target, "utf8");
@@ -31,10 +20,3 @@ if (!body.startsWith(SHEBANG)) {
   writeFileSync(target, SHEBANG + body, "utf8");
 }
 chmodSync(target, 0o755);
-
-// (2) copy repo-root template files into connector/ so `files:`
-// ships them. Failure to find a source is a build-time error — the templates
-// are load-bearing for `mcp-connector init`.
-for (const name of [".env.example", "connector.yaml.example"]) {
-  copyFileSync(resolve(repoRoot, name), resolve(pkgRoot, name));
-}

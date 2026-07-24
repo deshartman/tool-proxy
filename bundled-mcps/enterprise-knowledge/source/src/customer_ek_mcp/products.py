@@ -134,7 +134,7 @@ def _build_gdrive_product() -> Product:
             "Index a Google Drive folder. URL is the full "
             "https://drive.google.com/drive/folders/<id> form copied "
             "from a browser tab. Requires the [gdrive] install extra and "
-            "EK_GDRIVE_AUTH + provider env vars (see .env.example)."
+            "EK_GDRIVE_AUTH + provider env vars (see docs/ENV-VARS.md)."
         ),
         register_input_schema=_common_register_input_schema(),
         url_match=gdrive_reader.url_match,

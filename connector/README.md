@@ -288,8 +288,10 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 | Subcommand | Use |
 |---|---|
 | `start` (default) | run the connector. Spawns Type 1 children, dials Type 2 entries, opens the tunnel. Flags: `--config <path>`, `--inspector-port <n>`, `--no-inspector` |
-| `init` | YAML wizard. Asks for tunnel fields, then walks you through Type 1 / Type 2 entries. `--output <path>`, `--force` |
+| `doctor` | preflight checks against the deployment env (Postgres reachability, master-key file readable, required env vars set). Exit 0 all-ok, 1 any fail, 2 any warn no fail. Designed for `doctor && start` runbooks. |
 | `discover` | non-interactive: print `tools/list` per server. `--config <path>` |
+| `deploy init` | generate cloud deployment manifests. Does NOT touch the cloud. |
+| `deploy apply` | actually deploy to Fly.io (other targets forthcoming). |
 | `version` | print the connector version |
 
 ## Files that ship (in the OCI image)

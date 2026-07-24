@@ -3,7 +3,6 @@ import { parseArgs } from "node:util";
 import { boot } from "./boot/lifecycle.js";
 import { runDiscover } from "./discover.js";
 import { runDoctor } from "./doctor.js";
-import { runInit } from "./init.js";
 import { runDeployInit } from "./deploy/scaffold.js";
 import { runDeployApply } from "./deploy/apply.js";
 import { createLogger } from "./logger.js";
@@ -15,9 +14,8 @@ const USAGE = `usage: mcp-connector <command> [options]
 
 commands:
   start                   run the connector (default). Auto-registers with the controller on first connect.
-  init                    interactive wizard to write connector.yaml
   discover                connect to MCP servers and print tools/list
-  doctor                  run preflight checks against your .env and connector.yaml
+  doctor                  run preflight checks against the deployment env
   deploy init             generate cloud deployment manifests (fargate/gke/aca/compose/fly).
                           Does NOT touch the cloud — writes files for the operator to apply.
   deploy apply            actually deploy to the cloud (fly today; other targets forthcoming).
@@ -44,9 +42,6 @@ async function dispatch(): Promise<void> {
       return;
     case "discover":
       await runDiscover(rest);
-      return;
-    case "init":
-      await runInit(rest);
       return;
     case "doctor": {
       const code = await runDoctor(rest);
