@@ -59,7 +59,7 @@ Then configure the tunnel via the inspector (below).
 
 ## Deploy the mock backend (demo only)
 
-Skip this section if you're plugging into a real CRM API — set `MOCK_CUSTOMERS_URL` in your `mcp/local/crm/.env` to the real endpoint before you build the connector image.
+Skip this section if you're plugging into a real CRM API — set `MOCK_CUSTOMERS_URL` in your `customer-mcps/crm/.env` to the real endpoint before you build the connector image.
 
 For the demo, the mock is a **private** Fly app in the same Fly organization — reachable only from the connector via Fly's private DNS, never from the public internet. This mirrors an on-prem enterprise backend behind a firewall.
 
@@ -90,7 +90,7 @@ fly ssh console -a mock-customers-acme-prod -C "wget -qO- http://localhost:7400/
 Then, in the connector repo before building the connector image, set the crm drop-in's URL to the private DNS name:
 
 ```env
-# mcp/local/crm/.env
+# customer-mcps/crm/.env
 MOCK_CUSTOMERS_URL=http://mock-customers-acme-prod.internal:7400
 ```
 

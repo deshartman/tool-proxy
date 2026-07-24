@@ -580,7 +580,7 @@ via Fly's WireGuard mesh — never publicly.
 Verify:
     fly ssh console -a {{APP_NAME}} -C "wget -qO- http://localhost:7400/healthz"
 
-In the connector's \`mcp/local/crm/.env\`, before building the connector image:
+In the connector's \`customer-mcps/crm/.env\`, before building the connector image:
 
     MOCK_CUSTOMERS_URL=http://{{APP_NAME}}.internal:7400
 `,

@@ -7,7 +7,7 @@ The earlier PoC (in-shim LLM agent, `can_answer` / `ask_procedure`) is preserved
 ## What it does
 
 1. Reads `connector.yaml` (yaml-listed bundled / hand-written MCPs) AND auto-discovers customer-authored drop-in folders under `${MCP_DROPIN_DIR}/<name>/`:
-   - **Type 1 (customer-authored, drop-in shape — default).** Folder under `mcp/local/<name>/{tools,prompts,resources}/*.ts`. No yaml entry, no `server.ts`. The drop-in scanner finds the folder; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) spawns a per-folder subprocess.
+   - **Type 1 (customer-authored, drop-in shape — default).** Folder under `customer-mcps/<name>/{tools,prompts,resources}/*.ts`. No yaml entry, no `server.ts`. The drop-in scanner finds the folder; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) spawns a per-folder subprocess.
    - **Type 1 (hand-written, legacy escape hatch).** Yaml entry with `transport: http` + `dir:` (no `endpoint`). The connector spawns `tsx <dir>/server.ts` as a child. No in-repo MCP uses this shape today; it stays available for a future Type 1 MCP that needs to ship its own `package.json` (e.g. a third-party SDK that can't hoist to the workspace).
    - **Type 2 — connect to existing 3rd-party MCP.** Pushed via the controller UI (NOT the yaml) as `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) v1.1.
 2. Connects to each, runs `tools/list` to discover their tools.
@@ -143,10 +143,10 @@ To pick up `mcp_servers` changes, restart the connector — those connections ar
 
 ### Author a local MCP (drop-in)
 
-Drop a folder under `mcp/local/<name>/tools/` with one or more tool files. That's it — no `server.ts`, no `package.json`, no `.env`, no yaml entry. The connector's drop-in scanner ([`src/dropin.ts`](src/dropin.ts)) discovers the folder at boot; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) wires every tool into a per-folder subprocess. Folder name = MCP name.
+Drop a folder under `customer-mcps/<name>/tools/` with one or more tool files. That's it — no `server.ts`, no `package.json`, no `.env`, no yaml entry. The connector's drop-in scanner ([`src/dropin.ts`](src/dropin.ts)) discovers the folder at boot; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) wires every tool into a per-folder subprocess. Folder name = MCP name.
 
 ```ts
-// mcp/local/my-mcp/tools/echo.ts
+// customer-mcps/my-mcp/tools/echo.ts
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
@@ -178,7 +178,7 @@ For more depth — env precedence, `Refresh local MCPs`, the third-party-SDK cas
 
 For **bundled multi-service MCPs** (Twilio-shipped, hand-written), prefer a service-first folder layout (`<service>/{tools,prompts,resources}/` under the bundle root) over a flat `tools/` tree. Customer drop-ins stay flat.
 
-`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `mcp/local/`. Folders that *do* have a `server.ts` or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative (legacy escape hatch; new MCPs should use the drop-in shape).
+`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `customer-mcps/`. Folders that *do* have a `server.ts` or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative (legacy escape hatch; new MCPs should use the drop-in shape).
 
 #### Refresh without a restart
 
@@ -204,7 +204,7 @@ If your tool needs env values (API keys, DB URLs, anything secret), declare them
 **Conditional tool registration** — when an MCP has hard creds requirements, gate `tool` registration on env presence at the **server level**, NOT inside individual tools:
 
 ```ts
-// mcp/bundled/<name>/server.ts (sketch)
+// bundled-mcps/<name>/server.ts (sketch)
 const REQUIRED = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"] as const;
 const missing = REQUIRED.filter((k) => !process.env[k]);
 const tools: Tool[] = [];
@@ -240,7 +240,7 @@ Type 2 tools (external `endpoint:` / `command:` MCPs) advertise whatever their u
 Both follow the same author shape as tools — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. **In drop-in folders** (the default authoring shape) the runner auto-discovers `prompts/*.ts` and `resources/*.ts` siblings of `tools/`; nothing else needed. Worked examples in [`examples/demos/sample/prompts/weather-briefing.ts`](../../examples/demos/sample/prompts/weather-briefing.ts) and [`examples/demos/sample/resources/uuids-recent.ts`](../../examples/demos/sample/resources/uuids-recent.ts).
 
 ```
-mcp/local/my-mcp/
+customer-mcps/my-mcp/
 ├── tools/
 │   └── echo.ts            # exports default Tool { name, register }
 ├── prompts/
@@ -252,7 +252,7 @@ mcp/local/my-mcp/
 For the legacy hand-written shape, the factory accepts `prompts: Prompt[]` and `resources: Resource[]` alongside `tools`:
 
 ```ts
-// mcp/local/my-mcp/server.ts (legacy escape hatch only)
+// customer-mcps/my-mcp/server.ts (legacy escape hatch only)
 await createMcpHttpServer({
   name: "my-mcp",
   tools: [echo],
@@ -302,8 +302,8 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 | `public/` | inspector UI assets (HTML/JS/CSS) |
 | `package.json` | metadata + the `bin` entry |
 | `node_modules/` (production only) | `npm prune --omit=dev` in the build stage; includes `tsx` (used by the spawner) |
-| `/app/mcp/local/` | Type 1 source folders; the spawner runs `tsx /app/mcp/local/<name>/server.ts` for entries with `dir:` set |
-| `/app/mcp/bundled/` | Type 3 stubs (per-bundle `.env.example`); customer mounts a `.env` next to it for credentials |
+| `/var/lib/mcp-connector/customer-mcps/` | Type 1 source folders; the spawner runs `tsx /var/lib/mcp-connector/customer-mcps/<name>/server.ts` for entries with `dir:` set |
+| `/app/bundled-mcps/` | Type 3 stubs (per-bundle `.env.example`); customer mounts a `.env` next to it for credentials |
 | `/opt/bundled-mcps/<name>/.venv/` | Pre-installed Python venv per Type 3 bundle; the connector spawns `<entrypoint>` from `BUNDLED_MCPS` |
 
 ## Run standalone

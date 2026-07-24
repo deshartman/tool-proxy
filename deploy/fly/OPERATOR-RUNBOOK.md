@@ -23,7 +23,7 @@ Reach the inspector via `fly proxy 9090:9090 -a mcp-connector-<CUSTOMER>`.
    Tunnel modal, not via `fly secrets`).
 4. **(Optional) Mock backend deployed first** — if you're running the demo,
    deploy `examples/mock-backend/` as a separate Fly app in the same Fly org first,
-   then update `mcp/local/crm/.env` with the private DNS URL before you build
+   then update `customer-mcps/crm/.env` with the private DNS URL before you build
    the connector image. See [`../../examples/mock-backend/README.md`](../../examples/mock-backend/README.md).
 
 ## Deploy — the short version

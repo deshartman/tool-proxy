@@ -4,7 +4,7 @@ A throwaway HTTP service that holds customer + interaction fixtures for
 local demos. **Not** an MCP, **not** bundled into the connector image,
 **not** referenced from `connector.yaml`. Dev-only.
 
-The [orders MCP](../../mcp/local/orders/) reads from this service via
+The [orders MCP](../../customer-mcps/orders/) reads from this service via
 `MOCK_CUSTOMERS_URL` (default `http://localhost:7400`).
 
 ## Run

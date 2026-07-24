@@ -29,7 +29,7 @@ The folder name (`<name>`) becomes the MCP's name. Each file default-exports a `
 ## Minimal example
 
 ```ts
-// mcp/local/orders/tools/get-order.ts
+// customer-mcps/orders/tools/get-order.ts
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
@@ -75,7 +75,7 @@ That's the whole file. Save it, restart the connector (or click **Refresh local 
 A `Prompt` mirrors the `Tool` interface — one module per prompt, default-exported, with a `register(server)` that calls the SDK's `registerPrompt`. Args use zod for validation + auto-generated descriptions on `prompts/list`.
 
 ```ts
-// mcp/local/orders/prompts/refund-summary.ts
+// customer-mcps/orders/prompts/refund-summary.ts
 import { z } from "zod";
 import type { Prompt } from "@mcp-shim/connector/sdk";
 
@@ -114,7 +114,7 @@ The controller's procedure-author UI lists `orders.refund_summary` under Prompts
 A `Resource` lets a procedure read read-only canonical state via `resources/read` instead of burning a tool call. URI scheme is your choice; pick one that's specific to your MCP (`orders://recent`, `crm://customers/{id}`).
 
 ```ts
-// mcp/local/orders/resources/recent-orders.ts
+// customer-mcps/orders/resources/recent-orders.ts
 import type { Resource } from "@mcp-shim/connector/sdk";
 
 const recent: string[] = [];
