@@ -631,11 +631,25 @@ async function bootFromEnv(): Promise<void> {
   // Build a creds-request payload for a single MCP. Returns undefined if
   // the MCP isn't registered with the supervisor (defense; should not
   // happen for inspector-driven reloads against current manifest).
+  // Symmetric with buildManifest's additionalSpecs threading — the spec
+  // lookup must include bundled + dropin discovery so agentic-memory (from
+  // bundled-mcps/) resolves as author=twilio, matching what the manifest
+  // reports. Otherwise the connector announces the MCP under one author to
+  // the controller and asks for creds under another, and the controller
+  // returns author_mismatch.
+  function lookupSpec(name: string): McpServerSpec | undefined {
+    return (
+      config.mcp_servers.find((s) => s.name === name) ??
+      bundled.find((s) => s.name === name) ??
+      [...dropinSpecsByName.values()].find((s) => s.name === name)
+    );
+  }
+
   function buildCredsRequestForMcp(
     name: string,
     mcpConfig?: McpConfigCoordinator,
   ): { mcp: string; mcpId?: string; author: string; envKeys: string[] } | undefined {
-    const spec = config.mcp_servers.find((s) => s.name === name);
+    const spec = lookupSpec(name);
     const author = spec ? authorOf(spec) : "customer";
     if (!servers.has(name)) return undefined;
     const mcpId = mcpConfig?.mcpIdFor(name);
@@ -651,7 +665,7 @@ async function bootFromEnv(): Promise<void> {
   ): Promise<void> {
     const requests = await Promise.all(
       [...servers.keys()].map(async (name) => {
-        const spec = config.mcp_servers.find((s) => s.name === name);
+        const spec = lookupSpec(name);
         const author = spec ? authorOf(spec) : "customer";
         const envKeys = await supervisor.fetchEnvKeys(name);
         const mcpId = mcpConfig.mcpIdFor(name);
@@ -1279,11 +1293,23 @@ async function bootFromDb(): Promise<void> {
     startTimers();
   }
 
+  // Symmetric with buildManifest's additionalSpecs threading — bundled +
+  // dropin discovered specs must resolve so agentic-memory returns
+  // author=twilio, matching what the manifest reports. Otherwise the
+  // controller returns author_mismatch on creds-request.
+  function lookupSpec(name: string): McpServerSpec | undefined {
+    return (
+      config.mcp_servers.find((s) => s.name === name) ??
+      bundled.find((s) => s.name === name) ??
+      [...dropinSpecsByName.values()].find((s) => s.name === name)
+    );
+  }
+
   function buildCredsRequestForMcp(
     name: string,
     mcpConfig?: McpConfigCoordinator,
   ): { mcp: string; mcpId?: string; author: string; envKeys: string[] } | undefined {
-    const spec = config.mcp_servers.find((s) => s.name === name);
+    const spec = lookupSpec(name);
     const author = spec ? authorOf(spec) : "customer";
     if (!servers.has(name)) return undefined;
     const mcpId = mcpConfig?.mcpIdFor(name);
@@ -1296,7 +1322,7 @@ async function bootFromDb(): Promise<void> {
   ): Promise<void> {
     const requests = await Promise.all(
       [...servers.keys()].map(async (name) => {
-        const spec = config.mcp_servers.find((s) => s.name === name);
+        const spec = lookupSpec(name);
         const author = spec ? authorOf(spec) : "customer";
         const envKeys = await supervisor.fetchEnvKeys(name);
         const mcpId = mcpConfig.mcpIdFor(name);
