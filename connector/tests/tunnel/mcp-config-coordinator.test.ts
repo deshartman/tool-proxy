@@ -213,7 +213,7 @@ describe("McpConfigCoordinator — snapshot reconciliation", () => {
     ]);
   });
 
-  it("drops snapshots with generation <= lastApplied (out-of-order / duplicate)", async () => {
+  it("drops same-generation snapshots as no-op (WS-reconnect redelivery)", async () => {
     const { coordinator, sent, fake, log } = buildCoordinator();
     await coordinator.handleSnapshot({
       type: "mcp-config-snapshot",
@@ -230,9 +230,35 @@ describe("McpConfigCoordinator — snapshot reconciliation", () => {
 
     expect(fake.registered.has("time")).toBe(false);
     expect(sent).toEqual([]);
+    // Same generation as lastApplied is the expected reconnect
+    // redelivery case — logged at debug, not warn.
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ generation: 5 }),
+      expect.stringContaining("redelivered"),
+    );
+  });
+
+  it("drops snapshots older than lastApplied and warns", async () => {
+    const { coordinator, sent, fake, log } = buildCoordinator();
+    await coordinator.handleSnapshot({
+      type: "mcp-config-snapshot",
+      generation: 5,
+      servers: [STDIO_AVIATION],
+    });
+    sent.length = 0;
+
+    await coordinator.handleSnapshot({
+      type: "mcp-config-snapshot",
+      generation: 3,
+      servers: [STDIO_TIME],
+    });
+
+    expect(fake.registered.has("time")).toBe(false);
+    expect(sent).toEqual([]);
     expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ generation: 5, lastApplied: 5 }),
-      expect.stringContaining("superseded"),
+      expect.objectContaining({ generation: 3, lastApplied: 5 }),
+      expect.stringContaining("older than lastApplied"),
     );
   });
 });
@@ -633,8 +659,9 @@ describe("McpConfigCoordinator — reconnect survival via bind()", () => {
     // The OLD send hook MUST NOT receive any subsequent frames.
     sent.length = 0;
 
-    // A snapshot that drops gen=1 as superseded proves lastAppliedGeneration
-    // also persisted (otherwise gen=1 would re-apply and run startOne again).
+    // A snapshot that drops gen=1 as same-generation redelivery proves
+    // lastAppliedGeneration also persisted (otherwise gen=1 would
+    // re-apply and run startOne again).
     await coordinator.handleSnapshot({
       type: "mcp-config-snapshot",
       generation: 1,
@@ -643,7 +670,7 @@ describe("McpConfigCoordinator — reconnect survival via bind()", () => {
 
     expect(fake.started).toEqual(["aviation-weather", "time"]); // unchanged
     expect(sent).toEqual([]); // old hook silent
-    expect(sentB).toEqual([]); // superseded snapshot doesn't ack either
+    expect(sentB).toEqual([]); // redelivered snapshot doesn't ack either
   });
 
   it("post-reconnect snapshot omitting a prior entry calls supervisor.unregister (THE BUG)", async () => {

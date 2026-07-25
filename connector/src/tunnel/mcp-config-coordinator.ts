@@ -176,10 +176,23 @@ export class McpConfigCoordinator {
 
   async handleSnapshot(frame: McpConfigSnapshotFrame): Promise<void> {
     this.cancelSnapshotWait();
-    if (frame.generation <= this.lastAppliedGeneration) {
+    if (frame.generation === this.lastAppliedGeneration) {
+      // Expected on WS reconnect: controller redelivers the current
+      // snapshot with an unchanged generation. Not a warning — the
+      // no-op is by design.
+      this.log.debug(
+        { generation: frame.generation },
+        `mcp-config-snapshot redelivered (same generation) — no-op`,
+      );
+      return;
+    }
+    if (frame.generation < this.lastAppliedGeneration) {
+      // Genuinely stale — a newer snapshot already landed. Rare (would
+      // require the controller to re-issue an older generation), but the
+      // WARN is worth keeping so it surfaces if it ever does happen.
       this.log.warn(
         { generation: frame.generation, lastApplied: this.lastAppliedGeneration },
-        `mcp-config-snapshot superseded — dropping`,
+        `mcp-config-snapshot older than lastApplied — dropping`,
       );
       return;
     }
