@@ -7,7 +7,7 @@
 # bundles/, all at repo root. A fly.toml under `deploy/fly/` would fail
 # with "Dockerfile not found" at deploy time.
 #
-# See architectural-plans/CODE-DEPLOY.md §B1 for the full analysis. The
+# See CODE-DEPLOY design record §B1 for the full analysis. The
 # scaffold CLI (`mcp-connector deploy init --target fly`) writes to
 # `.` by default for this reason. To then actually deploy, use
 # `mcp-connector deploy apply --target fly` (creates the app, attaches
@@ -15,7 +15,7 @@
 # `fly deploy` — idempotent, safe to re-run).
 #
 # ── Load-bearing invariants ────────────────────────────────────────────
-# Do NOT relax these without reading architectural-plans/CODE-DEPLOY.md.
+# Do NOT relax these without reading CODE-DEPLOY design record.
 #
 #   - No [[services]] and no [http_service] block. The connector is
 #     outbound-only; the inspector on 127.0.0.1:9090 is reachable via
@@ -52,7 +52,7 @@ primary_region = "iad"
   # Fly's private mesh. Loopback-only (default 127.0.0.1) isn't reachable
   # from `fly proxy` — it tunnels to the Machine's fdaa: mesh IP, not to
   # 127.0.0.1. Safe here because this app has no public IP allocated —
-  # `fly ips list` MUST be empty. See architectural-plans/CODE-DEPLOY.md §B4.
+  # `fly ips list` MUST be empty. See CODE-DEPLOY design record §B4.
   INSPECTOR_BIND_ADDR = "::"
   # POSTGRES_URL and CONNECTOR_KEY_B64 arrive via `fly secrets set` — see README.
 

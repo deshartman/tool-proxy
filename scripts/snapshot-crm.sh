@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Snapshot the gitignored dev scaffolding (mcp/local/crm/ + mock/customers/data.ts)
+# Snapshot the gitignored dev scaffolding (customer-mcps/crm/ + examples/mock-backend/data.ts)
 # into a timestamped tarball under .local-backups/. Pair with restore-crm.sh.
 
 set -euo pipefail
@@ -13,11 +13,11 @@ mkdir -p "$BACKUP_DIR"
 cd "$ROOT"
 
 PATHS=()
-[ -d mcp/local/crm ] && PATHS+=(mcp/local/crm)
-[ -f mock/customers/data.ts ] && PATHS+=(mock/customers/data.ts)
+[ -d customer-mcps/crm ] && PATHS+=(customer-mcps/crm)
+[ -f examples/mock-backend/data.ts ] && PATHS+=(examples/mock-backend/data.ts)
 
 if [ ${#PATHS[@]} -eq 0 ]; then
-  echo "snapshot-crm: nothing to snapshot (mcp/local/crm/ and mock/customers/data.ts both missing)" >&2
+  echo "snapshot-crm: nothing to snapshot (customer-mcps/crm/ and examples/mock-backend/data.ts both missing)" >&2
   exit 1
 fi
 

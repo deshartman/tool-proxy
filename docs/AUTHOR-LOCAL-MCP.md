@@ -18,7 +18,7 @@ mcp/local/<name>/
     └── <resource>.ts
 ```
 
-The folder name (`<name>`) becomes the MCP's name. Each file default-exports a `Tool`, `Prompt`, or `Resource` object — the connector's drop-in scanner ([packages/connector/src/dropin.ts](../packages/connector/src/dropin.ts)) discovers the folder, and the synthesized child runtime ([packages/connector/src/sdk/dropin-runner.ts](../packages/connector/src/sdk/dropin-runner.ts)) wires every item into a per-folder subprocess. The three sibling categories are independently optional — a tools-only folder is the most common shape.
+The folder name (`<name>`) becomes the MCP's name. Each file default-exports a `Tool`, `Prompt`, or `Resource` object — the connector's drop-in scanner ([connector/src/dropin.ts](../connector/src/dropin.ts)) discovers the folder, and the synthesized child runtime ([connector/src/sdk/dropin-runner.ts](../connector/src/sdk/dropin-runner.ts)) wires every item into a per-folder subprocess. The three sibling categories are independently optional — a tools-only folder is the most common shape.
 
 **Why split prompts and resources from tools.** They are different in kind:
 
@@ -29,7 +29,7 @@ The folder name (`<name>`) becomes the MCP's name. Each file default-exports a `
 ## Minimal example
 
 ```ts
-// mcp/local/orders/tools/get-order.ts
+// customer-mcps/orders/tools/get-order.ts
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
@@ -75,7 +75,7 @@ That's the whole file. Save it, restart the connector (or click **Refresh local 
 A `Prompt` mirrors the `Tool` interface — one module per prompt, default-exported, with a `register(server)` that calls the SDK's `registerPrompt`. Args use zod for validation + auto-generated descriptions on `prompts/list`.
 
 ```ts
-// mcp/local/orders/prompts/refund-summary.ts
+// customer-mcps/orders/prompts/refund-summary.ts
 import { z } from "zod";
 import type { Prompt } from "@mcp-shim/connector/sdk";
 
@@ -114,7 +114,7 @@ The controller's procedure-author UI lists `orders.refund_summary` under Prompts
 A `Resource` lets a procedure read read-only canonical state via `resources/read` instead of burning a tool call. URI scheme is your choice; pick one that's specific to your MCP (`orders://recent`, `crm://customers/{id}`).
 
 ```ts
-// mcp/local/orders/resources/recent-orders.ts
+// customer-mcps/orders/resources/recent-orders.ts
 import type { Resource } from "@mcp-shim/connector/sdk";
 
 const recent: string[] = [];
@@ -150,7 +150,7 @@ export default recentOrders;
 
 Tools in the same folder can `import { recordOrder } from "../resources/recent-orders.js"` and call it on every successful order operation — the resource then reflects the latest state on every read.
 
-For URI templates with variables (e.g. `crm://customers/{id}`), use the SDK's `ResourceTemplate` type — see [`mcp/local/sample/resources/uuids-recent.ts`](../mcp/local/sample/resources/uuids-recent.ts) for the canonical pattern.
+For URI templates with variables (e.g. `crm://customers/{id}`), use the SDK's `ResourceTemplate` type — see [`examples/demos/sample/resources/uuids-recent.ts`](../examples/demos/sample/resources/uuids-recent.ts) for the canonical pattern.
 
 ## Restart vs. refresh
 
@@ -229,11 +229,11 @@ No in-repo MCP currently uses the third-party-SDK shape; the prior `mcp/bundled/
 
 ## Authoring rules to know
 
-These are validated at boot by [src/manifest/validate.ts](../packages/connector/src/manifest/validate.ts):
+These are validated at boot by [src/manifest/validate.ts](../connector/src/manifest/validate.ts):
 
 1. **Each file default-exports a `Tool` / `Prompt` / `Resource` object.** Named exports work too — the runner picks the first one matching the matching shape.
 2. **Tools we author declare `outputSchema`.** Lets controller-side procedure authors write `{{ hydrate:<server>.<tool>.<field> }}` and have it type-checked.
-3. **Wrap single-scalar outputs in `{ value }`.** Stable field name regardless of tool semantics — see [`mcp/local/sample/tools/now.ts`](../mcp/local/sample/tools/now.ts) for the canonical example.
+3. **Wrap single-scalar outputs in `{ value }`.** Stable field name regardless of tool semantics — see [`examples/demos/sample/tools/now.ts`](../examples/demos/sample/tools/now.ts) for the canonical example.
 4. **Return `structuredContent` AND `content`.** The first is the schema-typed JSON; the second is the human-readable rendering.
 5. **`envKeys` lists the env vars your tool reads.** Optional but strongly recommended — the controller UI uses it to render the right form fields.
 6. **Prompts and resources don't declare `outputSchema`.** That field is tools-only. The MCP protocol's `prompts/get` and `resources/read` are typed by the prompt's `argsSchema` and the resource's `mimeType` respectively.
@@ -241,10 +241,10 @@ These are validated at boot by [src/manifest/validate.ts](../packages/connector/
 
 ## Live examples
 
-- [`mcp/local/sample/`](../mcp/local/sample/) — `tools/` (`now`, `slow_echo`, `uuid`, `weather`), `prompts/weather-briefing.ts`, `resources/uuids-recent.ts`. The fullest worked example — all three sibling categories. No external services. Live drop-in: no `server.ts`, no `package.json`, no yaml entry.
+- [`examples/demos/sample/`](../examples/demos/sample/) — `tools/` (`now`, `slow_echo`, `uuid`, `weather`), `prompts/weather-briefing.ts`, `resources/uuids-recent.ts`. The fullest worked example — all three sibling categories. No external services. Live drop-in: no `server.ts`, no `package.json`, no yaml entry.
 
 ## Cross-references
 
-- [packages/connector/README.md](../packages/connector/README.md) — connector overview + boot / build / inspect.
+- [connector/README.md](../connector/README.md) — connector overview + boot / build / inspect.
 - [docs/MCP-PROTOCOL.md](MCP-PROTOCOL.md) — wire-format contract between connector and controller. §"v1.2 — MCP server-method extension" covers prompts / resources / completions / logging on the wire; §"v1.2 — Local MCP rescan" describes the **Refresh local MCPs** frame; §"v1.3 — Customer drop-in approval gate" describes the approval handshake.
 - [CLAUDE.md](../CLAUDE.md) — connector architecture, "Three MCP integration patterns" section.

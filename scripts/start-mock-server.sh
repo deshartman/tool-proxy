@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Boots the mock customer service used by the orders MCP demo. Dev-only.
-# Reads optional PORT from mock/customers/.env (default 7200).
+# Reads optional PORT from examples/mock-backend/.env (default 7200).
 
 set -euo pipefail
 
@@ -14,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-MOCK_DIR="$ROOT/mock/customers"
+MOCK_DIR="$ROOT/examples/mock-backend"
 ENV_FILE="$MOCK_DIR/.env"
 
 if [ -f "$ENV_FILE" ]; then

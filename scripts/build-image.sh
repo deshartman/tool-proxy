@@ -35,6 +35,6 @@ echo "[build-image] image=$IMAGE platforms=$PLATFORMS action=${ACTION_FLAG:-cach
 docker buildx build \
   --platform "$PLATFORMS" \
   -t "$IMAGE" \
-  -f packages/connector/Dockerfile \
+  -f connector/Dockerfile \
   $ACTION_FLAG \
   .

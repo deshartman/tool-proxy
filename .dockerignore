@@ -1,6 +1,6 @@
 # Build outputs and deps — rebuilt inside the image. Need both root and
 # nested patterns: docker's globs don't recurse, so a bare `*.tsbuildinfo`
-# would let `packages/connector/tsconfig.tsbuildinfo` slip through and
+# would let `connector/tsconfig.tsbuildinfo` slip through and
 # cause `tsc --build` inside the container to skip emit (it sees the
 # cached buildinfo and thinks the output is already there — but `dist/`
 # was correctly excluded, so postbuild then fails on the missing
@@ -20,8 +20,8 @@ dist
 !*.env.example
 
 # Live customer-authored config; only the .example variant ships.
-packages/connector/config/connector-*.yaml
-!packages/connector/config/connector-*.yaml.example
+connector/config/connector-*.yaml
+!connector/config/connector-*.yaml.example
 
 # Repo metadata.
 .git

@@ -1,0 +1,95 @@
+# Production docker-compose for the mcp-connector — single-VM shape.
+#
+# Runs the connector container against a sibling Postgres (used by db mode
+# for the sealed controllers row). Drop customer MCPs at ./customer-mcps/<name>/
+# and they get picked up automatically by the drop-in scanner.
+#
+# Pre-flight (one time), from the repo root:
+#   1. Mint a 32-byte master key:
+#      head -c 32 /dev/urandom > ./deploy/compose/secrets/connector.key
+#      chmod 400 ./deploy/compose/secrets/connector.key
+#   2. Set a Postgres password:
+#      openssl rand -hex 24 > ./deploy/compose/secrets/pg_password
+#      chmod 400 ./deploy/compose/secrets/pg_password
+#   3. Copy the compose env template:
+#      cp deploy/compose/.env.example deploy/compose/.env
+#      # then edit MCP_VERSION if you don't want :latest
+#
+# Bring up (from the repo root):
+#   docker compose -f deploy/compose/docker-compose.prod.yml up -d
+#   docker compose -f deploy/compose/docker-compose.prod.yml exec connector mcp-connector doctor
+#
+# Reach the inspector (loopback-only on the container — port-mapping stays
+# on 127.0.0.1 on the host too):
+#   open http://localhost:9090/
+#
+# Bind tunnel identity via the inspector's Configure Tunnel modal on first
+# boot. No .env edits needed once creds are in the DB.
+
+services:
+  connector:
+    image: ghcr.io/twilio/mcp-connector:${MCP_VERSION:-latest}
+    env_file:
+      # Optional: not required to exist so `docker compose config` can lint
+      # this file in CI without a live env. In prod the operator populates
+      # this via `cp deploy/compose/.env.example deploy/compose/.env`.
+      - path: .env
+        required: false
+    environment:
+      # db mode is the recommended default per CLAUDE.md — creds live in
+      # the sealed controllers row, editable via inspector UI.
+      CONNECTOR_CREDS_SOURCE: db
+      POSTGRES_URL: postgres://mcp:${POSTGRES_PASSWORD}@postgres:5432/mcp_connector
+      CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
+      CONNECTOR_CONFIG: /etc/mcp-connector/config.yaml
+      CONNECTOR_STATE_PATH: /var/lib/mcp-connector/.connector-state.json
+      INSPECTOR_PORT: "9090"
+    ports:
+      # 127.0.0.1 only. Inspector loopback trust boundary — the Webhooks
+      # panel exposes copy-able bcrypt-protected URLs. Do NOT change to
+      # 0.0.0.0 or expose behind a public LB. Reach it via SSH tunnel:
+      #   ssh -L 9090:127.0.0.1:9090 <vm-host>
+      - "127.0.0.1:9090:9090"
+    volumes:
+      # state — writable, persists registrationToken across restarts.
+      - state:/var/lib/mcp-connector
+      # config — read-only. Ships alongside the compose file.
+      - ./connector.yaml:/etc/mcp-connector/config.yaml:ro
+      # master key — read-only, permissions 0400 on the host.
+      - ./secrets/connector.key:/etc/mcp-connector/connector.key:ro
+      # customer drop-in MCPs — read-only. Auto-discovered at boot.
+      # Path is relative to this compose file (deploy/compose/) — up two to
+      # repo-root customer-mcps/. The scanner ignores this mount if the
+      # directory is absent.
+      - ../../customer-mcps:/var/lib/mcp-connector/customer-mcps:ro
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mcp_connector
+      POSTGRES_USER: mcp
+      # Reads the password from the compose secret. Postgres 16-alpine's
+      # entrypoint supports POSTGRES_PASSWORD_FILE natively.
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    secrets:
+      - pg_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcp -d mcp_connector"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+secrets:
+  pg_password:
+    file: ./secrets/pg_password
+
+volumes:
+  state:
+  pg_data:
