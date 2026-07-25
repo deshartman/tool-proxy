@@ -895,6 +895,7 @@ async function bootFromDb(): Promise<void> {
         row = r;
         auth = resolveAuthFromRow(r);
         tunnelDialUrl = r.controllerUrl;
+        inspector?.setControllerUrl(r.controllerUrl);
         await connectTunnelDb("inspector-dial");
       },
       cycleTunnel: async (reason) => {
@@ -912,6 +913,7 @@ async function bootFromDb(): Promise<void> {
           row = fresh;
           auth = resolveAuthFromRow(fresh);
           tunnelDialUrl = fresh.controllerUrl;
+          inspector?.setControllerUrl(fresh.controllerUrl);
         }
         await reconnect(reason, { manual: true });
       },
@@ -1069,6 +1071,7 @@ async function bootFromDb(): Promise<void> {
   );
 
   tunnelDialUrl = row.controllerUrl;
+  inspector?.setControllerUrl(row.controllerUrl);
 
   if (inspector) {
     inspector.setIdentity(
@@ -1201,16 +1204,22 @@ async function bootFromDb(): Promise<void> {
             // swallow ENOENT and any other error — best-effort
           }
         }
-        // Persist registration token to DB
+        // Persist registration token to DB, then nudge the inspector's
+        // Convo Agent panel to re-fetch tunnel config so the REGISTRATION
+        // badge flips to "bound (len=N)" without a page reload.
         if (row && frame.registrationToken) {
-          void store.updateRegistrationToken(row.id, frame.registrationToken);
+          void store.updateRegistrationToken(row.id, frame.registrationToken)
+            .then(() => inspector?.publishTunnelConfigChanged())
+            .catch(() => {});
         }
         return;
       }
       if (frame.type === "register-ack" && frame.error?.code === "unknown_registration_token") {
-        // Clear registration token in DB
+        // Clear registration token in DB, then nudge the inspector.
         if (row) {
-          void store.clearRegistrationToken(row.id);
+          void store.clearRegistrationToken(row.id)
+            .then(() => inspector?.publishTunnelConfigChanged())
+            .catch(() => {});
         }
       }
       baseRouter(frame);

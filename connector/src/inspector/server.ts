@@ -63,6 +63,8 @@ export type InspectorEvent =
   | { kind: "state"; state: DisplayState; reconnect?: ReconnectInfo }
   | { kind: "identity"; identity: Identity }
   | { kind: "header"; header: HeaderInfo }
+  | { kind: "controllerUrl"; controllerUrl: string }
+  | { kind: "tunnelConfigChanged" }
   | { kind: "frame"; tap: FrameTap }
   | { kind: "manifest"; manifest: ToolManifest }
   | { kind: "webhooks"; webhooks: WebhookSummary[] }
@@ -215,6 +217,23 @@ export class Inspector {
   setIdentity(identity: Identity): void {
     this.current.identity = identity;
     this.broadcast({ kind: "identity", identity });
+  }
+
+  // Update the controller URL shown in the top-of-page header. Under db
+  // mode the inspector is constructed with a placeholder URL before the
+  // controllers row loads; bootFromDb calls this once the row is
+  // available (initial dial + inspector-triggered configure/rotate).
+  setControllerUrl(controllerUrl: string): void {
+    this.current.controllerUrl = controllerUrl;
+    this.broadcast({ kind: "controllerUrl", controllerUrl });
+  }
+
+  // Signal the UI's tunnel-config panel (Convo Agent card) to re-fetch
+  // via GET /tunnel/config. Emitted after a successful register-ack under
+  // db mode so the REGISTRATION badge flips from "not registered" to
+  // "bound (len=N)" without requiring a page reload.
+  publishTunnelConfigChanged(): void {
+    this.broadcast({ kind: "tunnelConfigChanged" });
   }
 
   // Patch one or more header fields. Caller passes only the fields that

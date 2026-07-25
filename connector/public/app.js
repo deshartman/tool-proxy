@@ -1486,6 +1486,16 @@ function connectSse() {
         break;
       case 'identity': setIdentity(ev.identity); break;
       case 'header':   setHeader(ev.header); break;
+      case 'controllerUrl':
+        elController.textContent = ev.controllerUrl;
+        break;
+      case 'tunnelConfigChanged':
+        // Emitted by the connector after a successful register-ack (or a
+        // token-clear on unknown_registration_token) so the Convo Agent
+        // panel re-fetches and updates the REGISTRATION badge without a
+        // page reload.
+        void fetchTunnelConfig();
+        break;
       case 'manifest': renderManifest(ev.manifest); break;
       case 'frame':    appendFrame(ev.tap); break;
       case 'webhooks': renderWebhooks(ev.webhooks); break;
