@@ -34,9 +34,9 @@ __pycache__/
 **/connector.yaml
 
 # Fly.io generated fly.toml. `mcp-connector deploy init --target fly` writes
-# it at the repo root; deploy/fly/fly.toml.example ships as the tracked
-# reference.
-/fly.toml
+# it to deploy/fly/fly.toml; the sibling fly.toml.example ships as the
+# tracked reference.
+**/fly.toml
 !**/fly.toml.example
 
 # EK bundle's declarative source list — legacy customer-authored yaml.

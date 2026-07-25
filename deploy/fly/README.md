@@ -38,18 +38,20 @@ Beyond the [common prereqs](README.md#prereqs-every-cloud):
 Two commands. That's it.
 
 ```bash
-# 1. Generate fly.toml. Default outDir is the repo root (`.`) — the
-#    generated fly.toml MUST live at repo root because Fly's build context
-#    is locked to the fly.toml's directory, and our Dockerfile needs the
-#    repo root as context (it COPYs package.json, connector/,
-#    mcp/, bundles/).
+# 1. Generate deploy/fly/fly.toml. Sits alongside per-platform artifacts
+#    for the other deploy targets (deploy/helm/, deploy/terraform/, etc.).
+#    `deploy apply --target fly` always runs fly commands from the repo
+#    root with `-c deploy/fly/fly.toml` so the build context (CWD) is
+#    the full repo — Dockerfile paths in the fly.toml resolve to
+#    connector/Dockerfile as expected.
 mcp-connector deploy init --target fly --name acme-prod \
   --controller-url https://your-controller.example.com --yes
-# Result: ./fly.toml at the repo root.
+# Result: ./deploy/fly/fly.toml.
 
 # 2. Deploy — creates the Fly app + Postgres + master key + state volume,
-#    then runs `fly deploy`. Idempotent — safe to re-run if any step is
-#    interrupted. Foreground so you see build progress live.
+#    then runs `fly deploy -c deploy/fly/fly.toml`. Idempotent — safe to
+#    re-run if any step is interrupted. Foreground so you see build
+#    progress live.
 mcp-connector deploy apply --target fly
 ```
 

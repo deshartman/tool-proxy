@@ -50,18 +50,20 @@ operators who need to run individual steps or diagnose failures.
 
 ### 1. Copy the template and set the app name
 
-The fly.toml **must live at the repo root** — Fly's build context is
-locked to the fly.toml's directory and this connector's Dockerfile needs
-the repo root as context. See §B1 in the [deployment plan](../../architectural-plans/CODE-DEPLOY.md#lessons-learned-2026-07-22--2026-07-23).
+fly.toml lives at **`deploy/fly/fly.toml`** alongside the other per-platform
+artifacts. Every `fly` command in this runbook is invoked from the repo
+root with `-c deploy/fly/fly.toml` (Fly's build context is the CWD, not
+the fly.toml's directory, and this connector's Dockerfile paths resolve
+relative to CWD).
 
 ```bash
 # From the repo root:
-cp deploy/fly/fly.toml.example fly.toml
+cp deploy/fly/fly.toml.example deploy/fly/fly.toml
 # Replace <CUSTOMER> with your customer slug (e.g. acme-prod).
-sed -i.bak 's/<CUSTOMER>/acme-prod/g' fly.toml && rm fly.toml.bak
+sed -i.bak 's/<CUSTOMER>/acme-prod/g' deploy/fly/fly.toml && rm deploy/fly/fly.toml.bak
 ```
 
-Or use the scaffold CLI (also writes to repo root by default):
+Or use the scaffold CLI (writes to `deploy/fly/` by default):
 
 ```bash
 mcp-connector deploy init --target fly --name acme-prod \
@@ -71,7 +73,8 @@ mcp-connector deploy init --target fly --name acme-prod \
 ### 2. Create the Fly app (no deploy yet)
 
 ```bash
-fly launch --no-deploy --copy-config
+# From the repo root:
+fly launch --no-deploy --copy-config -c deploy/fly/fly.toml
 ```
 
 `--copy-config` uses the fly.toml we just edited instead of Fly's generated one.
@@ -124,7 +127,8 @@ Fly's Depot builder only flushes on a real TTY. Redirect to a file so
 you can watch build progress live during the ~3 min initial build:
 
 ```bash
-nohup fly deploy > /tmp/fly-deploy.log 2>&1 &
+# From the repo root:
+nohup fly deploy -c deploy/fly/fly.toml > /tmp/fly-deploy.log 2>&1 &
 tail -f /tmp/fly-deploy.log
 ```
 

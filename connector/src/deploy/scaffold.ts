@@ -33,12 +33,13 @@ const DEFAULT_OUT: Record<ScaffoldTarget, string> = {
   gke: "./deploy/gke",
   aca: "./deploy/aca",
   compose: "./deploy/compose",
-  // Fly's build context is locked to the fly.toml's directory (no
-  // --build-context flag exists), and our Dockerfile COPYs package.json,
-  // connector/, mcp/, bundles/ — all at repo root. So fly.toml
-  // MUST live at repo root or the build fails with "Dockerfile not found"
-  // / missing source files. See architectural-plans/CODE-DEPLOY.md §B1.
-  fly: ".",
+  // fly.toml lives alongside the other per-platform artifacts under
+  // deploy/fly/ (parallel to deploy/helm/, deploy/terraform/, etc.).
+  // Fly's build context is the CWD when `fly deploy` runs (repo root),
+  // so `fly deploy -c deploy/fly/fly.toml` from repo root gets the full
+  // repo as context and the Dockerfile path in fly.toml resolves
+  // relative to CWD. `deploy apply --target fly` wires this up.
+  fly: "./deploy/fly",
   // fly-mock output lives in-tree with the mock source it packages. The
   // mock's Dockerfile sits right next to its fly.toml, so the build
   // context is self-contained — no repo-root requirement.

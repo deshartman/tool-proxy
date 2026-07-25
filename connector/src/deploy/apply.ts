@@ -102,7 +102,12 @@ export async function runDeployApply(argv: string[]): Promise<number> {
 export function applyFly(cwd: string = process.cwd(), spawn: SpawnFn = spawnSync): number {
   // ---- Preflight ----
 
-  const flyTomlPath = resolve(cwd, "fly.toml");
+  // fly.toml lives under deploy/fly/ so per-platform artifacts sit in
+  // the same tree as their sibling target manifests. Fly's build context
+  // is the CWD (repo root) when `fly deploy` runs; we pass -c to point
+  // at the nested config. This is safe because Dockerfile paths in the
+  // fly.toml resolve relative to CWD, not to the fly.toml's directory.
+  const flyTomlPath = resolve(cwd, "deploy/fly/fly.toml");
   if (!existsSync(flyTomlPath)) {
     log.error(
       { cwd },
@@ -250,7 +255,7 @@ export function applyFly(cwd: string = process.cwd(), spawn: SpawnFn = spawnSync
   // ---- 5. Deploy ----
 
   log.info({ app }, `[5/5] running fly deploy (foreground)`);
-  const deployResult = spawn("fly", ["deploy"], { cwd, stdio: "inherit" });
+  const deployResult = spawn("fly", ["deploy", "-c", "deploy/fly/fly.toml"], { cwd, stdio: "inherit" });
   if (deployResult.status !== 0) {
     log.error({ status: deployResult.status }, `fly deploy failed`);
     return deployResult.status ?? 1;

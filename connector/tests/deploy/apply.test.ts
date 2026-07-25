@@ -80,7 +80,7 @@ describe("applyFly — preflight", () => {
   });
 
   it("returns exit 1 when flyctl (fly binary) is not on PATH", () => {
-    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true }); writeFileSync(join(outDir, "deploy", "fly", "fly.toml"), FLY_TOML_CONTENT);
     // Simulate `fly version` failing — spawn returns error (ENOENT-like).
     const { spawn } = makeSpawn([
       { match: (c) => c.command === "fly" && c.args[0] === "version", response: { error: new Error("ENOENT") } },
@@ -89,7 +89,7 @@ describe("applyFly — preflight", () => {
   });
 
   it("returns exit 1 when fly.toml is malformed (no app/region)", () => {
-    writeFileSync(join(outDir, "fly.toml"), "# not a real toml\n");
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true }); writeFileSync(join(outDir, "deploy", "fly", "fly.toml"), "# not a real toml\n");
     const { spawn } = makeSpawn([
       { match: (c) => c.command === "fly" && c.args[0] === "version", response: { status: 0 } },
     ]);
@@ -97,7 +97,7 @@ describe("applyFly — preflight", () => {
   });
 
   it("creates deploy/fly/connector.yaml if missing (fly.toml [[files]] block needs it)", () => {
-    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true }); writeFileSync(join(outDir, "deploy", "fly", "fly.toml"), FLY_TOML_CONTENT);
     // Provide happy responses for every fly command so applyFly proceeds
     // through to the connector.yaml preflight step.
     const { spawn } = makeSpawn([
@@ -128,7 +128,7 @@ describe("applyFly — happy path", () => {
 
   beforeEach(() => {
     outDir = mkdtempSync(join(tmpdir(), "apply-fly-happy-"));
-    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true }); writeFileSync(join(outDir, "deploy", "fly", "fly.toml"), FLY_TOML_CONTENT);
     mkdirSync(join(outDir, "deploy", "fly"), { recursive: true });
     writeFileSync(
       join(outDir, "deploy", "fly", "connector.yaml"),
@@ -166,7 +166,7 @@ describe("applyFly — happy path", () => {
     expect(mutations[3].args[0]).toBe("secrets");
     expect(mutations[3].args[1]).toBe("set");
     expect(mutations[4].args.slice(0, 3)).toEqual(["volumes", "create", "state"]);
-    expect(mutations[5].args).toEqual(["deploy"]);
+    expect(mutations[5].args).toEqual(["deploy", "-c", "deploy/fly/fly.toml"]);
   });
 
   it("prints an explicit next-steps block to stdout on success", () => {
@@ -249,7 +249,7 @@ describe("applyFly — idempotency", () => {
 
   beforeEach(() => {
     outDir = mkdtempSync(join(tmpdir(), "apply-fly-idem-"));
-    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true }); writeFileSync(join(outDir, "deploy", "fly", "fly.toml"), FLY_TOML_CONTENT);
     mkdirSync(join(outDir, "deploy", "fly"), { recursive: true });
     writeFileSync(join(outDir, "deploy", "fly", "connector.yaml"), "mcp_servers: []\n");
   });
@@ -315,7 +315,7 @@ describe("applyFly — deploy failure propagation", () => {
 
   beforeEach(() => {
     outDir = mkdtempSync(join(tmpdir(), "apply-fly-fail-"));
-    writeFileSync(join(outDir, "fly.toml"), FLY_TOML_CONTENT);
+    mkdirSync(join(outDir, "deploy", "fly"), { recursive: true }); writeFileSync(join(outDir, "deploy", "fly", "fly.toml"), FLY_TOML_CONTENT);
     mkdirSync(join(outDir, "deploy", "fly"), { recursive: true });
     writeFileSync(join(outDir, "deploy", "fly", "connector.yaml"), "mcp_servers: []\n");
   });
