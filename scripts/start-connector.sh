@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Boots a single connector for local development. The connector itself
-# spawns Type 1 (customer-authored) MCP children via tsx and dials Type 2
-# (external) MCP servers as declared in ./connector.yaml (at the repo
-# root — resolved from CWD by the connector; production containers mount
-# config at /etc/mcp-connector/ instead).
+# Boots a single connector for local development. Zero-config on a fresh
+# clone: auto-provisions the dev Postgres container, auto-mints the master
+# key, and injects both env vars into the connector's process — no .env
+# template to copy, no manual pre-boot step.
 #
-# To add an MCP, edit ./connector.yaml — see connector/connector.yaml.example
-# for the two patterns (Type 1 / Type 2).
+# Overrides (all optional):
+#   POSTGRES_URL              — dev-Postgres DSN (default: docker-compose ek-postgres)
+#   CONNECTOR_KEY_FILE        — libsodium master key path (default: .local/master.key, auto-minted)
+#   MCP_DROPIN_DIR            — customer drop-ins (default: ./customer-mcps)
+#   MCP_BUNDLED_DIR           — Twilio-shipped MCPs (default: ./bundled-mcps)
+#   $ROOT/.env                — sourced if present, wins over auto-provisioned values
 
 set -euo pipefail
 
@@ -33,13 +36,14 @@ sleep 1
 
 CONNECTOR_DIR="$ROOT/connector"
 CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
-# Live config lives at the repo root — the connector resolves .env and
-# connector.yaml from CWD. In production containers, the customer mounts
-# these at /etc/mcp-connector/ (or a custom path). The *.example templates
-# ship inside connector/ and are the source `init` copies from.
+# .env is OPTIONAL in dev — the script auto-provisions POSTGRES_URL +
+# CONNECTOR_KEY_FILE below. Respected if present so devs can override.
 ENV_FILE="$ROOT/.env"
 YAML_FILE="$ROOT/connector.yaml"
-MOCK_DATA_FILE="$ROOT/examples/mock-backend/data.ts"
+COMPOSE_FILE="$ROOT/deploy/compose/docker-compose.dev.yml"
+DEV_PG_CONTAINER="mcp-shim-ek-postgres"
+DEV_PG_URL="postgres://ek:ek-dev-password@localhost:5433/enterprise_knowledge"
+DEV_MASTER_KEY="$ROOT/.local/master.key"
 
 # Rebuild if dist/ is missing OR stale relative to source. Without this, a
 # source-only edit (e.g. a fix to src/boot/lifecycle.ts) silently runs the
@@ -70,17 +74,23 @@ if [ "$needs_build" = "1" ]; then
   echo "[start-connector] building connector (dist/ missing or stale)..."
   (cd "$CONNECTOR_DIR" && npm run build)
 fi
-if [ ! -f "$ENV_FILE" ]; then
-  echo "[start-connector] no $ENV_FILE — copy $CONNECTOR_DIR/.env.example to $ENV_FILE and edit" >&2
-  exit 1
-fi
 if [ ! -f "$YAML_FILE" ]; then
-  echo "[start-connector] no $YAML_FILE — copy $CONNECTOR_DIR/connector.yaml.example to $YAML_FILE and edit" >&2
-  exit 1
-fi
-if [ ! -f "$MOCK_DATA_FILE" ]; then
-  echo "[start-connector] no $MOCK_DATA_FILE — copy $MOCK_DATA_FILE.example and edit (it's gitignored; replace Dana Demo with your real number for live calls)" >&2
-  exit 1
+  # Bare-minimum starter — the connector still loads yaml at boot, but with
+  # every MCP coming from bundled-mcps/ + customer-mcps/ scanners + controller
+  # push, a customer-authored yaml can be near-empty. Users who want a Type 3
+  # bundled entry (e.g. enterprise-knowledge) or a hand-written Type 1 add
+  # entries under mcp_servers manually.
+  cat >&2 <<EOF
+[start-connector] no $YAML_FILE — creating a minimal starter.
+To wire yaml-managed entries (Type 3 bundled MCPs like enterprise-knowledge,
+or legacy hand-written Type 1), edit this file. Otherwise leave it alone;
+bundled + customer-mcps/ auto-discovery covers most setups.
+EOF
+  cat > "$YAML_FILE" <<'YAML_EOF'
+mcp_servers: []
+policy:
+  fail_mode: fail_fast
+YAML_EOF
 fi
 
 # Per-MCP deps install: every folder under bundled-mcps/ or customer-mcps/
@@ -102,13 +112,50 @@ for dir in "$ROOT"/bundled-mcps/*/ "$ROOT"/customer-mcps/*/; do
   fi
 done
 
-# Source the connector .env so CONTROLLER_URL / TUNNEL_AUTH_TOKEN land in env
-# before yaml interpolation. The connector identifies itself to the controller
-# by tunnel.name on first connect; the persisted registrationToken in
-# .connector-state.json is what binds it on subsequent restarts. Per-MCP creds
-# (Twilio etc.) are loaded by the connector itself from each entry's dir/.env.
-echo "[start-connector] sourcing $ENV_FILE"
-set -a; source "$ENV_FILE"; set +a
+# ─── Env bootstrap (zero-config dev) ──────────────────────────────────────
+# The connector needs POSTGRES_URL + CONNECTOR_KEY_FILE in its process env.
+# Order:
+#   1. .env at repo root (optional) — sourced if present. Lets devs override
+#      the auto-provisioned defaults or wire in additional vars.
+#   2. Auto-provisioned defaults for anything still unset:
+#      - POSTGRES_URL → docker-compose ek-postgres (auto-started if not up)
+#      - CONNECTOR_KEY_FILE → .local/master.key (auto-minted if missing)
+# No .env template to copy, no manual pre-boot step. First-run on a fresh
+# clone works.
+if [ -f "$ENV_FILE" ]; then
+  echo "[start-connector] sourcing $ENV_FILE (optional override)"
+  set -a; source "$ENV_FILE"; set +a
+fi
+
+# Auto-provision dev Postgres if POSTGRES_URL isn't already set.
+if [ -z "${POSTGRES_URL:-}" ]; then
+  if ! docker ps --filter "name=$DEV_PG_CONTAINER" --format '{{.Names}}' | grep -q .; then
+    echo "[start-connector] starting dev Postgres ($DEV_PG_CONTAINER)..."
+    docker compose -f "$COMPOSE_FILE" up -d ek-postgres
+    echo -n "[start-connector] waiting for Postgres readiness"
+    for _ in $(seq 1 30); do
+      if docker exec "$DEV_PG_CONTAINER" pg_isready -U ek -d enterprise_knowledge >/dev/null 2>&1; then
+        echo " — ready"
+        break
+      fi
+      echo -n "."
+      sleep 1
+    done
+  fi
+  export POSTGRES_URL="$DEV_PG_URL"
+  echo "[start-connector] POSTGRES_URL auto-set: $POSTGRES_URL"
+fi
+
+# Auto-mint the 32-byte libsodium master key on first run.
+if [ -z "${CONNECTOR_KEY_FILE:-}" ]; then
+  export CONNECTOR_KEY_FILE="$DEV_MASTER_KEY"
+fi
+if [ ! -f "$CONNECTOR_KEY_FILE" ]; then
+  echo "[start-connector] minting master key at $CONNECTOR_KEY_FILE"
+  mkdir -p "$(dirname "$CONNECTOR_KEY_FILE")"
+  head -c 32 /dev/urandom > "$CONNECTOR_KEY_FILE"
+  chmod 400 "$CONNECTOR_KEY_FILE"
+fi
 
 # Preflight: if EK_EMBEDDER is set (bundle enabled), ensure Ollama sidecar
 # is running. Cleaner failure than a mysterious first-query timeout.
