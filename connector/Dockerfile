@@ -138,7 +138,7 @@ COPY --from=bundle-build /opt/bundled-mcps /opt/bundled-mcps
 # Runtime entrypoint — decodes $CONNECTOR_KEY_B64 → $CONNECTOR_KEY_FILE on
 # platforms whose secret store is env-only (Fly.io, ACA, etc.); no-op when
 # the env is unset (docker-compose et al. that mount the file directly).
-# See architectural-plans/CODE-DEPLOY.md §"D2 — Master key delivery".
+# See CODE-DEPLOY design record §"D2 — Master key delivery".
 COPY connector/entrypoint.sh /usr/local/bin/mcp-connector-entrypoint.sh
 RUN chmod +x /usr/local/bin/mcp-connector-entrypoint.sh
 

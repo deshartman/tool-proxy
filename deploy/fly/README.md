@@ -168,5 +168,5 @@ Fly's defaults would violate the connector's load-bearing invariants. The scaffo
 
 - [`deploy/fly/README.md`](../../deploy/fly/README.md) — full operator runbook (rotation recipes, Postgres attach quirks, common troubleshooting).
 - [`deploy/fly/fly.toml.example`](../../deploy/fly/fly.toml.example) — hand-editable reference config (the CLI generates the same shape).
-- [`architectural-plans/CODE-DEPLOY.md`](../../architectural-plans/CODE-DEPLOY.md) — design record for D1–D5 (why Fly Postgres, why entrypoint script, why 1 GB volume, why single region, why private mock).
+- `CODE-DEPLOY` design record (internal) — D1–D5 rationale (why Fly Postgres, why entrypoint script, why 1 GB volume, why single region, why private mock).
 - [`README.md`](README.md) — umbrella deploy doc, common prereqs.

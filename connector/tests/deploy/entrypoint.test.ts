@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 // refactor that breaks either branch (env-set decode / env-unset no-op)
 // trips a red build, not a silent deploy regression.
 //
-// See architectural-plans/CODE-DEPLOY.md §"D2 — Master key delivery".
+// See CODE-DEPLOY design record §"D2 — Master key delivery".
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(__dirname, "../../entrypoint.sh");

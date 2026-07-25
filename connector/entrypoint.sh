@@ -9,7 +9,7 @@
 # Kubernetes Secret volume, hand-provisioned VM), $CONNECTOR_KEY_B64 is
 # unset and this script is a no-op — the mounted file is used as-is.
 #
-# See architectural-plans/CODE-DEPLOY.md §"D2 — Master key delivery" for
+# See CODE-DEPLOY design record §"D2 — Master key delivery" for
 # the design record.
 
 set -eu

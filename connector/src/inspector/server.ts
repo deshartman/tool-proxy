@@ -777,7 +777,7 @@ export function startInspector(port: number, inspector: Inspector): void {
   // bind is unreachable from `fly proxy`. Override to "::" in fly.toml
   // [env] so the inspector listens on all IPv6 interfaces including the
   // mesh. Trust posture is preserved: `fly ips list` MUST remain empty
-  // (see architectural-plans/CODE-DEPLOY.md §"What we do NOT do"), so the
+  // (see CODE-DEPLOY design record §"What we do NOT do"), so the
   // inspector is only reachable via `fly proxy` from authenticated flyctl
   // sessions in the app's Fly org — the same trust surface as .internal
   // DNS.

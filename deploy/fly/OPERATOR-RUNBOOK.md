@@ -118,7 +118,7 @@ fly volumes create state --region iad --size 1 --app mcp-connector-acme-prod
 
 Holds `.connector-state.json` (env-mode legacy) and any other writable state.
 Under `db` mode the registration token lives sealed in Postgres, so this
-volume is belt-and-braces — see [D3 in the deployment plan](../../architectural-plans/CODE-DEPLOY.md).
+volume is belt-and-braces — see D3 in the `CODE-DEPLOY` design record.
 
 ### 6. Deploy
 
