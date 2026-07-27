@@ -1,17 +1,18 @@
-// Fictional technician calendar for the appointment-reschedule demo.
+// Fictional technician calendar for the appointment-reschedule flow.
 //
-// One technician (Sam Reyes) holds 1-hour slots Mon-Fri 09:00–17:00 UTC for
-// the next 60 days from service-startup time. A handful of slots are
-// pre-booked against seeded customer phones so `get_appointment` returns
-// something real and `check_availability` has both available and unavailable
-// cases to exercise.
+// One technician (Sam Reyes) holds 1-hour slots Mon-Fri 09:00–17:00 UTC.
+// State (which slots are booked) lives in the appointments table on
+// Postgres as of the MOCK-BACKEND-DB plan — retired the in-memory
+// APPOINTMENTS[] array along with the boot-time focal-customer seed.
+// The business logic (working-hours model, availability computation,
+// nearby-slot suggestions, reschedule state machine) is unchanged.
 //
-// Times are UTC across the wire — the controller-side procedure formats them
-// for the customer at SMS-render time. Keeping the tool surface in UTC means
-// no TZ ambiguity in the appointmentId/start/end fields the procedure quotes.
+// Times are UTC across the wire — the controller-side procedure formats
+// them for the customer at SMS-render time. Keeping the tool surface in
+// UTC means no TZ ambiguity in the appointmentId/start/end fields the
+// procedure quotes.
 
-import { randomBytes } from "node:crypto";
-import { focalCustomer } from "./data.js";
+import { query } from "./db.js";
 
 export interface Appointment {
   appointmentId: string;
@@ -25,6 +26,19 @@ export interface Appointment {
   rescheduledFrom?: string;
 }
 
+interface AppointmentRow {
+  id: string;
+  customer_id: string;
+  slot_start: Date;
+  slot_end: Date;
+  status: string;
+  rescheduled_at: Date | null;
+  rescheduled_from: Date | null;
+  phone: string | null;
+  name: string;
+  surname: string;
+}
+
 const HOUR_MS = 60 * 60 * 1000;
 const SLOT_LENGTH_MS = HOUR_MS;
 const WORKDAY_START_HOUR = 9;   // inclusive
@@ -32,24 +46,9 @@ const WORKDAY_END_HOUR = 17;    // exclusive (last slot starts 16:00)
 const HORIZON_DAYS = 60;
 const TECHNICIAN = "Sam Reyes";
 
-function newAppointmentId(): string {
-  return `apt_${randomBytes(5).toString("hex")}`;
-}
-
 function isWorkingDayUTC(d: Date): boolean {
   const dow = d.getUTCDay();
   return dow >= 1 && dow <= 5;
-}
-
-function workingDayAtUTC(daysFromNow: number, hour: number): Date {
-  const base = new Date();
-  base.setUTCHours(hour, 0, 0, 0);
-  base.setUTCDate(base.getUTCDate() + daysFromNow);
-  // If we land on a weekend, walk forward to Monday.
-  while (!isWorkingDayUTC(base)) {
-    base.setUTCDate(base.getUTCDate() + 1);
-  }
-  return base;
 }
 
 function isWithinWorkingHoursUTC(d: Date): boolean {
@@ -66,54 +65,65 @@ function alignToHourUTC(d: Date): Date {
   return aligned;
 }
 
-// State is live in this module. The mock-customers process owns it; restart
-// wipes it.
-const APPOINTMENTS: Appointment[] = [];
-
-function makeAppointment(
-  customerPhone: string,
-  customerName: string,
-  start: Date,
-): Appointment {
+function rowToAppointment(r: AppointmentRow): Appointment {
   return {
-    appointmentId: newAppointmentId(),
-    customerPhone,
-    customerName,
+    appointmentId: r.id,
+    customerPhone: r.phone ?? "",
+    customerName: `${r.name} ${r.surname}`.trim(),
     agentName: TECHNICIAN,
-    start: start.toISOString(),
-    end: new Date(start.getTime() + SLOT_LENGTH_MS).toISOString(),
-    status: "scheduled",
+    start: r.slot_start.toISOString(),
+    end: r.slot_end.toISOString(),
+    status: r.status as Appointment["status"],
+    ...(r.rescheduled_at ? { rescheduledAt: r.rescheduled_at.toISOString() } : {}),
+    ...(r.rescheduled_from ? { rescheduledFrom: r.rescheduled_from.toISOString() } : {}),
   };
 }
 
-// Seed: the focal customer (CUSTOMERS[0] in data.ts) is the one whose
-// appointment is about to be rescheduled. Reading the phone via
-// focalCustomer() instead of a literal lets an operator override data.ts
-// (gitignored, see data.ts.example) with a real number for live calls
-// without re-editing this file. Alice and Bob hold the other seeded
-// slots so the calendar has realistic congestion.
-const focal = focalCustomer();
-APPOINTMENTS.push(
-  makeAppointment(focal.phone ?? "+15551239999", `${focal.name} ${focal.surname}`, workingDayAtUTC(14, 10)),
-  makeAppointment("+14155550101", "Alice Anderson",  workingDayAtUTC(2, 14)),
-  makeAppointment("+14155550102", "Bob Brown",       workingDayAtUTC(7, 11)),
-);
+const APPOINTMENT_JOIN_SELECT = `
+  SELECT a.id, a.customer_id, a.slot_start, a.slot_end, a.status,
+         a.rescheduled_at, a.rescheduled_from,
+         c.phone, c.name, c.surname
+    FROM appointments a JOIN customers c ON c.id = a.customer_id
+`;
 
-export function findAppointmentByPhone(phone: string): Appointment | undefined {
-  const now = Date.now();
-  return APPOINTMENTS
-    .filter(a => a.customerPhone === phone && a.status !== "cancelled" && Date.parse(a.start) >= now)
-    .sort((a, b) => a.start.localeCompare(b.start))[0];
-}
-
-export function findAppointmentById(id: string): Appointment | undefined {
-  return APPOINTMENTS.find(a => a.appointmentId === id);
-}
-
-function isSlotBooked(startISO: string): boolean {
-  return APPOINTMENTS.some(
-    a => a.status !== "cancelled" && a.start === startISO,
+export async function findAppointmentByPhone(phone: string): Promise<Appointment | undefined> {
+  const now = new Date();
+  const { rows } = await query<AppointmentRow>(
+    `${APPOINTMENT_JOIN_SELECT}
+      WHERE c.phone = $1 AND a.status != 'cancelled' AND a.slot_start >= $2
+      ORDER BY a.slot_start ASC LIMIT 1`,
+    [phone, now],
   );
+  return rows.length > 0 ? rowToAppointment(rows[0]) : undefined;
+}
+
+export async function findAppointmentById(id: string): Promise<Appointment | undefined> {
+  const { rows } = await query<AppointmentRow>(
+    `${APPOINTMENT_JOIN_SELECT} WHERE a.id = $1 LIMIT 1`,
+    [id],
+  );
+  return rows.length > 0 ? rowToAppointment(rows[0]) : undefined;
+}
+
+// Batch-load booked slots in the near horizon. checkAvailability's
+// findNearbySlots walks 3 working days of hourly slots (up to 24 slots)
+// and asks isSlotBooked for each. Doing 24 SELECTs per availability
+// check is silly; one range query gives us a Set for O(1) lookup.
+async function bookedSlotsInRange(from: Date, toExclusive: Date): Promise<Set<string>> {
+  const { rows } = await query<{ slot_start: Date }>(
+    `SELECT slot_start FROM appointments
+      WHERE status != 'cancelled' AND slot_start >= $1 AND slot_start < $2`,
+    [from, toExclusive],
+  );
+  return new Set(rows.map((r) => r.slot_start.toISOString()));
+}
+
+async function isSlotBooked(startISO: string): Promise<boolean> {
+  const { rowCount } = await query(
+    "SELECT 1 FROM appointments WHERE slot_start = $1 AND status != 'cancelled' LIMIT 1",
+    [new Date(startISO)],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 export interface AvailabilityResult {
@@ -126,7 +136,7 @@ export interface AvailabilityResult {
   suggestions: string[];
 }
 
-export function checkAvailability(startISO: string): AvailabilityResult {
+export async function checkAvailability(startISO: string): Promise<AvailabilityResult> {
   const requested = new Date(startISO);
   const aligned = alignToHourUTC(requested);
   const now = new Date();
@@ -145,12 +155,12 @@ export function checkAvailability(startISO: string): AvailabilityResult {
   } else if (!isWithinWorkingHoursUTC(aligned)) {
     available = false;
     reason = "outside_working_hours";
-  } else if (isSlotBooked(aligned.toISOString())) {
+  } else if (await isSlotBooked(aligned.toISOString())) {
     available = false;
     reason = "slot_taken";
   }
 
-  const suggestions = available ? [] : findNearbySlots(aligned, 0);
+  const suggestions = available ? [] : await findNearbySlots(aligned, 0);
 
   return {
     requested: startISO,
@@ -169,34 +179,39 @@ export interface RescheduleResult {
   appointment?: Appointment;
 }
 
-export function rescheduleAppointment(
+export async function rescheduleAppointment(
   appointmentId: string,
   newStartISO: string,
-): RescheduleResult {
-  const appt = findAppointmentById(appointmentId);
-  if (!appt) return { ok: false, error: "not_found" };
+): Promise<RescheduleResult> {
+  const existing = await findAppointmentById(appointmentId);
+  if (!existing) return { ok: false, error: "not_found" };
 
   const aligned = alignToHourUTC(new Date(newStartISO));
   if (aligned.getTime() < Date.now()) return { ok: false, error: "in_the_past" };
   if (!isWithinWorkingHoursUTC(aligned)) return { ok: false, error: "outside_working_hours" };
-  if (isSlotBooked(aligned.toISOString())) return { ok: false, error: "slot_taken" };
+  if (await isSlotBooked(aligned.toISOString())) return { ok: false, error: "slot_taken" };
 
-  appt.rescheduledFrom = appt.start;
-  appt.start = aligned.toISOString();
-  appt.end = new Date(aligned.getTime() + SLOT_LENGTH_MS).toISOString();
-  appt.status = "rescheduled";
-  appt.rescheduledAt = new Date().toISOString();
-  return { ok: true, appointment: appt };
+  const alignedEnd = new Date(aligned.getTime() + SLOT_LENGTH_MS);
+  await query(
+    `UPDATE appointments
+        SET rescheduled_from = slot_start,
+            slot_start = $2, slot_end = $3,
+            status = 'rescheduled',
+            rescheduled_at = now()
+      WHERE id = $1`,
+    [appointmentId, aligned, alignedEnd],
+  );
+  const updated = await findAppointmentById(appointmentId);
+  if (!updated) return { ok: false, error: "not_found" };
+  return { ok: true, appointment: updated };
 }
 
 // Walks every working-hour slot in the next HORIZON_DAYS, in calendar order,
-// starting from the requested day. Used by findNearbySlots to know which
-// candidates to consider.
+// starting from the requested day. In-memory generator — no DB hop per slot.
 export function* iterateWorkingSlotsFrom(start: Date): Generator<Date> {
   const horizon = new Date(start);
   horizon.setUTCDate(horizon.getUTCDate() + HORIZON_DAYS);
 
-  // Anchor at the requested day's first working slot (09:00 UTC).
   const anchor = new Date(start);
   anchor.setUTCHours(WORKDAY_START_HOUR, 0, 0, 0);
 
@@ -210,41 +225,20 @@ export function* iterateWorkingSlotsFrom(start: Date): Generator<Date> {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// USER CONTRIBUTION POINT
-// ──────────────────────────────────────────────────────────────────────────
-// Implement findNearbySlots to drive the "Offer 3 nearby slots if they are
-// flexible" step of the reschedule procedure.
-//
-// Strategy (already chosen in chat): "same day first, then next days".
-//   1. Same calendar date as `requested`: offer the other free hourly slots
-//      on that day (later first, then earlier — humans usually accept "a bit
-//      later today" before "a bit earlier today", but feel free to invert).
-//   2. If we still need more, walk forward through subsequent working days
-//      and pick the earliest free slot on each.
-//   3. Stop once we have `count` results, or when we run out of horizon.
-//
-// Available helpers (above):
-//   - iterateWorkingSlotsFrom(date)      → Generator<Date>, calendar order
-//   - isSlotBooked(slotISO)              → boolean
-//   - alignToHourUTC(date)               → Date snapped to top of the hour
-//
-// Skip slots that are in the past (Date.now() comparison) and slots that
-// equal `requested` itself (no point offering the slot we know is taken).
-// Return ISO strings.
-//
 // Returns every free hour across the next 3 working days from `requested`,
 // skipping past slots, the requested slot itself, and anything already
-// booked. Walks the calendar in order; weekends are skipped by the iterator
-// (the technician doesn't work weekends), so a Friday seed naturally spans
-// across the weekend onto Mon/Tue. The `count` arg is the upper-bound cap
-// the caller is willing to receive — applied last so we don't truncate
-// before covering the 3-day window.
-export function findNearbySlots(requested: Date, count: number): string[] {
+// booked. Same algorithm as the pre-Postgres version — only the isSlotBooked
+// check is now a Set lookup fed by one range query up front (bookedSlotsInRange)
+// instead of a DB hop per slot.
+export async function findNearbySlots(requested: Date, count: number): Promise<string[]> {
   const now = Date.now();
   const requestedISO = alignToHourUTC(requested).toISOString();
   const seenDays = new Set<string>();
   const slots: string[] = [];
+
+  const horizon = new Date(requested);
+  horizon.setUTCDate(horizon.getUTCDate() + 4);   // 3 working days + weekend buffer
+  const booked = await bookedSlotsInRange(requested, horizon);
 
   for (const slot of iterateWorkingSlotsFrom(requested)) {
     if (slot.getTime() < now) continue;
@@ -253,13 +247,55 @@ export function findNearbySlots(requested: Date, count: number): string[] {
     if (!seenDays.has(dayKey) && seenDays.size >= 3) break;
     seenDays.add(dayKey);
     if (slotISO === requestedISO) continue;
-    if (isSlotBooked(slotISO)) continue;
+    if (booked.has(slotISO)) continue;
     slots.push(slotISO);
   }
 
   return count > 0 ? slots.slice(0, count) : slots;
 }
 
-export function listAllAppointments(): Appointment[] {
-  return [...APPOINTMENTS];
+// ─────────────────────────────────────────────────────────────────────────
+// Write path — used by server.ts's POST /appointments.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type CreateAppointmentResult =
+  | { ok: true; appointment: Appointment }
+  | { ok: false; error: "no_customer" | "slot_taken" | "outside_working_hours" | "in_the_past" };
+
+export async function createAppointment(
+  customerPhone: string,
+  startISO: string,
+): Promise<CreateAppointmentResult> {
+  const aligned = alignToHourUTC(new Date(startISO));
+  if (aligned.getTime() < Date.now()) return { ok: false, error: "in_the_past" };
+  if (!isWithinWorkingHoursUTC(aligned)) return { ok: false, error: "outside_working_hours" };
+
+  const { rows: customerRows } = await query<{ id: string }>(
+    "SELECT id FROM customers WHERE phone = $1 LIMIT 1",
+    [customerPhone],
+  );
+  if (customerRows.length === 0) return { ok: false, error: "no_customer" };
+  const customerId = customerRows[0].id;
+
+  const alignedEnd = new Date(aligned.getTime() + SLOT_LENGTH_MS);
+  try {
+    const { rows } = await query<{ id: string }>(
+      `INSERT INTO appointments (customer_id, slot_start, slot_end, status)
+       VALUES ($1, $2, $3, 'scheduled') RETURNING id`,
+      [customerId, aligned, alignedEnd],
+    );
+    const appt = await findAppointmentById(rows[0].id);
+    if (!appt) throw new Error("appointment disappeared after insert");
+    return { ok: true, appointment: appt };
+  } catch (err) {
+    if ((err as { code?: string }).code === "23505") return { ok: false, error: "slot_taken" };
+    throw err;
+  }
+}
+
+export async function listAllAppointments(): Promise<Appointment[]> {
+  const { rows } = await query<AppointmentRow>(
+    `${APPOINTMENT_JOIN_SELECT} ORDER BY a.slot_start ASC`,
+  );
+  return rows.map(rowToAppointment);
 }
