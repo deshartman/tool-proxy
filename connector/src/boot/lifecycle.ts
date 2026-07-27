@@ -38,7 +38,6 @@ import { discoverBundled, discoverDropins, isDropinSpec, type DropinSpec } from 
 import { resolveAuthFromEnv, resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
-import { resolveCredsSource } from "./creds-source.js";
 import { ConfigStore, type ControllerRow } from "../config-store/index.js";
 import { initSodium } from "../config-store/seal.js";
 import { resolveMasterKey } from "../config-store/master-key.js";
@@ -51,8 +50,6 @@ const log = createLogger("connector");
 const logLine = log.info.bind(log);
 
 export async function boot(): Promise<void> {
-  const credsSource = resolveCredsSource();
-  if (credsSource === "env") { await bootFromEnv(); return; }
   await bootFromDb();
 }
 

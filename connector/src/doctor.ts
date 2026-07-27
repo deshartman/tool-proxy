@@ -14,7 +14,6 @@ import { constants as fsConstants } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { createServer } from "node:net";
 import { envOptional } from "./env.js";
-import { resolveCredsSource, type CredsSource } from "./boot/creds-source.js";
 import { loadConfig } from "./config.js";
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -43,41 +42,13 @@ export async function runChecks(
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
-  // Mode resolution is itself a check — a bad CONNECTOR_CREDS_SOURCE
-  // value fails here and we short-circuit the mode-specific checks.
-  let mode: CredsSource;
-  try {
-    mode = resolveCredsSource(env);
-    results.push({
-      name: "creds-source",
-      status: "ok",
-      message: `mode=${mode}`,
-    });
-  } catch (error) {
-    results.push({
-      name: "creds-source",
-      status: "fail",
-      message: (error as Error).message,
-      remediation: `set CONNECTOR_CREDS_SOURCE to "db" or "env" (or unset for default "db")`,
-    });
-    return results;
-  }
-
   results.push(await checkNodeVersion());
   results.push(await checkEnvFile(opts.cwd ?? process.cwd()));
   results.push(await checkConnectorYaml(env, opts.cwd ?? process.cwd()));
   results.push(await checkInspectorPort(env));
   results.push(await checkMcpTree(opts.cwd ?? process.cwd()));
-
-  if (mode === "db") {
-    results.push(await checkKeyFile(env));
-    results.push(await checkPostgresUrl(env, opts.skipNetwork));
-  } else {
-    results.push(await checkControllerUrl(env, opts.skipNetwork));
-    results.push(checkConnectorName(env));
-    results.push(checkAuthPosture(env));
-    results.push(await checkStatePath(env, opts.cwd ?? process.cwd()));
-  }
+  results.push(await checkKeyFile(env));
+  results.push(await checkPostgresUrl(env, opts.skipNetwork));
 
   return results;
 }
