@@ -23,7 +23,6 @@ import { formatHandshakeFailure } from "../tunnel/format-log.js";
 import { Dispatcher } from "../dispatcher.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 import { Inspector, startInspector } from "../inspector/server.js";
-import { readState, defaultStatePath, type ConnectorState } from "../state.js";
 import { createLogger } from "../logger.js";
 import { WebhookRegistry } from "../tunnel/webhook-registry.js";
 import { ReconnectController } from "../tunnel/reconnect.js";
@@ -43,7 +42,6 @@ import { initSodium } from "../config-store/seal.js";
 import { resolveMasterKey } from "../config-store/master-key.js";
 import { createTunnelRoutes } from "../inspector/tunnel-routes.js";
 import { envOptional, envString, envNumber } from "../env.js";
-import { unlinkSync } from "node:fs";
 
 const log = createLogger("connector");
 // Adapter for downstream callbacks that take `(msg: string) => void`.
@@ -107,7 +105,6 @@ async function bootFromDb(): Promise<void> {
   let row: ControllerRow | null = null;
   let auth: AuthResolution | undefined = undefined;
   let tunnelDialUrl: string | undefined = undefined;
-  let stateCleared = false;  // track if we've already cleared .connector-state.json
 
   // Forward declaration: inspector constructed below, referenced by callbacks.
   let inspector: Inspector | undefined;
@@ -430,10 +427,22 @@ async function bootFromDb(): Promise<void> {
     approval.bind({ send: (frame) => pendingTunnel.send(frame) });
     notifications.bind({ send: (frame) => pendingTunnel.send(frame) });
 
+    const tokenRef = { current: currentToken };
+    // Capture row.id into a const so TS narrows across the callback closures.
+    const rowId = row.id;
     const baseRouter = createFrameRouter({
       webhooks,
-      state: { registrationToken: currentToken },
-      statePath: "",
+      tokenRef,
+      onTokenMinted: (token) => {
+        void store.updateRegistrationToken(rowId, token)
+          .then(() => inspector?.publishTunnelConfigChanged())
+          .catch(() => {});
+      },
+      onTokenCleared: () => {
+        void store.clearRegistrationToken(rowId)
+          .then(() => inspector?.publishTunnelConfigChanged())
+          .catch(() => {});
+      },
       inspector,
       reconnect: reconnectCtl,
       log,
@@ -448,38 +457,15 @@ async function bootFromDb(): Promise<void> {
       if (frame.type === "mcp-enable") { void approval.handleEnable(frame); return; }
       if (frame.type === "mcp-disable") { void approval.handleDisable(frame); return; }
       if (frame.type === "register-ack" && !frame.error) {
+        // frame-router persists the token via onTokenMinted (wired above).
         baseRouter(frame);
         void requestCredsForAllMcps(creds, mcpConfig);
         mcpConfig.armSnapshotWait();
         void announceDiscoveredDropins();
-        // On first successful register-ack, best-effort delete leftover .connector-state.json
-        if (!stateCleared) {
-          stateCleared = true;
-          try {
-            unlinkSync(defaultStatePath());
-            log.info(`deleted legacy .connector-state.json after successful DB register-ack`);
-          } catch {
-            // swallow ENOENT and any other error — best-effort
-          }
-        }
-        // Persist registration token to DB, then nudge the inspector's
-        // Convo Agent panel to re-fetch tunnel config so the REGISTRATION
-        // badge flips to "bound (len=N)" without a page reload.
-        if (row && frame.registrationToken) {
-          void store.updateRegistrationToken(row.id, frame.registrationToken)
-            .then(() => inspector?.publishTunnelConfigChanged())
-            .catch(() => {});
-        }
         return;
       }
-      if (frame.type === "register-ack" && frame.error?.code === "unknown_registration_token") {
-        // Clear registration token in DB, then nudge the inspector.
-        if (row) {
-          void store.clearRegistrationToken(row.id)
-            .then(() => inspector?.publishTunnelConfigChanged())
-            .catch(() => {});
-        }
-      }
+      // Errors + everything else flow through the base router. The
+      // unknown_registration_token path clears the token via onTokenCleared.
       baseRouter(frame);
     };
 
