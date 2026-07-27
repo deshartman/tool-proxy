@@ -60,191 +60,7 @@ async function pickFreePort(): Promise<number> {
   return port;
 }
 
-describe("runChecks — mode selection", () => {
-  it("reports creds-source=env when CONNECTOR_CREDS_SOURCE=env", async () => {
-    const { root, cleanup } = makeFixture();
-    try {
-      seedEnvFile(root);
-      seedYaml(root);
-      const results = await runChecks(
-        {
-          CONNECTOR_CREDS_SOURCE: "env",
-          CONNECTOR_CONFIG: join(root, "connector.yaml"),
-          CONTROLLER_URL: "https://controller.example.com",
-          CONNECTOR_NAME: "test",
-          TUNNEL_AUTH_TOKEN: "ts_test",
-        },
-        { skipNetwork: true, cwd: root },
-      );
-
-      const modeCheck = results.find((r) => r.name === "creds-source");
-      expect(modeCheck?.status).toBe("ok");
-      expect(modeCheck?.message).toBe("mode=env");
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("defaults to db when CONNECTOR_CREDS_SOURCE is unset", async () => {
-    const { root, cleanup } = makeFixture();
-    try {
-      seedEnvFile(root);
-      seedYaml(root);
-      // Feed a dummy key file so the key-file check doesn't dominate output.
-      const keyPath = join(root, "connector.key");
-      writeFileSync(keyPath, Buffer.alloc(32));
-
-      const results = await runChecks(
-        {
-          POSTGRES_URL: "postgres://user:pw@localhost:5432/mcp",
-          CONNECTOR_KEY_FILE: keyPath,
-          CONNECTOR_CONFIG: join(root, "connector.yaml"),
-        },
-        { skipNetwork: true, cwd: root },
-      );
-
-      const modeCheck = results.find((r) => r.name === "creds-source");
-      expect(modeCheck?.status).toBe("ok");
-      expect(modeCheck?.message).toBe("mode=db");
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("fails and short-circuits when CONNECTOR_CREDS_SOURCE is invalid", async () => {
-    const results = await runChecks({ CONNECTOR_CREDS_SOURCE: "bogus" }, { skipNetwork: true });
-
-    expect(results).toHaveLength(1);
-    expect(results[0].name).toBe("creds-source");
-    expect(results[0].status).toBe("fail");
-  });
-});
-
-describe("runChecks — env mode", () => {
-  it("green when everything is set (skipNetwork)", async () => {
-    const { root, cleanup } = makeFixture();
-    try {
-      seedEnvFile(root);
-      seedYaml(root);
-      const freePort = await pickFreePort();
-      const results = await runChecks(
-        {
-          CONNECTOR_CREDS_SOURCE: "env",
-          CONNECTOR_CONFIG: join(root, "connector.yaml"),
-          INSPECTOR_PORT: String(freePort),
-          CONTROLLER_URL: "https://controller.example.com",
-          CONNECTOR_NAME: "test-customer",
-          TUNNEL_AUTH_TOKEN: "ts_test",
-        },
-        { skipNetwork: true, cwd: root },
-      );
-
-      const failed = results.filter((r) => r.status === "fail");
-      expect(failed, JSON.stringify(failed)).toHaveLength(0);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("fails when CONNECTOR_NAME is missing", async () => {
-    const { root, cleanup } = makeFixture();
-    try {
-      seedEnvFile(root);
-      seedYaml(root);
-      const results = await runChecks(
-        {
-          CONNECTOR_CREDS_SOURCE: "env",
-          CONNECTOR_CONFIG: join(root, "connector.yaml"),
-          CONTROLLER_URL: "https://controller.example.com",
-          TUNNEL_AUTH_TOKEN: "ts_test",
-        },
-        { skipNetwork: true, cwd: root },
-      );
-
-      const nameCheck = results.find((r) => r.name === "connector-name");
-      expect(nameCheck?.status).toBe("fail");
-      expect(nameCheck?.remediation).toMatch(/case-sensitive/);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("fails when both static-bearer and OAuth2 are configured", async () => {
-    const { root, cleanup } = makeFixture();
-    try {
-      seedEnvFile(root);
-      seedYaml(root);
-      const results = await runChecks(
-        {
-          CONNECTOR_CREDS_SOURCE: "env",
-          CONNECTOR_CONFIG: join(root, "connector.yaml"),
-          CONTROLLER_URL: "https://controller.example.com",
-          CONNECTOR_NAME: "test",
-          TUNNEL_AUTH_TOKEN: "ts_test",
-          OAUTH_CLIENT_ID: "cid",
-          OAUTH_CLIENT_SECRET: "csec",
-          OAUTH_TOKEN_URL: "https://oauth.example.com/token",
-        },
-        { skipNetwork: true, cwd: root },
-      );
-
-      const auth = results.find((r) => r.name === "auth-posture");
-      expect(auth?.status).toBe("fail");
-      expect(auth?.message).toMatch(/pick one posture/);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("fails when OAuth2 is partially configured", async () => {
-    const { root, cleanup } = makeFixture();
-    try {
-      seedEnvFile(root);
-      seedYaml(root);
-      const results = await runChecks(
-        {
-          CONNECTOR_CREDS_SOURCE: "env",
-          CONNECTOR_CONFIG: join(root, "connector.yaml"),
-          CONTROLLER_URL: "https://controller.example.com",
-          CONNECTOR_NAME: "test",
-          OAUTH_CLIENT_ID: "cid",
-          // missing OAUTH_CLIENT_SECRET and OAUTH_TOKEN_URL
-        },
-        { skipNetwork: true, cwd: root },
-      );
-
-      const auth = results.find((r) => r.name === "auth-posture");
-      expect(auth?.status).toBe("fail");
-      expect(auth?.message).toMatch(/partially set/);
-    } finally {
-      cleanup();
-    }
-  });
-
-  it("fails when neither auth posture is set", async () => {
-    const { root, cleanup } = makeFixture();
-    try {
-      seedEnvFile(root);
-      seedYaml(root);
-      const results = await runChecks(
-        {
-          CONNECTOR_CREDS_SOURCE: "env",
-          CONNECTOR_CONFIG: join(root, "connector.yaml"),
-          CONTROLLER_URL: "https://controller.example.com",
-          CONNECTOR_NAME: "test",
-        },
-        { skipNetwork: true, cwd: root },
-      );
-
-      const auth = results.find((r) => r.name === "auth-posture");
-      expect(auth?.status).toBe("fail");
-    } finally {
-      cleanup();
-    }
-  });
-});
-
-describe("runChecks — db mode", () => {
+describe("runChecks — db mode (only mode)", () => {
   it("fails when CONNECTOR_KEY_FILE is missing", async () => {
     const { root, cleanup } = makeFixture();
     try {
@@ -348,14 +164,14 @@ describe("runChecks — common", () => {
     const { root, cleanup } = makeFixture();
     try {
       seedYaml(root); // no .env
+      const keyPath = join(root, "connector.key");
+      writeFileSync(keyPath, Buffer.alloc(32));
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "env",
+          POSTGRES_URL: "postgres://user:pw@localhost:5432/mcp",
+          CONNECTOR_KEY_FILE: keyPath,
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
-          CONTROLLER_URL: "https://controller.example.com",
-          CONNECTOR_NAME: "test",
-          TUNNEL_AUTH_TOKEN: "ts_test",
         },
         { skipNetwork: true, cwd: root },
       );
@@ -363,7 +179,8 @@ describe("runChecks — common", () => {
       const env = results.find((r) => r.name === "env-file");
       expect(env?.status).toBe("warn");
       // Rest of the checks still ran — the run didn't short-circuit.
-      expect(results.find((r) => r.name === "connector-name")?.status).toBe("ok");
+      expect(results.length).toBeGreaterThan(2);
+      expect(results.find((r) => r.name === "connector-yaml")).toBeDefined();
     } finally {
       cleanup();
     }
@@ -506,44 +323,3 @@ describe("runChecks — common", () => {
   });
 });
 
-describe("runChecks — state path (env mode)", () => {
-  it("fails when parent dir isn't writable", async () => {
-    const { root, cleanup } = makeFixture();
-    try {
-      seedEnvFile(root);
-      seedYaml(root);
-      const roDir = join(root, "readonly");
-      mkdirSync(roDir, { recursive: true });
-      // Read+execute only — no write.
-      chmodSync(roDir, 0o555);
-
-      try {
-        const results = await runChecks(
-          {
-            CONNECTOR_CREDS_SOURCE: "env",
-            CONNECTOR_CONFIG: join(root, "connector.yaml"),
-            CONNECTOR_STATE_PATH: join(roDir, ".connector-state.json"),
-            CONTROLLER_URL: "https://controller.example.com",
-            CONNECTOR_NAME: "test",
-            TUNNEL_AUTH_TOKEN: "ts_test",
-          },
-          { skipNetwork: true, cwd: root },
-        );
-
-        const state = results.find((r) => r.name === "state-path");
-        // On macOS and Linux, mode 0o555 blocks write for non-root. If
-        // the test runs as root (rare), the check comes back ok — we
-        // guard on process.getuid to not fail the suite in that case.
-        if (process.getuid && process.getuid() === 0) {
-          expect(state?.status).toBe("ok");
-        } else {
-          expect(state?.status).toBe("fail");
-        }
-      } finally {
-        chmodSync(roDir, 0o755);
-      }
-    } finally {
-      cleanup();
-    }
-  });
-});
