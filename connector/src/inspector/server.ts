@@ -310,6 +310,39 @@ const STATIC_TYPES: Record<string, string> = {
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolvePath(here, "../../public");
 
+// C1 + C11 — defense-in-depth headers on every static asset response.
+//   default-src 'self'   — no cross-origin loads.
+//   script-src 'self'    — no inline scripts, no eval. Every script must
+//                          be an external file served by this same inspector.
+//   style-src ... 'unsafe-inline' — inspector's app.js sets a few inline
+//                          styles (backgrounds, borders); dropping it would
+//                          break the UI. Refactor is a follow-up.
+//   connect-src 'self'   — SSE + fetch back to the inspector only.
+//   frame-ancestors 'none' — no clickjacking. X-Frame-Options: DENY for
+//                          older browsers that ignore CSP frame-ancestors.
+//   object-src 'none', base-uri 'self', form-action 'self' — misc hardening.
+// nosniff neutralizes MIME sniffing so a static file served as text/plain
+// can't be rendered as HTML by an older browser that guesses.
+const CSP_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "connect-src 'self'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+].join("; ");
+
+function setStaticSecurityHeaders(res: ServerResponse): void {
+  res.setHeader("content-security-policy", CSP_POLICY);
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader("x-frame-options", "DENY");
+  res.setHeader("referrer-policy", "no-referrer");
+}
+
 async function serveStatic(res: ServerResponse, name: string): Promise<void> {
   const ext = name.slice(name.lastIndexOf("."));
   const type = STATIC_TYPES[ext];
@@ -320,6 +353,7 @@ async function serveStatic(res: ServerResponse, name: string): Promise<void> {
     const body = await readFile(resolvePath(publicDir, name));
     res.statusCode = 200;
     res.setHeader("content-type", type);
+    setStaticSecurityHeaders(res);
     res.end(body);
   } catch {
     res.statusCode = 404; res.end();
