@@ -52,7 +52,7 @@ export function writeState(state: ConnectorState, path: string = defaultStatePat
   // leave a half-written .connector-state.json on disk. POSIX rename is
   // atomic — readers see either the old file or the new one.
   const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", "utf8");
+  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
   renameSync(tmp, path);
 }
 
