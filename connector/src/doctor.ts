@@ -14,7 +14,6 @@ import { constants as fsConstants } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { createServer } from "node:net";
 import { envOptional } from "./env.js";
-import { resolveCredsSource, type CredsSource } from "./boot/creds-source.js";
 import { loadConfig } from "./config.js";
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -43,41 +42,13 @@ export async function runChecks(
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
 
-  // Mode resolution is itself a check — a bad CONNECTOR_CREDS_SOURCE
-  // value fails here and we short-circuit the mode-specific checks.
-  let mode: CredsSource;
-  try {
-    mode = resolveCredsSource(env);
-    results.push({
-      name: "creds-source",
-      status: "ok",
-      message: `mode=${mode}`,
-    });
-  } catch (error) {
-    results.push({
-      name: "creds-source",
-      status: "fail",
-      message: (error as Error).message,
-      remediation: `set CONNECTOR_CREDS_SOURCE to "db" or "env" (or unset for default "db")`,
-    });
-    return results;
-  }
-
   results.push(await checkNodeVersion());
   results.push(await checkEnvFile(opts.cwd ?? process.cwd()));
   results.push(await checkConnectorYaml(env, opts.cwd ?? process.cwd()));
   results.push(await checkInspectorPort(env));
   results.push(await checkMcpTree(opts.cwd ?? process.cwd()));
-
-  if (mode === "db") {
-    results.push(await checkKeyFile(env));
-    results.push(await checkPostgresUrl(env, opts.skipNetwork));
-  } else {
-    results.push(await checkControllerUrl(env, opts.skipNetwork));
-    results.push(checkConnectorName(env));
-    results.push(checkAuthPosture(env));
-    results.push(await checkStatePath(env, opts.cwd ?? process.cwd()));
-  }
+  results.push(await checkKeyFile(env));
+  results.push(await checkPostgresUrl(env, opts.skipNetwork));
 
   return results;
 }
@@ -261,109 +232,6 @@ async function checkPostgresUrl(
     message: `${host}:${port} not reachable — schema may not exist yet`,
     remediation: "if this is a fresh install, run the connector once to seed the schema",
   };
-}
-
-async function checkControllerUrl(
-  env: NodeJS.ProcessEnv,
-  skipNetwork = false,
-): Promise<CheckResult> {
-  const url = envOptional("CONTROLLER_URL", env);
-  if (!url) {
-    return {
-      name: "controller-url",
-      status: "fail",
-      message: "CONTROLLER_URL is required in env mode",
-      remediation: "set CONTROLLER_URL=https://<controller-host> in .env",
-    };
-  }
-  const parsed = safeParseUrl(url);
-  if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
-    return {
-      name: "controller-url",
-      status: "fail",
-      message: `CONTROLLER_URL=${url} is not a valid http(s):// URL`,
-    };
-  }
-  if (skipNetwork) return { name: "controller-url", status: "ok", message: `${url} (reachability check skipped)` };
-  const host = parsed.hostname;
-  const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
-  const reachable = await tcpProbe(host, port, 3_000);
-  if (reachable) return { name: "controller-url", status: "ok", message: `${host}:${port} reachable` };
-  return {
-    name: "controller-url",
-    status: "fail",
-    message: `${host}:${port} not reachable`,
-    remediation: "check DNS, egress firewall, and controller status",
-  };
-}
-
-function checkConnectorName(env: NodeJS.ProcessEnv): CheckResult {
-  const name = envOptional("CONNECTOR_NAME", env);
-  if (!name) {
-    return {
-      name: "connector-name",
-      status: "fail",
-      message: "CONNECTOR_NAME is required in env mode",
-      remediation: "must match the controller's Tunnel Security row Name exactly (case-sensitive)",
-    };
-  }
-  return { name: "connector-name", status: "ok", message: name };
-}
-
-function checkAuthPosture(env: NodeJS.ProcessEnv): CheckResult {
-  const hasStatic = !!envOptional("TUNNEL_AUTH_TOKEN", env);
-  const hasOauth =
-    !!envOptional("OAUTH_CLIENT_ID", env)
-    && !!envOptional("OAUTH_CLIENT_SECRET", env)
-    && !!envOptional("OAUTH_TOKEN_URL", env);
-  const oauthPartial =
-    !hasOauth
-    && (!!envOptional("OAUTH_CLIENT_ID", env)
-      || !!envOptional("OAUTH_CLIENT_SECRET", env)
-      || !!envOptional("OAUTH_TOKEN_URL", env));
-
-  if (hasStatic && hasOauth) {
-    return {
-      name: "auth-posture",
-      status: "fail",
-      message: "both TUNNEL_AUTH_TOKEN and OAUTH_* are set — pick one posture",
-      remediation: "unset the posture you're not using",
-    };
-  }
-  if (hasStatic) return { name: "auth-posture", status: "ok", message: "static bearer" };
-  if (hasOauth) return { name: "auth-posture", status: "ok", message: "OAuth2 client_credentials" };
-  if (oauthPartial) {
-    return {
-      name: "auth-posture",
-      status: "fail",
-      message: "OAUTH_* is partially set",
-      remediation: "OAuth2 posture requires OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL",
-    };
-  }
-  return {
-    name: "auth-posture",
-    status: "fail",
-    message: "neither TUNNEL_AUTH_TOKEN nor OAUTH_* is set",
-    remediation: "mint a Tunnel Security row in the controller UI and put the credential in .env",
-  };
-}
-
-async function checkStatePath(env: NodeJS.ProcessEnv, cwd: string): Promise<CheckResult> {
-  const path = envOptional("CONNECTOR_STATE_PATH", env) ?? resolvePath(cwd, ".connector-state.json");
-  // Existence isn't required — the connector writes it on first register-ack.
-  // What matters is that the directory is writable.
-  const dir = resolvePath(path, "..");
-  try {
-    await access(dir, fsConstants.W_OK);
-    return { name: "state-path", status: "ok", message: `${path} (parent writable)` };
-  } catch {
-    return {
-      name: "state-path",
-      status: "fail",
-      message: `${dir} is not writable — registrationToken can't be persisted`,
-      remediation: "chmod / chown the parent directory, or set CONNECTOR_STATE_PATH to a writable location",
-    };
-  }
 }
 
 // ---- helpers ----

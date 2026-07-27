@@ -1,11 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, it, expect } from "vitest";
 
 import { createFrameRouter } from "../../src/tunnel/frame-router.js";
 import type { FrameRouterOpts } from "../../src/tunnel/frame-router.js";
-import type { ConnectorState } from "../../src/state.js";
 import type {
   HeartbeatFrame,
   ManifestDeltaFrame,
@@ -16,14 +12,18 @@ import type {
   WebhookFrame,
 } from "../../src/tunnel/frames.js";
 
-// Defensive tests for createFrameRouter. The behaviors pinned here are the
-// ones we watched fire end-to-end in /tmp/connector-boot.log on 2026-06-18:
+// Defensive tests for createFrameRouter. Pinned invariants:
 //   * unknown_registration_token self-heal (the heart of automatic recovery
-//     from controller DB resets)
-//   * register-ack success persists a freshly-minted token
+//     from controller DB resets) — clears the token, calls onTokenCleared,
+//     does NOT mark rejected.
+//   * register-ack success persists a freshly-minted token via onTokenMinted.
 // The asymmetry between the three error branches — only
 // unknown_registration_token avoids markRejected() — is exactly the kind of
 // invariant a "tidying" refactor erodes. Pin it.
+//
+// Post env-mode-removal: persistence is via callback rather than the deleted
+// state.ts file writer. The tokenRef object survives across calls so the
+// register frame builder in bootFromDb can read the current value.
 
 interface FakeWebhooks {
   setTunnelOpenCalls: boolean[];
@@ -51,13 +51,12 @@ interface Harness {
   reconnect: FakeReconnect;
   inspector: FakeInspector;
   log: FakeLog;
-  state: ConnectorState;
-  statePath: string;
+  tokenRef: { current: string | undefined };
+  tokenMintedCalls: string[];
+  tokenClearedCount: number;
 }
 
-let tmpdirPath: string;
-
-function buildHarness(initialState: ConnectorState = {}, opts?: { withInspector?: boolean }): Harness {
+function buildHarness(initialToken?: string, opts?: { withInspector?: boolean }): Harness {
   const withInspector = opts?.withInspector ?? true;
   const webhooks: FakeWebhooks = {
     setTunnelOpenCalls: [],
@@ -68,6 +67,8 @@ function buildHarness(initialState: ConnectorState = {}, opts?: { withInspector?
   const reconnect: FakeReconnect = { acceptedCount: 0, rejectedCount: 0 };
   const inspector: FakeInspector = { identityCalls: [], headerCalls: [] };
   const log: FakeLog = { info: [], warn: [], error: [] };
+  const tokenMintedCalls: string[] = [];
+  let tokenClearedCount = 0;
 
   const fakeWebhooks = {
     onAllocateAck: (frame: WebhookAllocateAckFrame) => { webhooks.allocateAcks.push(frame); },
@@ -83,19 +84,29 @@ function buildHarness(initialState: ConnectorState = {}, opts?: { withInspector?
     setIdentity: (identity: unknown) => { inspector.identityCalls.push(identity); },
     setHeader: (header: unknown) => { inspector.headerCalls.push(header); },
   } : undefined;
+  // Pino supports both `log.info(msg)` and `log.info(ctx, msg)`. Handle both
+  // shapes so tests are resilient to callers that omit the ctx object.
+  const pushLog = (bucket: { msg: string; ctx: unknown }[]) =>
+    (arg1: unknown, arg2?: string): void => {
+      if (typeof arg1 === "string") {
+        bucket.push({ ctx: undefined, msg: arg1 });
+      } else {
+        bucket.push({ ctx: arg1, msg: arg2 ?? "" });
+      }
+    };
   const fakeLog = {
-    info: (ctx: unknown, msg: string) => { log.info.push({ ctx, msg }); },
-    warn: (ctx: unknown, msg: string) => { log.warn.push({ ctx, msg }); },
-    error: (ctx: unknown, msg: string) => { log.error.push({ ctx, msg }); },
+    info: pushLog(log.info),
+    warn: pushLog(log.warn),
+    error: pushLog(log.error),
   };
 
-  const state: ConnectorState = { ...initialState };
-  const statePath = join(tmpdirPath, ".connector-state.json");
+  const tokenRef = { current: initialToken };
 
   const routerOpts: FrameRouterOpts = {
     webhooks: fakeWebhooks as unknown as FrameRouterOpts["webhooks"],
-    state,
-    statePath,
+    tokenRef,
+    onTokenMinted: (token: string) => { tokenMintedCalls.push(token); },
+    onTokenCleared: () => { tokenClearedCount += 1; },
     inspector: fakeInspector as unknown as FrameRouterOpts["inspector"],
     reconnect: fakeReconnect as unknown as FrameRouterOpts["reconnect"],
     log: fakeLog as unknown as FrameRouterOpts["log"],
@@ -108,24 +119,15 @@ function buildHarness(initialState: ConnectorState = {}, opts?: { withInspector?
     reconnect,
     inspector,
     log,
-    state,
-    statePath,
+    tokenRef,
+    tokenMintedCalls,
+    get tokenClearedCount() { return tokenClearedCount; },
   };
 }
 
-beforeEach(() => {
-  tmpdirPath = mkdtempSync(join(tmpdir(), "frame-router-test-"));
-});
-
-afterEach(() => {
-  rmSync(tmpdirPath, { recursive: true, force: true });
-});
-
 describe("frame-router success path", () => {
   it("persists a freshly-minted token, resets reconnect, opens webhook delivery, and stamps inspector identity", () => {
-    const h = buildHarness({ registrationToken: undefined });
-    // 36 chars; matches the registrationToken length we observed in the boot
-    // log on 2026-06-18.
+    const h = buildHarness(undefined);
     const tok = "tok_freshly_minted_xxxxxxxxxxxxxxxxx";
     expect(tok).toHaveLength(36);
     const ack: RegisterAckFrame = {
@@ -137,37 +139,29 @@ describe("frame-router success path", () => {
 
     h.router(ack);
 
-    // Reconnect curve resets, attempt counter cleared.
     expect(h.reconnect.acceptedCount).toBe(1);
     expect(h.reconnect.rejectedCount).toBe(0);
-
-    // Webhook delivery opens AND queued allocates drain — both must fire,
-    // in this order, or the apis-bundle's queued webhook-allocate from boot
-    // never reaches the controller.
     expect(h.webhooks.setTunnelOpenCalls).toEqual([true]);
     expect(h.webhooks.reallocateAllCount).toBe(1);
 
-    // Token persisted to disk, atomic-renamed into place.
-    expect(h.state.registrationToken).toBe(tok);
-    expect(existsSync(h.statePath)).toBe(true);
-    const onDisk = JSON.parse(readFileSync(h.statePath, "utf8"));
-    expect(onDisk.registrationToken).toBe(tok);
+    // Token stamped into ref cell + onTokenMinted callback fired.
+    expect(h.tokenRef.current).toBe(tok);
+    expect(h.tokenMintedCalls).toEqual([tok]);
 
-    // Inspector header carries connectorId + lastRegisterAckAt timestamp.
     expect(h.inspector.identityCalls).toEqual([{ kind: "bound", tokenLen: 36 }]);
     expect(h.inspector.headerCalls).toHaveLength(1);
     const header = h.inspector.headerCalls[0] as Record<string, string>;
     expect(header.connectorId).toBe("conn_abc123");
     expect(header.lastRegisterAckAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-    // The persist log line fired (proves we took the write branch, not the
+    // "token minted" log line fired (proves we took the mint branch, not the
     // "bound to existing record" branch).
-    expect(h.log.info.some((line) => line.msg.includes("persisted registrationToken"))).toBe(true);
+    expect(h.log.info.some((line) => line.msg.includes("token minted"))).toBe(true);
   });
 
-  it("does NOT rewrite the state file when the controller echoes back the same token", () => {
+  it("does NOT re-fire onTokenMinted when the controller echoes back the same token", () => {
     const existing = "tok_already_persisted_36chars_xxxxxxxxxx";
-    const h = buildHarness({ registrationToken: existing });
+    const h = buildHarness(existing);
     const ack: RegisterAckFrame = {
       type: "register-ack",
       accepted: true,
@@ -177,30 +171,20 @@ describe("frame-router success path", () => {
 
     h.router(ack);
 
-    // The success bookkeeping fires regardless...
     expect(h.reconnect.acceptedCount).toBe(1);
     expect(h.webhooks.setTunnelOpenCalls).toEqual([true]);
-    // ...but no state file should appear, because writeState was never called.
-    // This is the disk-write guard at frame-router.ts:68 — refactoring it
-    // away churns the volume on every reconnect.
-    expect(existsSync(h.statePath)).toBe(false);
-
-    // The "bound to existing record" log line fires instead of the persist line.
+    // onTokenMinted must NOT fire — refactoring the equality guard away
+    // would churn the DB on every reconnect.
+    expect(h.tokenMintedCalls).toEqual([]);
+    // The "bound to existing record" log line fires instead of the mint line.
     expect(h.log.info.some((line) => line.msg.includes("bound to existing record"))).toBe(true);
-    expect(h.log.info.some((line) => line.msg.includes("persisted registrationToken"))).toBe(false);
+    expect(h.log.info.some((line) => line.msg.includes("token minted"))).toBe(false);
   });
 });
 
 describe("frame-router register-ack error sub-table", () => {
-  it("self-heals on unknown_registration_token: clears state, removes file, does NOT mark rejected", () => {
-    // Seed both in-memory state AND the state file so we can verify clear
-    // really happens.
-    const h = buildHarness({ registrationToken: "tok_stale_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" });
-    // Pre-create the file via the same atomic-rename code path so the test
-    // mirrors a real boot. Easiest: use writeFileSync directly since we're
-    // simulating the prior session's write.
-    writeFileSync(h.statePath, JSON.stringify({ registrationToken: "tok_stale_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }));
-    expect(existsSync(h.statePath)).toBe(true);
+  it("self-heals on unknown_registration_token: clears token via callback, does NOT mark rejected", () => {
+    const h = buildHarness("tok_stale_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
 
     const ack: RegisterAckFrame = {
       type: "register-ack",
@@ -214,9 +198,9 @@ describe("frame-router register-ack error sub-table", () => {
     // "name_taken does it, default does it, why not all?"), this fails.
     expect(h.reconnect.rejectedCount).toBe(0);
 
-    // Local state cleared in-memory AND on disk.
-    expect(h.state.registrationToken).toBeUndefined();
-    expect(existsSync(h.statePath)).toBe(false);
+    // Local token cleared in-memory + onTokenCleared callback fired.
+    expect(h.tokenRef.current).toBeUndefined();
+    expect(h.tokenClearedCount).toBe(1);
 
     // Inspector identity reflects the clear so the operator sees what
     // happened (don't surface 'rejected' here — that's reserved for sticky
@@ -235,7 +219,7 @@ describe("frame-router register-ack error sub-table", () => {
   });
 
   it("marks rejected on name_taken with operator-actionable message", () => {
-    const h = buildHarness({ registrationToken: "tok_intact_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" });
+    const h = buildHarness("tok_intact_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
     const ack: RegisterAckFrame = {
       type: "register-ack",
       error: { code: "name_taken", message: "another connector owns this name" },
@@ -246,10 +230,11 @@ describe("frame-router register-ack error sub-table", () => {
     // CONNECTOR_NAME).
     expect(h.reconnect.rejectedCount).toBe(1);
 
-    // Local token is preserved (we still own it, the name collision doesn't
-    // mean our token is invalid). This is what makes operator recovery
-    // possible — they fix the name and we reconnect with the same token.
-    expect(h.state.registrationToken).toBe("tok_intact_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    // Local token is preserved (we still own it; the name collision doesn't
+    // invalidate our token). This is what makes operator recovery possible —
+    // fix the name and we reconnect with the same token.
+    expect(h.tokenRef.current).toBe("tok_intact_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    expect(h.tokenClearedCount).toBe(0);
 
     // Identity surfaces the reason verbatim so the inspector can render it.
     expect(h.inspector.identityCalls).toHaveLength(1);
@@ -271,9 +256,6 @@ describe("frame-router register-ack error sub-table", () => {
     };
     h.router(ack);
 
-    // New controller error codes default to sticky. Rationale: an unknown
-    // error is more likely a permission/policy fault than a transient one;
-    // looping on it would mask the failure. This is fail-safe-not-fail-open.
     expect(h.reconnect.rejectedCount).toBe(1);
     expect(h.inspector.identityCalls).toHaveLength(1);
     const identity = h.inspector.identityCalls[0] as { kind: string; reason: string; message: string };
@@ -294,9 +276,6 @@ describe("frame-router non-register frame routing", () => {
     h.router(frame);
 
     expect(h.webhooks.allocateAcks).toEqual([frame]);
-    // Critical: must NOT have hit the register-ack branch (which would touch
-    // state, reconnect, inspector). Frame-type misclassification here would
-    // be a hard-to-diagnose corruption.
     expect(h.webhooks.dispatched).toEqual([]);
     expect(h.reconnect.acceptedCount).toBe(0);
     expect(h.reconnect.rejectedCount).toBe(0);
@@ -330,9 +309,6 @@ describe("frame-router non-register frame routing", () => {
     ];
     for (const frame of frames) h.router(frame);
 
-    // No side effects on any fake. These frames are handled by other parts
-    // of the connector (heartbeat plumbing, dispatcher, manifest-delta sender)
-    // — the router just lets them pass through.
     expect(h.webhooks.allocateAcks).toEqual([]);
     expect(h.webhooks.dispatched).toEqual([]);
     expect(h.webhooks.setTunnelOpenCalls).toEqual([]);

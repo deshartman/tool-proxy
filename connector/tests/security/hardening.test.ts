@@ -28,7 +28,6 @@ const HELM_VALUES    = readFileSync(join(ROOT, "deploy/helm/mcp-connector/values
 const HELM_DEPLOY    = readFileSync(join(ROOT, "deploy/helm/mcp-connector/templates/deployment.yaml"), "utf8");
 const INSPECTOR_SRC  = readFileSync(join(ROOT, "connector/src/inspector/server.ts"), "utf8");
 const SUPERVISOR_SRC = readFileSync(join(ROOT, "connector/src/mcp-supervisor.ts"), "utf8");
-const STATE_SRC      = readFileSync(join(ROOT, "connector/src/state.ts"), "utf8");
 const SDK_WEBHOOK    = readFileSync(join(ROOT, "connector/src/sdk/webhook.ts"), "utf8");
 const COMPOSE_TMPL   = readFileSync(join(ROOT, "connector/src/deploy/templates.ts"), "utf8");
 
@@ -134,16 +133,11 @@ describe("F3 — CSRF guard on inspector state-changing routes", () => {
   });
 });
 
-// ── F4 — state file written mode 0600 ────────────────────────────────────
-describe("F4 — .connector-state.json is written with mode 0600", () => {
-  it("state.ts writeFileSync passes mode: 0o600", () => {
-    // The writeFileSync call contains JSON.stringify(...) with nested
-    // parens, so the arg list can't be matched with [^)]*. Just assert
-    // the option object literal is present somewhere in the file.
-    expect(STATE_SRC).toMatch(/writeFileSync\(/);
-    expect(STATE_SRC).toMatch(/mode:\s*0o600/);
-  });
-});
+// ── F4 — .connector-state.json (env mode) ─────────────────────────────────
+// F4 was retired with env-mode removal — the registration token now lives
+// exclusively in the sealed controllers row in Postgres, so there's no
+// plaintext state file to protect. .dockerignore still excludes any
+// leftover file on an upgrading host as belt-and-braces (see C7 above).
 
 // ── F7 — per-MCP webhook token ───────────────────────────────────────────
 describe("F7 — webhook stream + revoke enforce per-MCP identity", () => {

@@ -21,7 +21,6 @@ const VARS: ScaffoldVars = {
   appName: "mcp-connector-prod-us-east-1",
   controllerUrl: "https://controller.example.com",
   image: "ghcr.io/twilio/mcp-connector:0.2.0",
-  credsSource: "db",
   auth: "static",
 };
 
@@ -92,12 +91,6 @@ describe("render — variable substitution", () => {
     expect(compose.content).toContain("mcp-connector"); // image is the connector
   });
 
-  it("switches CREDS_SOURCE in the compose file when told", () => {
-    const { files } = render("compose", { ...VARS, credsSource: "env" });
-    const compose = files.find((f) => f.path === "docker-compose.yml")!;
-    expect(compose.content).toContain("CONNECTOR_CREDS_SOURCE: env");
-  });
-
   it("emits a readme appendix telling the customer what to do next", () => {
     for (const target of ["fargate", "gke", "aca", "compose", "fly", "fly-mock"] as const) {
       const { readmeAppendix } = render(target, VARS);
@@ -119,7 +112,6 @@ describe("render — variable substitution", () => {
     const toml = files.find((f) => f.path === "fly.toml")!;
     expect(toml.content).toContain(`app = "mcp-connector-prod-us-east-1"`);
     expect(toml.content).toContain(`image = "ghcr.io/twilio/mcp-connector:0.2.0"`);
-    expect(toml.content).toContain(`CONNECTOR_CREDS_SOURCE = "db"`);
 
     // Load-bearing invariants — outbound-only, no scale-to-zero, no public IP.
     // If any of these regress as ACTIVE toml (not a comment mention),

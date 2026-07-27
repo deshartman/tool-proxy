@@ -15,8 +15,6 @@
 // Other frame types (heartbeat, rpc, manifest-delta, goodbye) are no-ops here
 // — the dispatcher / heartbeat plumbing handle them on the TunnelClient itself.
 
-import { clearRegistrationToken, writeState } from "../state.js";
-import type { ConnectorState } from "../state.js";
 import type { Inspector } from "../inspector/server.js";
 import type { Logger } from "../logger.js";
 import type { ReconnectController } from "./reconnect.js";
@@ -25,13 +23,25 @@ import type { InboundTunnelFrame, RegisterAckFrame } from "./frames.js";
 
 export interface FrameRouterOpts {
   webhooks: WebhookRegistry;
-  state: ConnectorState;
-  statePath: string;
+  // Current registration token as-of the last register-ack. Post
+  // env-mode-removal this lives in the sealed controllers row; the
+  // frame-router just updates it in memory for the inspector's setIdentity
+  // call. Persistence is the caller's responsibility via onTokenMinted /
+  // onTokenCleared below.
+  tokenRef: { current: string | undefined };
+  // Fires when a register-ack success returns a new (or first) registration
+  // token. Caller persists it (typically: store.updateRegistrationToken on
+  // the DB row).
+  onTokenMinted?: (token: string) => void;
+  // Fires when register-ack returns unknown_registration_token — the
+  // controller no longer recognizes our persisted token. Caller clears the
+  // persistent copy so the next attempt is a first-connect and re-mints.
+  onTokenCleared?: () => void;
   inspector: Inspector | undefined;
   reconnect: ReconnectController;
   log: Logger;
-  // The connector name from the live yaml — surfaced in the name_taken error
-  // path so the operator log carries the value they need to fix.
+  // Connector name — surfaced in the name_taken error path so the operator
+  // log carries the value they need to fix.
   connectorName: string;
 }
 
@@ -65,18 +75,18 @@ function handleRegisterAck(frame: RegisterAckFrame, opts: FrameRouterOpts): void
   opts.reconnect.markAccepted();
   opts.webhooks.setTunnelOpen(true);
   opts.webhooks.reallocateAll();
-  if (frame.registrationToken && frame.registrationToken !== opts.state.registrationToken) {
-    opts.state.registrationToken = frame.registrationToken;
+  if (frame.registrationToken && frame.registrationToken !== opts.tokenRef.current) {
+    opts.tokenRef.current = frame.registrationToken;
     try {
-      writeState(opts.state, opts.statePath);
-      opts.log.info({ statePath: opts.statePath }, `register-ack ok — persisted registrationToken`);
+      opts.onTokenMinted?.(frame.registrationToken);
+      opts.log.info(`register-ack ok — token minted`);
     } catch (error) {
       opts.log.error({ err: error as Error }, `register-ack: failed to persist token`);
     }
   } else if (frame.accepted) {
     opts.log.info({ connectorId: frame.connectorId ?? "?" }, `register-ack ok — bound to existing record`);
   }
-  opts.inspector?.setIdentity({ kind: "bound", tokenLen: opts.state.registrationToken?.length ?? 0 });
+  opts.inspector?.setIdentity({ kind: "bound", tokenLen: opts.tokenRef.current?.length ?? 0 });
   // Operator-facing header. connectorId only changes on a re-mint (rare);
   // lastRegisterAckAt updates every successful ack so the operator can see
   // "this binding was confirmed N seconds ago".
@@ -105,13 +115,13 @@ function handleRegisterAckError(frame: RegisterAckFrame, opts: FrameRouterOpts):
         { code: error.code },
         `controller no longer recognizes our registrationToken — clearing local state to re-mint on next attempt`,
       );
-      opts.state.registrationToken = undefined;
+      opts.tokenRef.current = undefined;
       try {
-        clearRegistrationToken(opts.statePath);
+        opts.onTokenCleared?.();
       } catch (clearError) {
         opts.log.error(
           { err: clearError as Error },
-          `failed to clear connector-state.json — next attempt may still present a stale token`,
+          `failed to clear persisted token — next attempt may still present a stale token`,
         );
       }
       opts.inspector?.setIdentity({ kind: "cleared" });
