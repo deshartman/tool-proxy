@@ -118,6 +118,59 @@
         </div>
       </section>
 
+      <section id="crm-insert-pane" class="collapsible" data-key="crm-insert">
+        <h2 class="section-head">
+          <span class="caret">▾</span>
+          <span class="section-title">CRM Insert</span>
+        </h2>
+        <div class="section-body">
+          <p class="muted">
+            Paste JSON to insert a customer or appointment into the
+            <code>crm</code> database via the mock-backend service. Reachable only if
+            <code>MOCK_CUSTOMERS_URL</code> is set on this connector.
+          </p>
+          <div class="crm-insert-block">
+            <label for="crm-customer-json">Customer</label>
+            <textarea id="crm-customer-json" rows="10" spellcheck="false"
+              placeholder='{
+  "name": "Alex",
+  "surname": "Operator",
+  "phone": "+61XXXXXXXXX",
+  "email": "alex@example.com",
+  "interactions": [
+    {
+      "orderId": "ord_alex_1",
+      "placedAt": "2026-07-15T10:00:00Z",
+      "status": "delivered",
+      "channel": "web",
+      "amount": 89.50,
+      "currency": "USD",
+      "reason": "online purchase",
+      "resolution": "delivered to address"
+    }
+  ]
+}'></textarea>
+            <div class="crm-insert-actions">
+              <button id="crm-customer-submit" type="button">Insert customer</button>
+              <span id="crm-customer-status" class="muted"></span>
+            </div>
+          </div>
+
+          <div class="crm-insert-block">
+            <label for="crm-appointment-json">Appointment</label>
+            <textarea id="crm-appointment-json" rows="4" spellcheck="false"
+              placeholder='{
+  "customerPhone": "+61XXXXXXXXX",
+  "start": "2026-08-01T14:00:00Z"
+}'></textarea>
+            <div class="crm-insert-actions">
+              <button id="crm-appointment-submit" type="button">Insert appointment</button>
+              <span id="crm-appointment-status" class="muted"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="frames-pane" class="collapsible" data-key="frames">
         <h2 class="section-head">
           <span class="caret">▾</span>

@@ -955,3 +955,37 @@ h2 {
   cursor: pointer;
 }
 .tunnel-form-actions button:hover { border-color: var(--accent); }
+
+/* CRM Insert panel */
+.crm-insert-block { margin: 12px 0 16px; }
+.crm-insert-block label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.crm-insert-block textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+}
+.crm-insert-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.crm-insert-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.crm-insert-actions button:hover:not([disabled]) { border-color: var(--accent); }
+.crm-insert-actions button[disabled] { opacity: 0.5; cursor: not-allowed; }

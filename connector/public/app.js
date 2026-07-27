@@ -129,6 +129,77 @@ async function runRescanLocal() {
   }
 }
 
+// CRM Insert panel — proxies customer / appointment inserts through the
+// connector inspector to the mock-backend's POST endpoints. The connector
+// route reads MOCK_CUSTOMERS_URL from process.env; the browser never sees
+// the upstream URL.
+const elCrmCustomerJson = document.getElementById('crm-customer-json');
+const elCrmCustomerSubmit = document.getElementById('crm-customer-submit');
+const elCrmCustomerStatus = document.getElementById('crm-customer-status');
+const elCrmApptJson = document.getElementById('crm-appointment-json');
+const elCrmApptSubmit = document.getElementById('crm-appointment-submit');
+const elCrmApptStatus = document.getElementById('crm-appointment-status');
+
+async function submitCrmInsert(kind, pathSuffix, jsonEl, submitEl, statusEl) {
+  if (!jsonEl || !submitEl || !statusEl) return;
+  const raw = (jsonEl.value || '').trim();
+  if (!raw) {
+    statusEl.textContent = 'paste a JSON body first';
+    statusEl.className = 'mcp-action-status err';
+    return;
+  }
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch (err) {
+    statusEl.textContent = `invalid JSON: ${err.message}`;
+    statusEl.className = 'mcp-action-status err';
+    return;
+  }
+  submitEl.disabled = true;
+  statusEl.textContent = 'inserting…';
+  statusEl.className = 'muted';
+  try {
+    const resp = await fetch(`/mcp/crm/${pathSuffix}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
+      body: JSON.stringify(body),
+    });
+    const respBody = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || respBody.ok === false) {
+      const err = respBody.error || `HTTP ${resp.status}`;
+      const detail = respBody.detail ? ` — ${respBody.detail}` : '';
+      statusEl.textContent = `${err}${detail}`;
+      statusEl.className = 'mcp-action-status err';
+      return;
+    }
+    let msg;
+    if (kind === 'customer') {
+      const c = respBody.customer;
+      const orders = respBody.customer?.interactions?.length ?? 0;
+      msg = c ? `inserted ${c.name} ${c.surname}${orders ? ` + ${orders} order${orders === 1 ? '' : 's'}` : ''}` : 'inserted';
+    } else {
+      const a = respBody;
+      msg = a?.appointmentId ? `booked ${a.appointmentId} @ ${a.start}` : 'booked';
+    }
+    statusEl.textContent = msg;
+    statusEl.className = 'mcp-action-status ok';
+    jsonEl.value = '';
+  } catch (err) {
+    statusEl.textContent = String(err.message || err);
+    statusEl.className = 'mcp-action-status err';
+  } finally {
+    submitEl.disabled = false;
+  }
+}
+
+elCrmCustomerSubmit?.addEventListener('click', () => {
+  void submitCrmInsert('customer', 'customer-insert', elCrmCustomerJson, elCrmCustomerSubmit, elCrmCustomerStatus);
+});
+elCrmApptSubmit?.addEventListener('click', () => {
+  void submitCrmInsert('appointment', 'appointment-insert', elCrmApptJson, elCrmApptSubmit, elCrmApptStatus);
+});
+
 // Reconnect button: disable + show 'reconnecting…' until the SSE stream
 // reports a state change away from 'connecting' / 'reconnecting'. The
 // previous version reset the label after a hard-coded 1500ms regardless
