@@ -274,10 +274,16 @@ services:
       CONNECTOR_NAME: {{NAME}}
       CONTROLLER_URL: {{CONTROLLER_URL}}
       CONNECTOR_CREDS_SOURCE: {{CREDS_SOURCE}}
+      # C8: assemble POSTGRES_URL from the mounted secret file at
+      # container start. See entrypoint.sh. Never put the password in
+      # a compose env string or .env line.
+      POSTGRES_URL_TEMPLATE: postgres://mcp:__PWFILE__@postgres:5432/mcp_connector
+      POSTGRES_PW_FILE: /run/secrets/pg_password
     volumes:
       - state:/var/lib/mcp-connector
       - ./connector.yaml:/etc/mcp-connector/config.yaml:ro
       - ./secrets/connector.key:/etc/mcp-connector/connector.key:ro
+    secrets: [pg_password]
     ports:
       # Inspector — 127.0.0.1 only. Do NOT bind to 0.0.0.0.
       - "127.0.0.1:9090:9090"
@@ -310,8 +316,10 @@ const COMPOSE_ENV = `# Copy to .env before \`docker compose up\`.
 # Static-bearer posture — controller-minted \`ts_...\` from the Tunnel Security row.
 TUNNEL_AUTH_TOKEN=
 
-# db mode requires these two:
-POSTGRES_URL=postgres://mcp:$(cat ./secrets/pg_password)@postgres:5432/mcp_connector
+# db mode:
+# POSTGRES_URL is assembled by entrypoint.sh from a mounted secret file —
+# see docker-compose.yml (POSTGRES_URL_TEMPLATE + POSTGRES_PW_FILE). Do
+# NOT put the password in this .env file.
 CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key
 
 # Optional overrides:

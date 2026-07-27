@@ -39,11 +39,18 @@ services:
       # db mode is the recommended default per CLAUDE.md — creds live in
       # the sealed controllers row, editable via inspector UI.
       CONNECTOR_CREDS_SOURCE: db
-      POSTGRES_URL: postgres://mcp:${POSTGRES_PASSWORD}@postgres:5432/mcp_connector
+      # C8 (security hardening) — assemble POSTGRES_URL from a mounted
+      # secret file at container start, so the password never lives in
+      # a shell env var, .env file, or compose YAML. The entrypoint
+      # substitutes __PWFILE__ with the file contents before exec.
+      POSTGRES_URL_TEMPLATE: postgres://mcp:__PWFILE__@postgres:5432/mcp_connector
+      POSTGRES_PW_FILE: /run/secrets/pg_password
       CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
       CONNECTOR_CONFIG: /etc/mcp-connector/config.yaml
       CONNECTOR_STATE_PATH: /var/lib/mcp-connector/.connector-state.json
       INSPECTOR_PORT: "9090"
+    secrets:
+      - pg_password
     ports:
       # 127.0.0.1 only. Inspector loopback trust boundary — the Webhooks
       # panel exposes copy-able bcrypt-protected URLs. Do NOT change to
