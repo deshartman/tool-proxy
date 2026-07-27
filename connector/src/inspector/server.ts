@@ -878,13 +878,26 @@ export function startInspector(port: number, inspector: Inspector): void {
   // sessions in the app's Fly org — the same trust surface as .internal
   // DNS.
   //
-  // Any non-127.0.0.1 override logs a WARN so operators see it loud, and
-  // so a misconfigured non-Fly deploy doesn't silently widen the bind.
+  // C4 (security hardening) — any non-loopback bind requires the operator
+  // to also set INSPECTOR_ALLOW_NONLOOPBACK=1. Prevents a silent typo
+  // (INSPECTOR_BIND_ADDR=0.0.0.0 on a host with a public IP) from exposing
+  // the copy-able bcrypt-protected webhook URLs to the internet. Fly.io
+  // deployments set both vars in fly.toml — the opt-in makes the widening
+  // explicit and greppable.
   const bindAddr = envString("INSPECTOR_BIND_ADDR", "127.0.0.1");
-  if (bindAddr !== "127.0.0.1") {
+  const loopbackAddrs = new Set(["127.0.0.1", "::1", "localhost"]);
+  if (!loopbackAddrs.has(bindAddr)) {
+    if (envString("INSPECTOR_ALLOW_NONLOOPBACK", "") !== "1") {
+      throw new Error(
+        `INSPECTOR_BIND_ADDR="${bindAddr}" is non-loopback — refusing to bind. ` +
+        `The inspector exposes copy-able webhook URLs by design; widening the bind is a security decision. ` +
+        `If this is intentional (e.g. Fly.io fly.toml [env] using "::" behind a WireGuard mesh with 'fly ips list' empty), ` +
+        `set INSPECTOR_ALLOW_NONLOOPBACK=1 in the same env config to acknowledge.`
+      );
+    }
     log.warn(
       { bindAddr, port },
-      `inspector bind widened beyond loopback (INSPECTOR_BIND_ADDR set) — ensure the host has no public IP allocated`
+      `inspector bind widened beyond loopback (INSPECTOR_ALLOW_NONLOOPBACK=1 set) — ensure the host has no public IP allocated`
     );
   }
   server.listen(port, bindAddr, () => {

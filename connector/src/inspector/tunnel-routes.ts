@@ -6,6 +6,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { guardCsrf } from "./server.js";
 import type { ConfigStore, ControllerInput, ControllerRow } from "../config-store/index.js";
+import { isHttpsControllerUrl } from "../boot/require-env.js";
 
 export interface TunnelConfigSummary {
   id: string;
@@ -201,6 +202,19 @@ async function handlePostCreds(
   const legacyEnvironment = typeof b.environment === "string" && b.environment ? b.environment : null;
 
   const normalizedUrl = normalizeControllerUrl(controllerUrl);
+
+  // C5 (security hardening) — refuse plaintext. client.ts upgrades
+  // http:// → ws:// silently, sending the tunnel bearer unencrypted.
+  // Loopback URLs pass so dev/test dialling a local mock controller
+  // works without TLS certs.
+  if (!isHttpsControllerUrl(normalizedUrl)) {
+    res.statusCode = 400;
+    res.end(JSON.stringify({
+      ok: false,
+      error: `controllerUrl must use https:// (got: ${controllerUrl}). Plaintext http:// would send the tunnel bearer over an unencrypted socket.`,
+    }));
+    return;
+  }
 
   // Derive a default connector-identity string from the URL hostname. Used
   // as X-Connector-Name on the WS upgrade until the controller accepts

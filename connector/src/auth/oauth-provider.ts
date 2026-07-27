@@ -22,6 +22,11 @@ interface TokenResponse {
 // the JWT.
 export class OAuthClientCredentialsProvider {
   private cached?: { jwt: string; expiresAt: number };
+  // C6 (security hardening) — single-flight guard. Concurrent callers near
+  // expiry would otherwise each fire their own fetch() to the token
+  // endpoint. Store the in-flight mint promise; new callers await it
+  // instead of re-minting.
+  private mintPromise?: Promise<string>;
 
   constructor(
     private readonly clientId: string,
@@ -34,6 +39,16 @@ export class OAuthClientCredentialsProvider {
     if (this.cached && this.cached.expiresAt - 60_000 > now) {
       return this.cached.jwt;
     }
+    // Single-flight: if a mint is already in-flight, await it instead of
+    // firing a duplicate fetch.
+    if (this.mintPromise) return this.mintPromise;
+    this.mintPromise = this.mint().finally(() => {
+      this.mintPromise = undefined;
+    });
+    return this.mintPromise;
+  }
+
+  private async mint(): Promise<string> {
     const body = new URLSearchParams({
       grant_type: "client_credentials",
       client_id: this.clientId,
@@ -57,6 +72,15 @@ export class OAuthClientCredentialsProvider {
     if (typeof data.expires_in !== "number" || data.expires_in < 60) {
       throw new Error(
         `OAuth token mint returned invalid expires_in: ${String(data.expires_in)} (expected positive integer seconds ≥ 60)`,
+      );
+    }
+    // C9 (security hardening) — validate access_token is a non-empty string.
+    // Without this, a malformed provider response ({expires_in: 3600,
+    // access_token: null} or missing entirely) caches `undefined` and the
+    // connector sends `Bearer undefined` on next handshake.
+    if (typeof data.access_token !== "string" || !data.access_token) {
+      throw new Error(
+        `OAuth token mint returned invalid access_token: ${String(data.access_token)} (expected non-empty string)`,
       );
     }
     this.cached = {

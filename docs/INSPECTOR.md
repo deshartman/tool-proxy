@@ -60,6 +60,12 @@ One row per MCP, with:
 One row per MCP that called `createWebhookEndpoint`. Shows the bcrypt-protected public URL with a **copy** button — operators paste it into Twilio configs (statusCallback, recording callbacks, etc.). The URL prefix is stable across reconnects; the random tail re-mints on every `webhook-allocate`.
 
 > **Trust boundary:** the URL *is* the secret. The inspector binds to `127.0.0.1` for exactly this reason — anyone with access to the inspector port has access to copy-able webhook URLs. Never bridge to an LB.
+>
+> **Two additional auth layers gate the inspector routes despite the loopback bind:**
+> 1. **CSRF guard** on every state-changing POST — requires `Content-Type: application/json` AND `X-Inspector-Request: 1` header. Prevents a browser tab the operator has open from silently firing state-changing requests to `127.0.0.1:9090`.
+> 2. **Per-MCP webhook token** on `/internal/webhook/stream` and `/revoke` — the connector mints a fresh 32-byte token per MCP at spawn, injects it as `MCP_WEBHOOK_TOKEN` in the child's env, and the inspector constant-time-compares the caller's `Authorization: Bearer <token>` against that per-MCP value. Prevents sibling drop-ins in the same container from eavesdropping on each other's webhook events.
+>
+> Static-asset responses also carry a strict `Content-Security-Policy` (no `unsafe-eval`, `frame-ancestors 'none'`, `default-src 'self'`), plus `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer` as defense-in-depth against XSS regressions.
 
 ### Frames
 
@@ -143,7 +149,9 @@ Top-right header. Re-reads `connector.yaml` and dials the controller again. Pick
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `INSPECTOR_PORT` | `9090` | TCP port; binds to `127.0.0.1` only |
+| `INSPECTOR_PORT` | `9090` | TCP port; binds to loopback only by default |
+| `INSPECTOR_BIND_ADDR` | `127.0.0.1` | Bind address. Loopback set: `127.0.0.1` / `::1` / `localhost`. Any other value requires `INSPECTOR_ALLOW_NONLOOPBACK=1`. |
+| `INSPECTOR_ALLOW_NONLOOPBACK` | (unset) | Set to `1` to acknowledge a non-loopback bind. Required for Fly.io deployments using `::` behind the WireGuard mesh (with `fly ips list` empty). |
 | `LOG_LEVEL` | `info` | Pino log verbosity |
 
 ## Troubleshooting

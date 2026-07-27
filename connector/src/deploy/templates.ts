@@ -368,6 +368,9 @@ primary_region = "iad"
   # \`fly ips list -a {{APP_NAME}}\` MUST be empty.
   # See CODE-DEPLOY design record §B4.
   INSPECTOR_BIND_ADDR = "::"
+  # C4 (security hardening) — acknowledge non-loopback bind explicitly.
+  # The connector refuses to start otherwise. Requires \`fly ips list -a {{APP_NAME}}\` empty.
+  INSPECTOR_ALLOW_NONLOOPBACK = "1"
   # Demo convenience — points the drop-in scanner at the mcp/local/ tree
   # baked into the image by the Dockerfile's \`COPY mcp mcp\`. DELETE this
   # line for a real customer deployment; the default
