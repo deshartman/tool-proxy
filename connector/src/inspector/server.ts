@@ -125,6 +125,11 @@ export interface McpActions {
   // `fetchEnvKeys(name)` which queries the running child's /envkeys
   // endpoint.
   fetchEnvKeys?(name: string): Promise<string[]>;
+  // F7: verify a bearer token presented on /internal/webhook/* against
+  // per-MCP secrets minted at spawn. Returns the MCP name that owns the
+  // token, or undefined if no match. Constant-time-compared server-side.
+  // Backed by supervisor.resolveMcpByWebhookToken.
+  resolveMcpByWebhookToken?(token: string): string | undefined;
 }
 
 const RING_SIZE = 500;
@@ -364,11 +369,45 @@ async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector
   catch { res.statusCode = 400; res.end("malformed body"); return; }
   const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
   if (!mcp) { res.statusCode = 400; res.end('missing "mcp"'); return; }
+  if (!authorizeWebhookMcp(req, res, inspector, mcp)) return;
   reg.revoke(mcp);
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
   res.end('{"ok":true}');
   inspector.publishWebhookSnapshot();
+}
+
+// F7: verify the caller's bearer token identifies them as owner of `mcp`.
+// Loopback-trust alone is NOT enough — a sibling MCP running in the same
+// container (same UID, same loopback) can otherwise subscribe to any other
+// MCP's webhook events. The token is minted per-MCP by the supervisor and
+// delivered to the child as MCP_WEBHOOK_TOKEN; the SDK's
+// createWebhookEndpoint sends it as Authorization: Bearer <token>.
+// Returns true if authorized (caller may continue); false if not (response
+// has already been written with 403).
+function authorizeWebhookMcp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+  requestedMcp: string,
+): boolean {
+  const resolve = inspector.mcpActions?.resolveMcpByWebhookToken;
+  // If no resolver wired (test harness / older boot path), permit — the
+  // production boot path always wires it. Tests that want to exercise the
+  // auth gate must provide the resolver.
+  if (!resolve) return true;
+  const header = req.headers["authorization"];
+  const auth = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
+  const m = /^Bearer\s+(.+)$/i.exec(auth ?? "");
+  const token = m?.[1]?.trim();
+  const owner = token ? resolve(token) : undefined;
+  if (owner !== requestedMcp) {
+    res.statusCode = 403;
+    res.setHeader("content-type", "application/json");
+    res.end('{"ok":false,"error":"webhook subscription: token does not match requested MCP"}');
+    return false;
+  }
+  return true;
 }
 
 interface ToolCallBody {
@@ -630,6 +669,7 @@ async function handleRescanLocal(
 function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Inspector, mcp: string): void {
   const reg = inspector.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
+  if (!authorizeWebhookMcp(req, res, inspector, mcp)) return;
 
   res.statusCode = 200;
   res.setHeader("content-type", "text/event-stream");

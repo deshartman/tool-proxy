@@ -56,6 +56,7 @@
 //      doesn't change at runtime; the closure capture is intentional.
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, createConnection } from "node:net";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -157,6 +158,16 @@ export interface McpStatus {
 
 interface Entry {
   spec: SupervisedSpec;
+  // Per-MCP secret minted at register() and passed to the child as
+  // MCP_WEBHOOK_TOKEN. The SDK's createWebhookEndpoint sends it as a Bearer
+  // token on the inspector's /internal/webhook/stream and /revoke routes;
+  // the inspector uses resolveMcpByWebhookToken() to verify the caller is
+  // subscribing to its OWN webhooks, not a sibling MCP's. Stable across
+  // supervisor-driven restarts (the child re-reads env on each spawn and
+  // gets the same token), rotated only when register() runs again — which
+  // in practice means process restart. Constant-time-compared on read
+  // (see resolveMcpByWebhookToken).
+  webhookToken: string;
   // Controller-supplied env values. Merged on every spawn so a creds-update
   // → restart picks them up. Cleared when controller returns nothing.
   controllerEnv: Record<string, string>;
@@ -234,6 +245,7 @@ export class McpSupervisor {
       if (this.entries.has(spec.name)) continue;
       this.entries.set(spec.name, {
         spec,
+        webhookToken: randomBytes(32).toString("base64url"),
         controllerEnv: {},
         sessionEnv: {},
         status: {
@@ -246,6 +258,23 @@ export class McpSupervisor {
         },
       });
     }
+  }
+
+  // Verify a bearer token presented on the inspector's webhook routes.
+  // Returns the MCP name that owns the token, or undefined if no entry
+  // matches. Constant-time compare per-entry so an attacker can't leak the
+  // matching entry via string-compare timing. Token length is fixed (32
+  // random bytes base64url-encoded → 43 chars), so length-mismatched inputs
+  // fail immediately without comparing.
+  resolveMcpByWebhookToken(token: string): string | undefined {
+    if (typeof token !== "string" || token.length === 0) return undefined;
+    const supplied = Buffer.from(token, "utf8");
+    for (const [name, entry] of this.entries) {
+      const known = Buffer.from(entry.webhookToken, "utf8");
+      if (known.length !== supplied.length) continue;
+      if (timingSafeEqual(known, supplied)) return name;
+    }
+    return undefined;
   }
 
   // Boot path: spawn every Type 1/dropin child, then connect to every
@@ -440,6 +469,7 @@ export class McpSupervisor {
     const defaultSource = isDropinSpec(spec) ? "local" : "yaml";
     this.entries.set(spec.name, {
       spec,
+      webhookToken: randomBytes(32).toString("base64url"),
       controllerEnv: {},
       sessionEnv: {},
       status: {
@@ -768,6 +798,11 @@ export class McpSupervisor {
       sources[key] = "controller";
     }
     Object.assign(out, extras);
+    // Supervisor-owned, always injected, never overridable by user config
+    // (comes AFTER extras so tests can't accidentally shadow it either).
+    // The child's SDK helper createWebhookEndpoint reads this to prove
+    // its identity when subscribing to the inspector's webhook stream.
+    out.MCP_WEBHOOK_TOKEN = entry.webhookToken;
     return out;
   }
 
