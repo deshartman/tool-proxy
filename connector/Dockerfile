@@ -20,7 +20,16 @@
 # connector ships from Twilio.
 
 # ── Node build stage ───────────────────────────────────────────────────────
-FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS node-build
+FROM node:22-alpine3.20@sha256:2289fb1fba0f4633b08ec47b94a89c7e20b829fc5679f9b7b298eaa2f1ed8b7e AS node-build
+
+# ── Alpine version alignment ───────────────────────────────────────────────
+# All three stages MUST use the same Alpine version so libpython3.12.so.1.0
+# from the bundle-build stage matches the runtime's `apk add python3`.
+# Alpine 3.24 (current default `-alpine` tag) ships Python 3.14 — venvs
+# built against 3.12 will fail to load libpython3.12.so.1.0 at runtime.
+# Pin to alpine3.20 (Python 3.12.13) until we deliberately upgrade the
+# whole Python bundle to 3.13/3.14 (which requires vetting llama-index +
+# other EK deps for cross-version compat).
 WORKDIR /repo
 
 # Workspace install for the connector. MCP folders live outside the workspace
@@ -78,7 +87,7 @@ RUN set -e; \
 # chromadb) that prefer glibc — switch this stage's base to a glibc image
 # (python:3.12-slim) at that point. The connector stage stays Alpine; only
 # this stage's base needs to change.
-FROM python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df AS bundle-build
+FROM python:3.12-alpine3.20@sha256:25849f9599e06dfe4d11b552e06f5ac4cc2ad342054eb81f7877e611f6f87c66 AS bundle-build
 WORKDIR /opt/bundled-mcps
 
 # enterprise-knowledge — installed from bundled-mcps/enterprise-knowledge/source/.
@@ -95,7 +104,7 @@ RUN --mount=type=bind,from=node-build,source=/repo/bundled-mcps/enterprise-knowl
 # would dangle when copied across.
 
 # ── Runtime stage ──────────────────────────────────────────────────────────
-FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS runtime
+FROM node:22-alpine3.20@sha256:2289fb1fba0f4633b08ec47b94a89c7e20b829fc5679f9b7b298eaa2f1ed8b7e AS runtime
 WORKDIR /app
 
 # Python is the runtime for Type 3 Python bundles. Alpine's python3
