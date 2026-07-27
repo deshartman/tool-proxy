@@ -650,70 +650,6 @@ function handleSessionCredsRoute(
   return false;
 }
 
-// CRM Insert (MOCK-BACKEND-DB): proxy operator writes from the inspector UI
-// through to the mock-backend's POST /customers and POST /appointments.
-// Never exposes MOCK_CUSTOMERS_URL to the browser — the base URL stays on
-// the connector, only accessible via loopback + CSRF guard. Body is
-// forwarded verbatim; response is passed back as-is (status + JSON).
-async function handleCrmInsert(
-  req: IncomingMessage,
-  res: ServerResponse,
-  subpath: "customers" | "appointments",
-): Promise<void> {
-  if (!guardCsrf(req, res)) return;
-  res.setHeader("content-type", "application/json");
-  const base = process.env.MOCK_CUSTOMERS_URL?.trim();
-  if (!base) {
-    res.statusCode = 503;
-    res.end('{"ok":false,"error":"MOCK_CUSTOMERS_URL is not set on the connector"}');
-    return;
-  }
-  let body: unknown;
-  try {
-    body = (await readJsonBody(req)) ?? {};
-  } catch {
-    res.statusCode = 400;
-    res.end('{"ok":false,"error":"malformed body"}');
-    return;
-  }
-  const target = `${base.replace(/\/$/, "")}/${subpath}`;
-  try {
-    const upstream = await fetch(target, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const text = await upstream.text();
-    res.statusCode = upstream.status;
-    // Pass through the mock's JSON verbatim; if it wasn't JSON, wrap it.
-    try {
-      const parsed = JSON.parse(text);
-      res.end(JSON.stringify({ ok: upstream.ok, ...parsed }));
-    } catch {
-      res.end(JSON.stringify({ ok: upstream.ok, raw: text }));
-    }
-  } catch (err) {
-    res.statusCode = 502;
-    res.end(JSON.stringify({ ok: false, error: `upstream fetch failed: ${(err as Error).message}` }));
-  }
-}
-
-function handleCrmInsertRoute(
-  req: IncomingMessage,
-  res: ServerResponse,
-  path: string,
-): boolean {
-  if (path === "/mcp/crm/customer-insert") {
-    void handleCrmInsert(req, res, "customers");
-    return true;
-  }
-  if (path === "/mcp/crm/appointment-insert") {
-    void handleCrmInsert(req, res, "appointments");
-    return true;
-  }
-  return false;
-}
-
 // INSPECTOR-CREDS-VISIBILITY (W-S5): GET /mcp/env-keys?mcp=<name>. Read-
 // only listing of the envKeys an MCP declared (key NAMES only — never
 // values). Backs the UI's creds form so the operator sees exactly which
@@ -854,12 +790,6 @@ export function startInspector(port: number, inspector: Inspector): void {
     // developer-pasted session creds layer. The routes NEVER read back
     // values — there is no GET sibling. See W-S9 L1 in the plan.
     if (req.method === "POST" && handleSessionCredsRoute(req, res, inspector, path)) {
-      return;
-    }
-    // CRM Insert (MOCK-BACKEND-DB): proxy customer / appointment inserts
-    // to the mock-backend. Uses process.env.MOCK_CUSTOMERS_URL, same env
-    // the crm drop-in reads.
-    if (req.method === "POST" && handleCrmInsertRoute(req, res, path)) {
       return;
     }
     if (path === "/mcp/env-keys" && req.method === "GET") {
