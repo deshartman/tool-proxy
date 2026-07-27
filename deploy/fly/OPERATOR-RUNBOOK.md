@@ -21,10 +21,14 @@ Reach the inspector via `fly proxy 9090:9090 -a mcp-connector-<CUSTOMER>`.
 3. **CONNECTOR_NAME** — the Name field on the Tunnel Security row. Must match
    this app's `CONNECTOR_NAME` env var (set via the inspector's Configure
    Tunnel modal, not via `fly secrets`).
-4. **(Optional) Mock backend deployed first** — if you're running the demo,
-   deploy `examples/mock-backend/` as a separate Fly app in the same Fly org first,
-   then update `customer-mcps/crm/.env` with the private DNS URL before you build
-   the connector image. See [`../../examples/mock-backend/README.md`](../../examples/mock-backend/README.md).
+4. **(Optional) CRM demo — mock backend + drop-in** — if you want the crm
+   MCP visible in the inspector, follow the "Optional: crm drop-in + mock
+   backend" section below. Deploys `examples/mock-backend/` as its own
+   private-only Fly app (Postgres-backed customer store) and ships
+   `examples/demos/crm/` in the connector image. See
+   [`../../examples/mock-backend/README.md`](../../examples/mock-backend/README.md)
+   and [`../../examples/demos/crm/README.md`](../../examples/demos/crm/README.md)
+   for the per-artifact details.
 
 ## Deploy — the short version
 
@@ -267,6 +271,68 @@ Note: `.flycast` on the DSN works because Fly Postgres apps get a `.flycast`
 address allocated automatically. The Ollama sidecar uses `.internal`
 because a plain private Fly app doesn't get `.flycast` without a
 `[[services]]` block (see EMBEDDING-SIDECAR.md for why we avoid one).
+
+### Optional: `crm` drop-in + mock-backend Postgres store
+
+The `crm` bundled drop-in is a demo customer-service MCP with 9 tools
+(identity / order / calendar operations plus `create_customer` and
+`create_appointment` write endpoints), 3 prompts, and 1 resource. It
+speaks HTTP to a sibling `mock-backend` service which owns the
+Postgres store. The design lives in `MOCK-BACKEND-DB` (design record).
+
+Three pieces to stand up:
+
+1. **`crm` database on the connector's Fly Postgres.** Same pattern the
+   EK bundle uses (§Optional above):
+
+   ```bash
+   fly ssh console -a <DB-APP> -C 'sh -c "PGPASSWORD=\$OPERATOR_PASSWORD psql -h localhost -U postgres -c \"CREATE DATABASE crm;\""'
+   ```
+
+2. **Deploy `twilio-tool-sdk-mock` (or your own name) as a private-only Fly app.**
+   Scaffold the fly.toml + Dockerfile:
+
+   ```bash
+   mcp-connector deploy init --target fly-mock --name <SLUG> \
+     --app-name <MOCK-APP> --yes
+   fly apps create <MOCK-APP> --org <YOUR-ORG>
+
+   OP_PW=$(fly ssh console -a <DB-APP> -C 'sh -c "echo \$OPERATOR_PASSWORD"' | tail -1 | tr -d '\r')
+   fly secrets set --app <MOCK-APP> --stage \
+     MOCK_POSTGRES_URL="postgres://postgres:${OP_PW}@<DB-APP>.flycast:5432/crm"
+
+   cd examples/mock-backend
+   fly deploy --app <MOCK-APP>
+   cd -
+   ```
+
+   The scaffolded `fly.toml` has NO `[[services]]` / `[http_service]` —
+   private-only by contract. Sibling apps in the same Fly org reach the
+   mock at `<MOCK-APP>.internal:7400`.
+
+3. **Ship the crm drop-in in the connector image and point it at the mock.**
+   The `connector/Dockerfile` already has `COPY examples/demos/crm bundled-mcps/crm`
+   after the sample copy. Set the connector's `MOCK_CUSTOMERS_URL` secret
+   and redeploy:
+
+   ```bash
+   fly secrets set --app <CONNECTOR-APP> --stage \
+     MOCK_CUSTOMERS_URL="http://<MOCK-APP>.internal:7400"
+
+   ./scripts/deploy/fly-deploy.sh
+   ```
+
+Confirm via the inspector's MCP Servers panel — the `crm` server
+should list its nine tools with "Ready" verdicts and expose the two
+write endpoints as regular tools (invocable from the inspector's
+tool-runner form).
+
+**Local dev caveat.** `bundled-mcps/crm` is `.dockerignore`d — any
+local symlink or copy an operator sets up under `bundled-mcps/` for
+local dev stays out of the deployed image (the Dockerfile's explicit
+COPY is the only path). If a symlink there points at an absolute host
+path, forgetting the ignore rule would ship a broken symlink and the
+connector would ENOENT at drop-in scan time.
 
 ### Postgres graduation (demo → prod)
 
