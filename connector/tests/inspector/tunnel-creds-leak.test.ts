@@ -30,7 +30,10 @@ function mockRequest(method: string, body?: unknown): IncomingMessage {
   const req = {
     method,
     url: "/internal/tunnel/config",
-    headers: {},
+    headers: {
+      "content-type": "application/json",
+      "x-inspector-request": "1",
+    },
     on: vi.fn(),
     [Symbol.asyncIterator]: async function* () {
       if (body !== undefined) {

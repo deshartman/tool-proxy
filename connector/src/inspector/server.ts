@@ -143,6 +143,21 @@ export interface TunnelRouteHandlers {
   handleForceReregister: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 }
 
+export function guardCsrf(req: IncomingMessage, res: ServerResponse): boolean {
+  const contentType = req.headers["content-type"] ?? "";
+  const customHeader = req.headers["x-inspector-request"];
+
+  const isJson = contentType.toLowerCase().startsWith("application/json");
+  const hasCustomHeader = customHeader === "1" || (typeof customHeader === "string" && customHeader.length > 0);
+
+  if (!isJson || !hasCustomHeader) {
+    res.statusCode = 403;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ ok: false, error: "Forbidden: CSRF check failed" }));
+    return false;
+  }
+  return true;
+}
 export class Inspector {
   // Caller can wire this to its reconnect routine; invoked when the UI
   // POSTs /reconnect.
@@ -341,6 +356,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector: Inspector): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const reg = inspector.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
   let body: RevokeBody;
@@ -367,6 +383,7 @@ interface ToolCallBody {
 // for inbound RPC. Loopback-bound only — same trust boundary as the rest
 // of the inspector. See CLAUDE.md "Inspector port is localhost-only".
 async function handleToolCall(req: IncomingMessage, res: ServerResponse, inspector: Inspector): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const dispatch = inspector.toolDispatch;
   if (!dispatch) {
     res.statusCode = 503;
@@ -409,6 +426,7 @@ async function handleMcpAction(
   inspector: Inspector,
   action: "reloadCreds" | "restart",
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
   if (!actions) {
     res.statusCode = 503;
@@ -454,6 +472,7 @@ async function handleApplySessionCreds(
   res: ServerResponse,
   inspector: Inspector,
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
   res.setHeader("content-type", "application/json");
   if (!actions?.applySessionCreds) {
@@ -509,6 +528,7 @@ async function handleClearSessionCreds(
   res: ServerResponse,
   inspector: Inspector,
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
   res.setHeader("content-type", "application/json");
   if (!actions?.clearSessionCreds) {
@@ -585,10 +605,11 @@ async function handleEnvKeys(
 }
 
 async function handleRescanLocal(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   inspector: Inspector,
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
   res.setHeader("content-type", "application/json");
   if (!actions?.rescanLocal) {
@@ -658,6 +679,7 @@ export function startInspector(port: number, inspector: Inspector): void {
     const path = url.pathname;
     if (path === "/events") return handleEvents(req, res, inspector);
     if (path === "/reconnect" && req.method === "POST") {
+      if (!guardCsrf(req, res)) return;
       inspector.onReconnect?.();
       res.statusCode = 202;
       res.setHeader("content-type", "application/json");

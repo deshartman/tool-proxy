@@ -4,7 +4,7 @@
 // controller tunnel via the localhost inspector UI.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ConfigStore, ControllerInput, ControllerRow } from "../config-store/index.js";
+import { guardCsrf } from "./server.js";
 
 export interface TunnelConfigSummary {
   id: string;
@@ -155,6 +155,7 @@ async function handlePostCreds(
   res: ServerResponse,
   { configStore, dialTunnel, cycleTunnel }: TunnelRoutesDeps
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   setJsonHeaders(res);
 
   let body: unknown;
@@ -301,10 +302,11 @@ async function handlePostCreds(
 
 // POST /internal/tunnel/force-reregister
 async function handleForceReregister(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   { configStore, cycleTunnel }: Pick<TunnelRoutesDeps, "configStore" | "cycleTunnel">
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   setJsonHeaders(res);
 
   try {

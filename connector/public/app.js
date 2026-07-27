@@ -103,7 +103,10 @@ async function runRescanLocal() {
   elRescanLocalStatus.textContent = 'scanning…';
   elRescanLocalStatus.className = 'muted';
   try {
-    const resp = await fetch('/mcp/rescan-local', { method: 'POST' });
+    const resp = await fetch('/mcp/rescan-local', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
+    });
     const body = await resp.json().catch(() => ({}));
     if (resp.status >= 400 || body.ok === false) {
       elRescanLocalStatus.textContent = body.error || `HTTP ${resp.status}`;
@@ -144,7 +147,10 @@ elReconnect.addEventListener('click', async () => {
   elReconnect.disabled = true;
   elReconnect.textContent = RECONNECT_LABEL_PENDING;
   try {
-    await fetch('/reconnect', { method: 'POST' });
+    await fetch('/reconnect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
+    });
   } catch { /* ignore — SSE will show terminal state */ }
   // No timer reset: the SSE state event will toggle the label back
   // when the connector emits state=open or state=closed.
@@ -557,7 +563,7 @@ async function runOnce({ simple, readers, serverName, tool, runBtn, status, resu
   try {
     const resp = await fetch('/tool/call', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
       body: JSON.stringify({ server: serverName, tool: tool.name, args }),
     });
     const body = await resp.json();
@@ -931,7 +937,7 @@ function buildMcpCredsView(name) {
     try {
       const resp = await fetch('/mcp/session-creds-apply', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
         body: JSON.stringify({ mcp: name, env }),
       });
       const body = await resp.json().catch(() => ({}));
@@ -958,7 +964,7 @@ function buildMcpCredsView(name) {
     try {
       const resp = await fetch('/mcp/session-creds-clear', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
         body: JSON.stringify({ mcp: name }),
       });
       const body = await resp.json().catch(() => ({}));
@@ -1330,7 +1336,7 @@ async function invokeMcpAction(path, mcp, status) {
   try {
     const resp = await fetch(path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
       body: JSON.stringify({ mcp }),
     });
     const body = await resp.json().catch(() => ({}));
@@ -1903,7 +1909,10 @@ async function handleForceReregister(row) {  // eslint-disable-line no-unused-va
   // there is no operator-visible bad state.
   setTunnelActionStatus('re-registering…', true);
   try {
-    const resp = await fetch('/internal/tunnel/force-reregister', { method: 'POST' });
+    const resp = await fetch('/internal/tunnel/force-reregister', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
+    });
     const body = await resp.json().catch(() => ({}));
     if (resp.status >= 400 || body.ok === false) {
       setTunnelActionStatus(body.error || `HTTP ${resp.status}`, false);
@@ -1973,7 +1982,7 @@ elTunnelForm.addEventListener('submit', async (ev) => {
   try {
     const resp = await fetch('/internal/tunnel/creds', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
       body: JSON.stringify(payload),
     });
     const body = await resp.json().catch(() => ({}));
