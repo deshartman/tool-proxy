@@ -154,47 +154,52 @@ No Ingress is needed — internal cluster access only.
 
 ## Fly.io
 
-Separate app from the connector (same pattern the controller team uses):
+Separate app from the connector, **private-only** — no `[http_service]`, no
+`[[services]]`, no public IP. Sibling Fly apps in the same org reach it at
+`<app-name>.internal:11434` over Fly's private IPv6 mesh.
 
-**`fly.embedding.toml`** (in your deployment repo):
-```toml
-app = "your-org-mcp-embedding"
-primary_region = "iad"
+**Do not add an `[http_service]` block.** Ollama has no auth, so any public
+exposure would let anyone in the world use your GPU/CPU (and quota) to run
+inferences.
 
-[build]
-  image = "ollama/ollama:latest"
+Tracked reference: [`deploy/fly/ollama/fly.toml.example`](../../deploy/fly/ollama/fly.toml.example).
 
-[env]
-  OLLAMA_HOST = "0.0.0.0:11434"
+Copy that file to `fly.toml` in your deployment repo, replace `<APP-NAME>`,
+then run:
 
-[http_service]
-  internal_port = 11434
-  auto_stop_machines = false
-  auto_start_machines = true
-  min_machines_running = 1
-
-[[mounts]]
-  source = "ollama_cache"
-  destination = "/root/.ollama"
-```
-
-Create the volume once:
 ```bash
-fly volumes create ollama_cache --region iad --size 5
+fly apps create <APP-NAME> --org <YOUR-ORG>
+fly volumes create ollama_models --app <APP-NAME> --region iad --size 10 --yes
+fly deploy --app <APP-NAME> --config deploy/fly/ollama/fly.toml
+fly ssh console -a <APP-NAME> -C "ollama pull nomic-embed-text"
 ```
 
-Deploy:
+Verify reachability from the connector:
+
 ```bash
-fly deploy -c fly.embedding.toml
+fly ssh console -a <CONNECTOR-APP> -C "wget -qO- http://<APP-NAME>.internal:11434/api/tags"
 ```
 
-Connector environment:
+Expect JSON listing `nomic-embed-text`.
+
+Set the connector's `OLLAMA_URL` accordingly:
+
 ```
 EK_EMBEDDER=ollama
-OLLAMA_URL=http://your-org-mcp-embedding.internal:11434
+OLLAMA_URL=http://<APP-NAME>.internal:11434
 ```
 
-Approximate cost: ~$5/month (`shared-cpu-2x` + 1GB RAM).
+Volume size 10 GB gives headroom for future models (e.g. `mxbai-embed-large`);
+`nomic-embed-text` alone needs ~275 MB.
+
+**A note on `.flycast` vs `.internal`.** Fly Postgres apps get a `.flycast`
+IPv6 anycast address auto-allocated (that's why the connector's `POSTGRES_URL`
+speaks `<db-app>.flycast`). Plain Fly apps like this Ollama sidecar do NOT
+get `.flycast` unless you add a `[[services]]` block, which would require
+opening the service publicly. `.internal` gives the same private mesh
+reachability without that trade-off — use it for private-only apps.
+
+Approximate cost: ~$3–5/month (`shared-cpu-1x` + 512 MB + 10 GB volume).
 
 ## Air-Gap / Pre-Populated Model
 
