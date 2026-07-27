@@ -83,24 +83,16 @@ const Policy = z.object({
 export type ReconnectPolicyConfig = z.infer<typeof ReconnectPolicy>;
 
 const ConfigSchema = z.object({
-  // The tunnel: block is REQUIRED under CONNECTOR_CREDS_SOURCE=env (validated
-  // by bootFromEnv). Under CONNECTOR_CREDS_SOURCE=db it's optional — tunnel
-  // identity lives in the DB, and any inherited yaml block is ignored (with
-  // a WARN at bootFromDb). Empty strings on controller_url / name are also
-  // accepted so `${CONTROLLER_URL:-}` interpolates cleanly when the legacy
-  // env vars have been stripped as part of the env→db migration; bootFromEnv
-  // then throws a clear "missing required fields" error, while bootFromDb
-  // logs its ignore-WARN and continues.
+  // The tunnel: block is legacy — retained in the schema so old
+  // connector.yaml files parse cleanly, but bootFromDb ignores its contents
+  // entirely (tunnel identity + creds live in the sealed controllers row).
+  // Empty strings on controller_url / name pass validation so
+  // `${CONTROLLER_URL:-}` yaml interpolations don't break parsing.
   tunnel: z
     .object({
-      // The controller's HTTPS root. Used for the WS tunnel dial — the
-      // connector upgrades https:// → wss:// internally and appends the
-      // /mcp-tunnel path in tunnel/client.ts.
-      //
-      // Preprocess handles the yaml quirk where `key: ${VAR:-}` (unset var)
-      // interpolates to a bare `key: ` which YAML parses as null, not "".
-      // Both null and "" normalize to "" here so downstream code (bootFromEnv
-      // guard, bootFromDb WARN) sees a consistent empty-string signal.
+      // Legacy — see block comment above. Preprocess handles the yaml quirk
+      // where `key: ${VAR:-}` (unset var) interpolates to a bare `key: `
+      // which YAML parses as null, not "".
       controller_url: z.preprocess(
         (v) => (v === null ? "" : v),
         z.string().url().or(z.literal("")),

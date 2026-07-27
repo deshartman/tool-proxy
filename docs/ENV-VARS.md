@@ -30,20 +30,6 @@ Set these only when the default doesn't match your infrastructure.
 | `LOG_LEVEL` | `info` | Pino level. `debug` for verbose troubleshooting; `warn` in prod if you want quieter logs. |
 | `CONNECTOR_VERSION` | `dev` | Version string surfaced in the manifest and boot log. CI stamps this at build time. |
 
-## Legacy (`env` mode only — being removed)
-
-Retained for one release cycle as a rollback lane out of `db` mode. Do NOT
-choose these for new deployments. Under `db` mode (default) all four are
-IGNORED (a warn logs per var) — creds live in the sealed controllers row,
-editable via the inspector UI.
-
-| Variable | Purpose |
-|---|---|
-| `CONNECTOR_CREDS_SOURCE` | `db` (default) or `env`. |
-| `CONTROLLER_URL` | HTTPS root of the controller (env mode only). Must start with `https://` — `http://` is refused at boot. Loopback (127.0.0.1, localhost, ::1) is allowed on any scheme for local mock testing. |
-| `CONNECTOR_NAME` | Must exactly match the Tunnel Security row Name in the controller UI (env mode only). |
-| `TUNNEL_AUTH_TOKEN` OR (`OAUTH_CLIENT_ID` + `OAUTH_CLIENT_SECRET` + `OAUTH_TOKEN_URL`) | Static-bearer OR OAuth2 posture (env mode only, mutually exclusive). |
-
 ## Per-bundle vars (Twilio-shipped MCPs)
 
 Populated via the controller creds UI in production, or the inspector's
