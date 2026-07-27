@@ -148,7 +148,7 @@ First boot lands on an empty controllers row — the inspector renders "Configur
 
 Inspector UI: <http://localhost:9090/>. There's only one inspector per connector process (one connector boots all MCPs).
 
-A Type 1 entry whose child crashes on boot (e.g. an MCP that requires API creds and gets empty values) fails-fast at the spawner readiness probe — by design. The fix is to either provide the creds in the entry's `dir/.env`, or comment the entry out of `connector.yaml`.
+A Type 1 / Type 3 entry whose child crashes on boot (e.g. an MCP that requires API creds and gets empty values, or a Type 3 bundle whose Python code raises at module-load time when a required env var is unset) fails at the spawner readiness probe / `connectServer` call. `startAll` **logs the failure and CONTINUES** to the next entry — a broken MCP does not take down the connector or its siblings. The failed entry surfaces as `permanently-failed` in the inspector's MCP Status panel and the operator's recovery is either the inspector's per-MCP "Reload creds" / "Restart" buttons or a fix to the entry's `dir/.env` + connector restart. The `fail_mode` field in yaml `policy:` is spec-only today — it is not consulted at runtime; the effective behavior is continue-on-fail. Pinned by `tests/mcp-supervisor/continue-on-fail.test.ts`. Do NOT reintroduce the throw in `startAll`'s loop — that regresses to the old cascade where entries after the first failure were silently skipped.
 
 Primary verification is **interactive via the inspector UI**:
 - "MCP Server" panel shows the local MCP servers and their tools.
