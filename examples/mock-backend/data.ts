@@ -1,27 +1,18 @@
-// Seed data for the mock customer service. In-memory only — restarting the
-// service wipes any state (there is none today; all reads).
+// Customer + interaction (order) data layer. Postgres-backed as of the
+// MOCK-BACKEND-DB plan — retired the in-memory CUSTOMERS[] array along
+// with the DEMO_CUSTOMER_* env vars and the Alice/Bob/Carol/Pat behavior
+// fixtures. First-boot database is empty; the operator inserts rows via
+// the inspector's CRM Insert panel (which proxies POST /customers on
+// this service).
 //
-// The FOCAL customer (first entry, used by the calendar fixture and by the
-// "calling to check on my orders" demo path) is env-driven:
-//
-//   DEMO_CUSTOMER_NAME       given name           default "Dana"
-//   DEMO_CUSTOMER_SURNAME    family name          default "Demo"
-//   DEMO_CUSTOMER_PHONE      E.164 phone          default "+15551239999"
-//
-// Set these in examples/mock-backend/.env (gitignored) when you want live calls
-// or SMS from your own phone to route through the demo. With nothing set,
-// the mock still boots — falls back to Dana Demo on a 555 reserved-range
-// number that can't collide with a real subscriber.
-//
-// The refund-eligibility demo fixtures (Alice/Bob/Carol on +1415555010{1,2,3}
-// and the gift-order email purchaser@example.com) stay hardcoded — their
-// orderId / age / status combinations exercise the three procedure branches
-// (eligible / >30d / not-delivered), so they're behavior fixtures, not seed
-// data an operator would want to swap out.
+// Callers (server.ts, calendar.ts) only see the exported functions —
+// SQL stays in this module.
+
+import { query } from "./db.js";
 
 export interface Interaction {
   orderId: string;
-  date: string;        // ISO 8601, set at module-load time relative to "now"
+  date: string;        // ISO 8601 — placed_at as string for JSON output
   reason: string;
   resolution: string;
   status: "delivered" | "pending" | "shipped" | "cancelled";
@@ -31,192 +22,236 @@ export interface Interaction {
 }
 
 export interface Customer {
+  id: string;              // uuid, internal — not exposed on the CRM tools' wire
   name: string;
   surname: string;
-  phone?: string;      // E.164
+  phone?: string;
   email?: string;
   interactions: Interaction[];
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const daysAgo = (n: number): string => new Date(Date.now() - n * DAY_MS).toISOString();
+interface CustomerRow {
+  id: string;
+  name: string;
+  surname: string;
+  phone: string | null;
+  email: string | null;
+}
 
-const FOCAL_NAME = process.env.DEMO_CUSTOMER_NAME ?? "Dana";
-const FOCAL_SURNAME = process.env.DEMO_CUSTOMER_SURNAME ?? "Demo";
-const FOCAL_PHONE = process.env.DEMO_CUSTOMER_PHONE ?? "+15551239999";
+interface InteractionRow {
+  order_id: string;
+  customer_id: string;
+  placed_at: Date;
+  status: string;
+  channel: string;
+  amount: string;         // pg returns numeric as string to avoid precision loss
+  currency: string;
+  reason: string | null;
+  resolution: string | null;
+}
 
-const CUSTOMERS: Customer[] = [
-  {
-    name: FOCAL_NAME,
-    surname: FOCAL_SURNAME,
-    phone: FOCAL_PHONE,
-    interactions: [
-      {
-        orderId: "ord_focal_1",
-        date: daysAgo(12),
-        reason: "online purchase",
-        resolution: "delivered to address",
-        status: "delivered",
-        channel: "web",
-        amount: 89.50,
-        currency: "USD",
-      },
-      {
-        orderId: "ord_focal_2",
-        date: daysAgo(3),
-        reason: "online purchase",
-        resolution: "in transit",
-        status: "shipped",
-        channel: "web",
-        amount: 145.00,
-        currency: "USD",
-      },
-      {
-        orderId: "ord_focal_3",
-        date: daysAgo(1),
-        reason: "online purchase",
-        resolution: "awaiting fulfillment",
-        status: "pending",
-        channel: "web",
-        amount: 34.99,
-        currency: "USD",
-      },
-      {
-        orderId: "ord_focal_4",
-        date: daysAgo(35),
-        reason: "online purchase",
-        resolution: "delivered to address",
-        status: "delivered",
-        channel: "web",
-        amount: 59.95,
-        currency: "USD",
-      },
-      {
-        orderId: "ord_focal_5",
-        date: daysAgo(62),
-        reason: "online purchase",
-        resolution: "delivered to address",
-        status: "delivered",
-        channel: "web",
-        amount: 219.00,
-        currency: "USD",
-      },
-      {
-        orderId: "ord_focal_6",
-        date: daysAgo(95),
-        reason: "in-store purchase",
-        resolution: "delivered at counter",
-        status: "delivered",
-        channel: "store",
-        amount: 412.50,
-        currency: "USD",
-      },
-      {
-        orderId: "ord_focal_7",
-        date: daysAgo(180),
-        reason: "online purchase",
-        resolution: "delivered to address",
-        status: "delivered",
-        channel: "web",
-        amount: 78.40,
-        currency: "USD",
-      },
-    ],
-  },
-  {
-    name: "Alice",
-    surname: "Anderson",
-    phone: "+14155550101",
-    interactions: [{
-      orderId: "ord_42",
-      date: daysAgo(16),
-      reason: "online purchase",
-      resolution: "delivered to address",
-      status: "delivered",
-      channel: "web",
-      amount: 42.10,
-      currency: "USD",
-    }],
-  },
-  {
-    name: "Bob",
-    surname: "Brown",
-    phone: "+14155550102",
-    interactions: [{
-      orderId: "ord_77",
-      date: daysAgo(47),
-      reason: "in-store purchase",
-      resolution: "delivered at counter",
-      status: "delivered",
-      channel: "store",
-      amount: 128.99,
-      currency: "USD",
-    }],
-  },
-  {
-    name: "Carol",
-    surname: "Chen",
-    phone: "+14155550103",
-    interactions: [{
-      orderId: "ord_91",
-      date: daysAgo(8),
-      reason: "online purchase",
-      resolution: "awaiting fulfillment",
-      status: "pending",
-      channel: "web",
-      amount: 19.50,
-      currency: "USD",
-    }],
-  },
-  {
-    name: "Pat",
-    surname: "Purchaser",
-    email: "purchaser@example.com",
-    interactions: [{
-      orderId: "ord_gift_5",
-      date: daysAgo(12),
-      reason: "gift order",
-      resolution: "delivered to recipient",
-      status: "delivered",
-      channel: "web",
-      amount: 65.00,
-      currency: "USD",
-    }],
-  },
-];
+function rowToInteraction(r: InteractionRow): Interaction {
+  return {
+    orderId: r.order_id,
+    date: r.placed_at.toISOString(),
+    status: r.status as Interaction["status"],
+    channel: r.channel as Interaction["channel"],
+    amount: Number(r.amount),
+    currency: r.currency,
+    reason: r.reason ?? "",
+    resolution: r.resolution ?? "",
+  };
+}
+
+async function loadInteractions(customerId: string): Promise<Interaction[]> {
+  const { rows } = await query<InteractionRow>(
+    `SELECT order_id, customer_id, placed_at, status, channel, amount, currency, reason, resolution
+       FROM interactions WHERE customer_id = $1 ORDER BY placed_at DESC`,
+    [customerId],
+  );
+  return rows.map(rowToInteraction);
+}
 
 function normalizePhone(raw: string): string {
   return raw.replace(/[\s()-]/g, "");
 }
 
-export function lookupByPhone(phone: string): Customer | undefined {
+export async function lookupByPhone(phone: string): Promise<Customer | undefined> {
   const target = normalizePhone(phone);
-  return CUSTOMERS.find(c => c.phone === target);
+  const { rows } = await query<CustomerRow>(
+    "SELECT id, name, surname, phone, email FROM customers WHERE phone = $1 LIMIT 1",
+    [target],
+  );
+  if (rows.length === 0) return undefined;
+  const r = rows[0];
+  return {
+    id: r.id,
+    name: r.name,
+    surname: r.surname,
+    phone: r.phone ?? undefined,
+    email: r.email ?? undefined,
+    interactions: await loadInteractions(r.id),
+  };
 }
 
-export function lookupByEmail(email: string): Customer | undefined {
-  const target = email.trim().toLowerCase();
-  return CUSTOMERS.find(c => c.email?.toLowerCase() === target);
+export async function lookupByEmail(email: string): Promise<Customer | undefined> {
+  const { rows } = await query<CustomerRow>(
+    "SELECT id, name, surname, phone, email FROM customers WHERE email = $1 LIMIT 1",
+    [email.trim()],
+  );
+  if (rows.length === 0) return undefined;
+  const r = rows[0];
+  return {
+    id: r.id,
+    name: r.name,
+    surname: r.surname,
+    phone: r.phone ?? undefined,
+    email: r.email ?? undefined,
+    interactions: await loadInteractions(r.id),
+  };
 }
 
-export function lookupOrder(orderId: string): { customer: Customer; interaction: Interaction } | undefined {
-  for (const customer of CUSTOMERS) {
-    const interaction = customer.interactions.find(i => i.orderId === orderId);
-    if (interaction) return { customer, interaction };
-  }
-  return undefined;
-}
-
-// The "focal" customer — first entry in CUSTOMERS — is the one calendar.ts
-// seeds an appointment against for the reschedule demo. Exporting via this
-// accessor (instead of hardcoding the phone in calendar.ts) means the env
-// override for DEMO_CUSTOMER_PHONE also wires the calendar fixture to that
-// same number automatically.
-export function focalCustomer(): Customer {
-  return CUSTOMERS[0];
+export async function lookupOrder(
+  orderId: string,
+): Promise<{ customer: Customer; interaction: Interaction } | undefined> {
+  const { rows } = await query<InteractionRow & CustomerRow>(
+    `SELECT i.order_id, i.customer_id, i.placed_at, i.status, i.channel,
+            i.amount, i.currency, i.reason, i.resolution,
+            c.id, c.name, c.surname, c.phone, c.email
+       FROM interactions i JOIN customers c ON c.id = i.customer_id
+       WHERE i.order_id = $1 LIMIT 1`,
+    [orderId],
+  );
+  if (rows.length === 0) return undefined;
+  const r = rows[0];
+  const interaction = rowToInteraction({
+    order_id: r.order_id,
+    customer_id: r.customer_id,
+    placed_at: r.placed_at,
+    status: r.status,
+    channel: r.channel,
+    amount: r.amount,
+    currency: r.currency,
+    reason: r.reason,
+    resolution: r.resolution,
+  });
+  const customer: Customer = {
+    id: r.id,
+    name: r.name,
+    surname: r.surname,
+    phone: r.phone ?? undefined,
+    email: r.email ?? undefined,
+    interactions: await loadInteractions(r.id),
+  };
+  return { customer, interaction };
 }
 
 export function mostRecent(customer: Customer): Interaction | undefined {
-  if (customer.interactions.length === 0) return undefined;
-  return [...customer.interactions].sort((a, b) => b.date.localeCompare(a.date))[0];
+  // Interactions come back from Postgres already sorted newest-first by
+  // loadInteractions's ORDER BY, so this is just [0].
+  return customer.interactions[0];
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Write path — used by server.ts's POST /customers.
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface CreateCustomerInput {
+  name: string;
+  surname: string;
+  phone?: string;
+  email?: string;
+  interactions?: Array<{
+    orderId: string;
+    placedAt: string;       // ISO 8601
+    status: string;
+    channel: string;
+    amount: number;
+    currency?: string;
+    reason?: string;
+    resolution?: string;
+  }>;
+}
+
+export type CreateCustomerResult =
+  | { ok: true; customer: Customer }
+  | { ok: false; error: "duplicate_phone" | "duplicate_email" | "validation_error"; detail?: string };
+
+export async function createCustomer(
+  input: CreateCustomerInput,
+): Promise<CreateCustomerResult> {
+  if (!input.name?.trim() || !input.surname?.trim()) {
+    return { ok: false, error: "validation_error", detail: "name and surname are required" };
+  }
+  if (!input.phone && !input.email) {
+    return { ok: false, error: "validation_error", detail: "at least one of phone or email is required" };
+  }
+
+  const phone = input.phone ? normalizePhone(input.phone) : null;
+  const email = input.email?.trim() ?? null;
+
+  // Pre-check for duplicates so we can return a friendly error envelope
+  // rather than a raw unique-violation. Race between check and insert is
+  // caught by the unique index — code 23505 falls through to the same error.
+  if (phone) {
+    const dup = await query("SELECT 1 FROM customers WHERE phone = $1", [phone]);
+    if (dup.rowCount) return { ok: false, error: "duplicate_phone" };
+  }
+  if (email) {
+    const dup = await query("SELECT 1 FROM customers WHERE email = $1", [email]);
+    if (dup.rowCount) return { ok: false, error: "duplicate_email" };
+  }
+
+  const client = await (await import("./db.js")).pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO customers (name, surname, phone, email)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [input.name.trim(), input.surname.trim(), phone, email],
+    );
+    const customerId = rows[0].id;
+
+    for (const i of input.interactions ?? []) {
+      await client.query(
+        `INSERT INTO interactions
+           (order_id, customer_id, placed_at, status, channel, amount, currency, reason, resolution)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          i.orderId,
+          customerId,
+          new Date(i.placedAt),
+          i.status,
+          i.channel,
+          i.amount,
+          i.currency ?? "USD",
+          i.reason ?? null,
+          i.resolution ?? null,
+        ],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    const code = (err as { code?: string }).code;
+    if (code === "23505") {
+      // Fallback in case the pre-check races. Distinguish which by
+      // constraint name when we can, otherwise a generic duplicate.
+      const detail = (err as { detail?: string }).detail ?? "";
+      if (detail.toLowerCase().includes("phone")) return { ok: false, error: "duplicate_phone" };
+      if (detail.toLowerCase().includes("email")) return { ok: false, error: "duplicate_email" };
+      return { ok: false, error: "duplicate_phone" };
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Round-trip via lookup for a consistent shape (fresh joins,
+  // interactions ordered newest-first, etc.).
+  const created = phone
+    ? await lookupByPhone(phone)
+    : await lookupByEmail(email!);
+  if (!created) throw new Error("customer disappeared right after insert — should not happen");
+  return { ok: true, customer: created };
 }

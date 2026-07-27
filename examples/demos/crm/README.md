@@ -33,6 +33,8 @@ MCP name.
 | `check_availability` | calendar query  | Validates a candidate slot. Returns `{ available, reason?, daysFromNow, isSameDay, technician, suggestions[] }`. |
 | `update_appointment` | side-effect     | Reschedules an appointment to a new start. Returns the updated appointment or a 409 error envelope. |
 | `notify_agent`       | side-effect     | Sends an internal-channel notification to the technician. Pure mock — logs + returns a delivery receipt. |
+| `create_customer`    | side-effect     | Inserts a customer + optional inline orders. Backed by the mock-backend's `POST /customers`. Duplicate phone/email returns an isError envelope. Primary caller is the operator via the inspector's tool-click form; procedures may call it too (e.g. an LLM registering a caller mid-conversation). |
+| `create_appointment` | side-effect     | Books a 1-hour slot for an existing customer. Backed by the mock-backend's `POST /appointments`. Same working-hours model as `check_availability` (Mon-Fri 09:00-16:00 UTC on the hour). |
 
 ### Prompts
 
