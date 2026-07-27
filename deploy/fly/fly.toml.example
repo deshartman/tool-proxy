@@ -54,6 +54,9 @@ primary_region = "iad"
   # 127.0.0.1. Safe here because this app has no public IP allocated —
   # `fly ips list` MUST be empty. See CODE-DEPLOY design record §B4.
   INSPECTOR_BIND_ADDR = "::"
+  # C4 (security hardening) — acknowledge non-loopback bind explicitly.
+  # The connector refuses to start otherwise. Requires `fly ips list` empty.
+  INSPECTOR_ALLOW_NONLOOPBACK = "1"
   # POSTGRES_URL and CONNECTOR_KEY_B64 arrive via `fly secrets set` — see README.
 
 [[mounts]]
