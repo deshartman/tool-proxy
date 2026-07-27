@@ -15,8 +15,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(__dirname, "../../entrypoint.sh");
 
 function scaffoldStubExec(dir: string): void {
-  // The entrypoint's last line is `exec node dist/index.js "$@"`. Stub it
-  // with a script that echoes its argv so we can assert CMD flows through.
+  const binDir = join(dir, "bin");
+  mkdirSync(binDir, { recursive: true });
+
+  // Stub su-exec: drops "mcp:mcp" argument and execs the rest
+  const suExec = join(binDir, "su-exec");
+  writeFileSync(suExec, '#!/bin/sh\nshift\nexec "$@"\n');
+  spawnSync("chmod", ["+x", suExec]);
+
+  // Stub chown: no-op stub for chown mcp:mcp
+  const chown = join(binDir, "chown");
+  writeFileSync(chown, '#!/bin/sh\nexit 0\n');
+  spawnSync("chmod", ["+x", chown]);
+
   mkdirSync(join(dir, "dist"), { recursive: true });
   writeFileSync(
     join(dir, "dist/index.js"),
@@ -32,7 +43,7 @@ describe("entrypoint.sh", () => {
       const keyFile = join(dir, "key");
       const res = spawnSync(SCRIPT, ["start"], {
         cwd: dir,
-        env: { ...process.env, CONNECTOR_KEY_FILE: keyFile, CONNECTOR_KEY_B64: undefined } as NodeJS.ProcessEnv,
+        env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, CONNECTOR_KEY_FILE: keyFile, CONNECTOR_KEY_B64: undefined } as NodeJS.ProcessEnv,
         encoding: "utf8",
       });
       expect(res.status).toBe(0);
@@ -50,7 +61,7 @@ describe("entrypoint.sh", () => {
       const keyFile = join(dir, "key");
       const res = spawnSync(SCRIPT, ["start"], {
         cwd: dir,
-        env: { ...process.env, CONNECTOR_KEY_FILE: keyFile, CONNECTOR_KEY_B64: "" },
+        env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, CONNECTOR_KEY_FILE: keyFile, CONNECTOR_KEY_B64: "" },
         encoding: "utf8",
       });
       expect(res.status).toBe(0);
@@ -71,7 +82,7 @@ describe("entrypoint.sh", () => {
 
       const res = spawnSync(SCRIPT, ["start"], {
         cwd: dir,
-        env: { ...process.env, CONNECTOR_KEY_FILE: keyFile, CONNECTOR_KEY_B64: b64 },
+        env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, CONNECTOR_KEY_FILE: keyFile, CONNECTOR_KEY_B64: b64 },
         encoding: "utf8",
       });
       expect(res.status).toBe(0);
@@ -91,7 +102,7 @@ describe("entrypoint.sh", () => {
 
       const res = spawnSync(SCRIPT, ["start"], {
         cwd: dir,
-        env: { ...process.env, CONNECTOR_KEY_FILE: keyFile, CONNECTOR_KEY_B64: b64 },
+        env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, CONNECTOR_KEY_FILE: keyFile, CONNECTOR_KEY_B64: b64 },
         encoding: "utf8",
       });
       expect(res.status).toBe(0);
@@ -99,5 +110,11 @@ describe("entrypoint.sh", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("unsets CONNECTOR_KEY_B64 and invokes su-exec", () => {
+    const scriptContent = readFileSync(SCRIPT, "utf8");
+    expect(scriptContent).toMatch(/unset\s+CONNECTOR_KEY_B64/);
+    expect(scriptContent).toMatch(/exec\s+su-exec\s+mcp:mcp\s+node\s+dist\/index\.js/);
   });
 });

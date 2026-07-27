@@ -103,7 +103,12 @@ WORKDIR /app
 # package brings the interpreter the venv shebangs need; pip is not
 # required at runtime (bundles are pre-installed in their venvs by the
 # bundle-build stage).
-RUN apk add --no-cache python3
+RUN apk add --no-cache python3 su-exec \
+ && addgroup -S mcp \
+ && adduser -S -G mcp -h /app mcp \
+ && mkdir -p /etc/mcp-connector /var/lib/mcp-connector/customer-mcps \
+ && chown -R mcp:mcp /app /etc/mcp-connector /var/lib/mcp-connector
+# DO NOT set USER mcp — entrypoint needs root for chown, drops via su-exec
 
 # Connector + its prod deps (incl. tsx, which the spawner needs to run
 # Type 1 children). npm workspaces hoist MOST deps to the root node_modules

@@ -14,11 +14,14 @@
 
 set -eu
 
+key_file="${CONNECTOR_KEY_FILE:-/etc/mcp-connector/connector.key}"
+
 if [ -n "${CONNECTOR_KEY_B64:-}" ]; then
-  key_file="${CONNECTOR_KEY_FILE:-/etc/mcp-connector/connector.key}"
   mkdir -p "$(dirname "$key_file")"
   printf '%s' "$CONNECTOR_KEY_B64" | base64 -d > "$key_file"
+  chown mcp:mcp "$key_file"
   chmod 400 "$key_file"
+  unset CONNECTOR_KEY_B64
 fi
 
-exec node dist/index.js "$@"
+exec su-exec mcp:mcp node dist/index.js "$@"
