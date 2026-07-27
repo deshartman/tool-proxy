@@ -118,15 +118,31 @@ Seeded in [`../../mock-backend/data.ts`](../../mock-backend/data.ts):
 
 | `customer_phone` | Name | Notes |
 |---|---|---|
-| `+15551239999` | Dana Demo | 3 orders (delivered, shipped, pending) |
+| `${DEMO_CUSTOMER_PHONE}` — default `+15551239999` | `${DEMO_CUSTOMER_NAME} ${DEMO_CUSTOMER_SURNAME}` — default `Dana Demo` | 7 orders spanning the fulfillment states + timing edges |
 | `+14155550101` | Alice Anderson | `ord_42` — delivered, ~16d, refund-eligible |
 | `+14155550102` | Bob Brown | `ord_77` — delivered, ~47d, fails 30-day window |
 | `+14155550103` | Carol Chen | `ord_91` — pending, fails status gate |
 | (email `purchaser@example.com`) | Pat Purchaser | `ord_gift_5` — gift order edge case |
 
+The **focal customer** (first row) is env-driven so an operator can wire
+the demo to their own phone and name without editing tracked code:
+
+```bash
+# in examples/mock-backend/.env  (gitignored — never lands in git)
+DEMO_CUSTOMER_NAME=Alex
+DEMO_CUSTOMER_SURNAME=Operator
+DEMO_CUSTOMER_PHONE=+15551234567
+```
+
+See [`../../mock-backend/.env.example`](../../mock-backend/.env.example) for
+the full list. Alice / Bob / Carol / Pat stay hardcoded — they're
+behavior fixtures for the refund-eligibility procedure branches, not seed
+data an operator would want to swap.
+
 Appointment calendar (seeded in [`../../mock-backend/calendar.ts`](../../mock-backend/calendar.ts))
-lives alongside the customer data — one technician, one open appointment per
-seeded customer.
+seeds one open appointment against the focal customer's phone — the env
+override for `DEMO_CUSTOMER_PHONE` also re-wires the calendar fixture, so
+the reschedule demo works against your own number the same way.
 
 ## Wire-format tool names
 
