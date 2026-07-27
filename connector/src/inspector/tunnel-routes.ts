@@ -5,6 +5,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { guardCsrf } from "./server.js";
+import type { ConfigStore, ControllerInput, ControllerRow } from "../config-store/index.js";
 
 export interface TunnelConfigSummary {
   id: string;
