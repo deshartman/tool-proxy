@@ -35,11 +35,10 @@ RUN npm ci --workspaces --include-workspace-root
 COPY tsconfig.base.json ./
 COPY connector connector
 
-# Repo-root template files the postbuild script propagates into the package
-# so `mcp-connector init` can read them via `import.meta.url` post-`npm i`.
-# Not in the working-tree build path (files are already there); required for
-# the isolated build context inside this image.
-COPY .env.example connector.yaml.example ./
+# Note: prior versions copied .env.example + connector.yaml.example here
+# for the `mcp-connector init` scaffolder. Both templates were retired in
+# the customer-repo carve-out (zero-config dev bootstrap replaces them),
+# so the COPY line was removed. See scripts/start-connector.sh.
 
 RUN npm run build
 

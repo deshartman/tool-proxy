@@ -199,11 +199,17 @@ export function applyFly(cwd: string = process.cwd(), spawn: SpawnFn = spawnSync
     { cwd, stdio: "pipe" },
   );
   if (attachResult.status !== 0) {
-    // fly postgres attach is not idempotent — re-attaching an already-attached
-    // DB exits non-zero with "already exists" on stderr. Swallow that; any
-    // other non-zero is a real error.
+    // fly postgres attach is not idempotent. Fly emits one of these when the
+    // consumer app already has the DB attached / already has the secret:
+    //   "already exists"
+    //   "already contains a secret named POSTGRES_URL"
+    // Swallow both — they mean the same thing: prior run got here already.
+    // Any other non-zero is a real error.
     const stderrText = bufferToString(attachResult.stderr);
-    if (stderrText.includes("already exists")) {
+    if (
+      stderrText.includes("already exists") ||
+      stderrText.includes("already contains a secret")
+    ) {
       log.info(`Postgres already attached — continuing`);
     } else {
       log.error({ stderr: stderrText, status: attachResult.status }, `fly postgres attach failed`);
@@ -255,7 +261,16 @@ export function applyFly(cwd: string = process.cwd(), spawn: SpawnFn = spawnSync
   // ---- 5. Deploy ----
 
   log.info({ app }, `[5/5] running fly deploy (foreground)`);
-  const deployResult = spawn("fly", ["deploy", "-c", "deploy/fly/fly.toml"], { cwd, stdio: "inherit" });
+  // Build context is CWD (repo root). The fly.toml's [build] dockerfile
+  // path is resolved by fly relative to the fly.toml directory
+  // (deploy/fly/), so that file uses "../../connector/Dockerfile" to point
+  // back into the repo tree. Don't try to override with --dockerfile here;
+  // fly ignores the flag when [build] is set.
+  const deployResult = spawn(
+    "fly",
+    ["deploy", "-c", "deploy/fly/fly.toml"],
+    { cwd, stdio: "inherit" },
+  );
   if (deployResult.status !== 0) {
     log.error({ status: deployResult.status }, `fly deploy failed`);
     return deployResult.status ?? 1;
@@ -333,9 +348,12 @@ function appExists(name: string, spawn: SpawnFn): boolean {
   const r = spawn("fly", ["apps", "list", "--json"], { stdio: "pipe" });
   if (r.status !== 0) return false;
   const json = bufferToString(r.stdout);
-  // Fly's JSON output uses `"Name":"<value>"` — substring check is sufficient
-  // and avoids depending on a JSON parser for a schema Fly might extend.
-  return json.includes(`"Name":"${name}"`);
+  // Fly's JSON output is pretty-printed with a space after the colon
+  // (`"Name": "twilio-tool-sdk"`), so a bare `"Name":"..."` substring check
+  // misses. Regex is whitespace-tolerant and escapes the name for regex
+  // metacharacters (Fly app names are hyphen-safe but be defensive).
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`"Name"\\s*:\\s*"${escaped}"`).test(json);
 }
 
 function secretExists(app: string, key: string, spawn: SpawnFn): boolean {
