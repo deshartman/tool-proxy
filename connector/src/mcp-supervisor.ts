@@ -281,9 +281,25 @@ export class McpSupervisor {
   // server. Mutates http+dir+no-endpoint specs to set their endpoint URL
   // and populates the shared servers map so callers can wire dispatcher /
   // inspector against it.
+  //
+  // Per-entry failures are LOGGED and swallowed — one MCP dying at boot
+  // (missing creds, unreachable stdio dep, readiness timeout) must not
+  // take the whole connector down. The failing entry keeps its
+  // `permanently-failed` status set inside startEntry and surfaces in
+  // the inspector's MCP Status panel; the operator's fix is either the
+  // creds panel or the per-MCP Restart button. Do NOT re-throw here —
+  // that regresses to the old cascade where entry N+1 through end are
+  // silently skipped.
   async startAll(): Promise<Map<string, McpServerConnection>> {
     for (const entry of this.entries.values()) {
-      await this.startEntry(entry, "boot");
+      try {
+        await this.startEntry(entry, "boot");
+      } catch (err) {
+        this.opts.log.error(
+          { name: entry.spec.name, err: err as Error },
+          `MCP boot failed — continuing with remaining entries`,
+        );
+      }
     }
     return this.opts.servers;
   }

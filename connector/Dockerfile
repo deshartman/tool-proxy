@@ -62,6 +62,15 @@ RUN npm prune --omit=dev --workspaces --include-workspace-root
 # come from the controller UI per docs/MCP-PROTOCOL.md v1.1 — no on-disk presence.
 COPY bundled-mcps bundled-mcps
 
+# Sample demo drop-in — reference MCP (now / slow_echo / uuid / weather +
+# prompts + resources). Not part of bundled-mcps/ in the repo (examples/ is
+# reference-only, not a runtime drop-zone per CLAUDE.md), but we WANT it in
+# the image so operators have something visible in the inspector alongside
+# agentic-memory. Landing under bundled-mcps/ so the scanner picks it up
+# non-gated (approval-gated customer drop-ins would need controller UI
+# confirmation to appear in the manifest).
+COPY examples/demos/sample bundled-mcps/sample
+
 RUN set -e; \
     for dir in bundled-mcps/*/; do \
       [ -f "$dir/package.json" ] || continue; \
