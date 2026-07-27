@@ -70,6 +70,7 @@ COPY bundled-mcps bundled-mcps
 # non-gated (approval-gated customer drop-ins would need controller UI
 # confirmation to appear in the manifest).
 COPY examples/demos/sample bundled-mcps/sample
+COPY examples/demos/crm bundled-mcps/crm
 
 RUN set -e; \
     for dir in bundled-mcps/*/; do \
