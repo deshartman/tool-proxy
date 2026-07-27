@@ -1,0 +1,32 @@
+# Ollama embedding sidecar for the enterprise_knowledge bundle.
+#
+# Deploy shape: PRIVATE-ONLY. Reachable from sibling Fly apps in the same
+# org via `<app-name>.internal:11434`. No public IP, no `[[services]]`, no
+# `[http_service]`. See bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md
+# for the full walkthrough and other deployment shapes (Compose, K8s).
+#
+# Rename to `fly.toml` (or copy to your deployment repo) and replace
+# <APP-NAME> with your own slug (e.g. "acme-prod-ollama"). Then:
+#
+#   fly apps create <APP-NAME> --org <YOUR-ORG>
+#   fly volumes create ollama_models --app <APP-NAME> --region <REGION> --size 10 --yes
+#   fly deploy --app <APP-NAME> --config deploy/fly/ollama/fly.toml
+#   fly ssh console -a <APP-NAME> -C "ollama pull nomic-embed-text"
+
+app = "<APP-NAME>"
+primary_region = "iad"
+
+[build]
+image = "ollama/ollama:latest"
+
+[env]
+OLLAMA_HOST = "0.0.0.0:11434"
+
+[[mounts]]
+source = "ollama_models"
+destination = "/root/.ollama"
+
+[[vm]]
+cpu_kind = "shared"
+cpus = 1
+memory_mb = 512
