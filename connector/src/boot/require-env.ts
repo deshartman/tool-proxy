@@ -28,6 +28,28 @@
 import { envOptional } from "../env.js";
 import { resolveCredsSource } from "./creds-source.js";
 
+// C5 (security hardening) — accept only https:// (or wss:// if an operator
+// explicitly uses the WS scheme). Loopback (127.0.0.1, ::1, localhost) is
+// allowed on any scheme so tests dialling a mock controller in-process
+// don't need TLS certs. Anything else — a bare hostname on http:// — is
+// rejected because client.ts's silent http→ws upgrade would send the
+// tunnel bearer unencrypted.
+export function isHttpsControllerUrl(url: string): boolean {
+  const trimmed = url.trim().toLowerCase();
+  try {
+    const u = new URL(trimmed);
+    const isLoopback =
+      u.hostname === "127.0.0.1" ||
+      u.hostname === "localhost" ||
+      u.hostname === "[::1]" ||
+      u.hostname === "::1";
+    if (isLoopback) return true;
+    return u.protocol === "https:" || u.protocol === "wss:";
+  } catch {
+    return false;
+  }
+}
+
 interface MissingEnvFinding {
   /** Multi-line block to render in the consolidated error. */
   message: string;
@@ -51,9 +73,18 @@ export function requireEnv(env: NodeJS.ProcessEnv = process.env): void {
     // ${CONTROLLER_URL} and ${CONNECTOR_NAME} with no defaults — the
     // interpolator would throw a less actionable error than a single
     // consolidated preflight.
-    if (!envOptional("CONTROLLER_URL", env)) {
+    const controllerUrl = envOptional("CONTROLLER_URL", env);
+    if (!controllerUrl) {
       findings.push({
         message: "  CONTROLLER_URL is required (HTTPS root of the controller, e.g. https://controller.example.com). Set in .env.",
+      });
+    } else if (!isHttpsControllerUrl(controllerUrl)) {
+      // C5 (security hardening) — refuse plaintext. client.ts upgrades
+      // http:// → ws:// silently, sending the tunnel bearer unencrypted.
+      // Reject at boot so an operator's typo doesn't leak creds on the
+      // wire before anyone notices.
+      findings.push({
+        message: `  CONTROLLER_URL must use https:// (got: ${controllerUrl}). Plaintext http:// would send the tunnel bearer over an unencrypted socket.`,
       });
     }
     if (!envOptional("CONNECTOR_NAME", env)) {
