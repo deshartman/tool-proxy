@@ -27,6 +27,37 @@ boot and again on every `local-mcps-rescan` frame. No branching by
 delivery path — a derived-image `COPY` and a bind-mount hit the same
 code.
 
+## File ownership — mount must be readable by UID `mcp`
+
+The connector runtime container runs as the non-root user `mcp:mcp`
+(created in the Alpine runtime stage of `connector/Dockerfile`). A
+volume mount whose files are owned by a different UID may be
+unreadable, causing `discoverDropins` to silently skip the folder.
+
+**Symptom:** `local-mcps-rescan` returns zero `added`; the drop-in
+scanner log shows `permission denied` on the folder or its `tools/`
+subdir.
+
+**Fixes, ordered by platform ergonomics:**
+
+- **Kubernetes** — set `securityContext.fsGroup: 65534` (or match the
+  `mcp` group's actual GID in the image) on the pod spec; the kubelet
+  reassigns ownership on mount. Or set `fsGroupChangePolicy: OnRootMismatch`
+  for large mounts.
+- **Fly.io volumes** — bind-mount is initialized empty; the connector
+  creates files as `mcp` so nothing to chown.
+- **AWS EFS / Azure Files** — set `uid=<mcp UID>,gid=<mcp GID>` in the
+  CSI driver's volume attributes, OR run an `initContainer` that
+  `chown -R mcp:mcp` the mount before the connector starts.
+- **docker-compose bind-mount** — `chown -R <mcp UID>:<mcp GID>` on
+  the host directory before `docker compose up`. The `mcp` user's
+  numeric UID/GID is stable across image versions once fixed; check
+  with `docker run --rm ghcr.io/twilio/mcp-connector id mcp`.
+
+Don't relax the container's non-root stance to work around a mount
+permission issue — the non-root UID is a load-bearing security
+property (see [`../CLAUDE.md`](../CLAUDE.md) "Distribution" section).
+
 ## Per-platform recipes
 
 ### Kubernetes — ConfigMap projection (small MCPs)
