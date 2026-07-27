@@ -28,7 +28,6 @@ export interface ScaffoldVars {
   appName: string;
   controllerUrl: string;
   image: string;
-  credsSource: "db" | "env";
   auth: "static" | "oauth2";
 }
 
@@ -57,7 +56,6 @@ function substitute(template: string, vars: ScaffoldVars): string {
     .replaceAll("{{NAME}}", vars.name)
     .replaceAll("{{CONTROLLER_URL}}", vars.controllerUrl)
     .replaceAll("{{IMAGE}}", vars.image)
-    .replaceAll("{{CREDS_SOURCE}}", vars.credsSource)
     .replaceAll("{{AUTH}}", vars.auth);
 }
 
@@ -80,7 +78,6 @@ const FARGATE_TASK_DEF = `{
       "image": "{{IMAGE}}",
       "essential": true,
       "environment": [
-        { "name": "CONNECTOR_CREDS_SOURCE", "value": "{{CREDS_SOURCE}}" },
         { "name": "CONNECTOR_CONFIG",       "value": "/etc/mcp-connector/config.yaml" },
         { "name": "CONNECTOR_NAME",         "value": "{{NAME}}" },
         { "name": "CONTROLLER_URL",         "value": "{{CONTROLLER_URL}}" },
@@ -187,7 +184,6 @@ spec:
           envFrom:
             - secretRef: { name: mcp-connector-token }
           env:
-            - { name: CONNECTOR_CREDS_SOURCE, value: "{{CREDS_SOURCE}}" }
             - { name: CONTROLLER_URL,         value: "{{CONTROLLER_URL}}" }
             - { name: CONNECTOR_NAME,         value: "{{NAME}}" }
             - { name: CONNECTOR_CONFIG,       value: "/etc/mcp-connector/config.yaml" }
@@ -242,7 +238,6 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
           name: 'connector'
           image: imageRef
           env: [
-            { name: 'CONNECTOR_CREDS_SOURCE', value: '{{CREDS_SOURCE}}' }
             { name: 'CONNECTOR_CONFIG',       value: '/etc/mcp-connector/config.yaml' }
             { name: 'CONNECTOR_NAME',         value: connectorName }
             { name: 'CONTROLLER_URL',         value: controllerUrl }
@@ -273,7 +268,6 @@ services:
     environment:
       CONNECTOR_NAME: {{NAME}}
       CONTROLLER_URL: {{CONTROLLER_URL}}
-      CONNECTOR_CREDS_SOURCE: {{CREDS_SOURCE}}
       # C8: assemble POSTGRES_URL from the mounted secret file at
       # container start. See entrypoint.sh. Never put the password in
       # a compose env string or .env line.
@@ -356,7 +350,6 @@ primary_region = "iad"
   # \`dockerfile\` line) once your registry publishes the image.
 
 [env]
-  CONNECTOR_CREDS_SOURCE = "{{CREDS_SOURCE}}"
   CONNECTOR_KEY_FILE = "/etc/mcp-connector/connector.key"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
   CONNECTOR_STATE_PATH = "/var/lib/mcp-connector/.connector-state.json"

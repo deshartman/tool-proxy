@@ -108,7 +108,6 @@ Flags:
                         name — e.g. "twilio-tool-sdk". Ignored for non-Fly targets.
   --controller-url <u>  CONTROLLER_URL (prompts if omitted)
   --image <ref>         OCI image ref (default ghcr.io/twilio/mcp-connector:latest)
-  --creds-source <s>    "db" (default) or "env"
   --auth <a>            "static" (default) or "oauth2"
   --out <dir>           output directory (default ./deploy/<target>)
   --yes                 non-interactive: use flag values only, no prompts
@@ -126,7 +125,6 @@ export async function runDeployInit(argv: string[]): Promise<number> {
       "app-name": { type: "string" },
       "controller-url": { type: "string" },
       image: { type: "string" },
-      "creds-source": { type: "string" },
       auth: { type: "string" },
       out: { type: "string" },
       yes: { type: "boolean" },
@@ -184,7 +182,6 @@ export async function runDeployInit(argv: string[]): Promise<number> {
       appName,
       controllerUrl: normalizeControllerUrl(controllerUrl),
       image: values.image ?? "ghcr.io/twilio/mcp-connector:latest",
-      credsSource: parseEnum(values["creds-source"], ["db", "env"], "db"),
       auth: parseEnum(values.auth, ["static", "oauth2"], "static"),
     };
 
