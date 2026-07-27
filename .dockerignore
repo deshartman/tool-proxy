@@ -117,3 +117,14 @@ mock
 
 # architectural-plans/ = design docs, not runtime code.
 architectural-plans
+
+# Local dev symlinks under bundled-mcps/ that mirror content from
+# examples/demos/*. The Dockerfile populates bundled-mcps/crm and
+# bundled-mcps/sample via explicit COPY lines from examples/demos/,
+# so any local copy or symlink here is redundant and — if it's a
+# symlink to a host absolute path — breaks the image build (the
+# link target doesn't exist inside the container). Only the
+# in-tree bundles (agentic-memory, enterprise-knowledge) should
+# ship from this directory.
+bundled-mcps/crm
+bundled-mcps/sample
