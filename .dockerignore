@@ -18,6 +18,36 @@ dist
 *.env
 **/*.env
 !*.env.example
+# .env.old is a legacy path that *.env doesn't match (suffix is .old not
+# .env) — it existed at repo root at audit time. Explicit patterns for
+# every alt-suffix variant a dev might leave behind.
+.env.old
+**/.env.old
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Registration-token state file — writable by the connector at runtime
+# (env mode). If a dev builds an image from a directory that has one,
+# it should NOT bake in.
+.connector-state.json
+**/.connector-state.json
+
+# Key material of every shape. `!connector.key.example` keeps a
+# placeholder file trackable if deploy/ ever ships one.
+*.pem
+**/*.pem
+*.key
+**/*.key
+!*.key.example
+!**/*.key.example
+id_rsa*
+**/id_rsa*
+
+# Local Claude Code session state and memory.
+.claude
+**/.claude
 
 # Live customer-authored config; only the .example variant ships.
 connector/config/connector-*.yaml

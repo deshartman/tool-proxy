@@ -20,7 +20,7 @@
 # connector ships from Twilio.
 
 # ── Node build stage ───────────────────────────────────────────────────────
-FROM node:22-alpine AS node-build
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS node-build
 WORKDIR /repo
 
 # Workspace install for the connector. MCP folders live outside the workspace
@@ -79,7 +79,7 @@ RUN set -e; \
 # chromadb) that prefer glibc — switch this stage's base to a glibc image
 # (python:3.12-slim) at that point. The connector stage stays Alpine; only
 # this stage's base needs to change.
-FROM python:3.12-alpine AS bundle-build
+FROM python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df AS bundle-build
 WORKDIR /opt/bundled-mcps
 
 # enterprise-knowledge — installed from bundled-mcps/enterprise-knowledge/source/.
@@ -96,14 +96,19 @@ RUN --mount=type=bind,from=node-build,source=/repo/bundled-mcps/enterprise-knowl
 # would dangle when copied across.
 
 # ── Runtime stage ──────────────────────────────────────────────────────────
-FROM node:22-alpine AS runtime
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS runtime
 WORKDIR /app
 
 # Python is the runtime for Type 3 Python bundles. Alpine's python3
 # package brings the interpreter the venv shebangs need; pip is not
 # required at runtime (bundles are pre-installed in their venvs by the
 # bundle-build stage).
-RUN apk add --no-cache python3
+RUN apk add --no-cache python3 su-exec \
+ && addgroup -S mcp \
+ && adduser -S -G mcp -h /app mcp \
+ && mkdir -p /etc/mcp-connector /var/lib/mcp-connector/customer-mcps \
+ && chown -R mcp:mcp /app /etc/mcp-connector /var/lib/mcp-connector
+# DO NOT set USER mcp — entrypoint needs root for chown, drops via su-exec
 
 # Connector + its prod deps (incl. tsx, which the spawner needs to run
 # Type 1 children). npm workspaces hoist MOST deps to the root node_modules

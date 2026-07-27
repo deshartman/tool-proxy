@@ -568,6 +568,10 @@ async function bootFromEnv(): Promise<void> {
           const ok = await supervisor.restart(name, "manual");
           if (!ok) throw new Error(`unknown MCP "${name}"`);
         },
+        // F7: inspector's authorizeWebhookMcp calls this to verify a
+        // bearer token on /internal/webhook/stream + /revoke identifies
+        // the caller as owner of the requested MCP.
+        resolveMcpByWebhookToken: (token: string) => supervisor.resolveMcpByWebhookToken(token),
         rescanLocal: async () => {
           // W-L2: same coordinator method as the controller-triggered path,
           // minus the wire ack. Returns the summary for the inspector UI.
@@ -1250,6 +1254,10 @@ async function bootFromDb(): Promise<void> {
           const ok = await supervisor.restart(name, "manual");
           if (!ok) throw new Error(`unknown MCP "${name}"`);
         },
+        // F7: inspector's authorizeWebhookMcp calls this to verify a
+        // bearer token on /internal/webhook/stream + /revoke identifies
+        // the caller as owner of the requested MCP.
+        resolveMcpByWebhookToken: (token: string) => supervisor.resolveMcpByWebhookToken(token),
         rescanLocal: async () => {
           const ack = await localMcps.rescan();
           return {

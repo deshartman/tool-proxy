@@ -66,6 +66,7 @@ Step 2 ignores all configuration — the stub backend has nothing to configure. 
 | `OLLAMA_URL` | Ollama sidecar URL; default `http://embedding:11434` |
 | `EK_PGVECTOR_DSN` | Postgres connection string for vector store |
 | `EK_OLLAMA_MODEL` | Model name; default `nomic-embed-text` (768-dim) |
+| `EK_LOCAL_ROOTS` | Path jail for local files reader (colon-separated allowlist of directories, e.g. `/var/lib/documents:/opt/data`). Unset/empty disables local file indexing. |
 
 Creds are delivered via the controller UI in production or the inspector's session-creds paste in dev — this bundle does not ship a `.env.example`.
 

@@ -15,7 +15,11 @@ connector:
 
 image:
   repository: ghcr.io/twilio/mcp-connector
-  tag: latest
+  # C2 (security hardening) — do NOT default to `latest`. Silent
+  # supply-chain drift on rebuild is a real threat class. Operators must
+  # pin an explicit version tag (or better, an image digest `@sha256:...`)
+  # via `--set image.tag=<version>` or a values override file.
+  tag: ""
   pullPolicy: IfNotPresent
   # Optional: list of secret names for private registries.
   pullSecrets: []

@@ -125,6 +125,11 @@ export interface McpActions {
   // `fetchEnvKeys(name)` which queries the running child's /envkeys
   // endpoint.
   fetchEnvKeys?(name: string): Promise<string[]>;
+  // F7: verify a bearer token presented on /internal/webhook/* against
+  // per-MCP secrets minted at spawn. Returns the MCP name that owns the
+  // token, or undefined if no match. Constant-time-compared server-side.
+  // Backed by supervisor.resolveMcpByWebhookToken.
+  resolveMcpByWebhookToken?(token: string): string | undefined;
 }
 
 const RING_SIZE = 500;
@@ -143,6 +148,21 @@ export interface TunnelRouteHandlers {
   handleForceReregister: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 }
 
+export function guardCsrf(req: IncomingMessage, res: ServerResponse): boolean {
+  const contentType = req.headers["content-type"] ?? "";
+  const customHeader = req.headers["x-inspector-request"];
+
+  const isJson = contentType.toLowerCase().startsWith("application/json");
+  const hasCustomHeader = customHeader === "1" || (typeof customHeader === "string" && customHeader.length > 0);
+
+  if (!isJson || !hasCustomHeader) {
+    res.statusCode = 403;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ ok: false, error: "Forbidden: CSRF check failed" }));
+    return false;
+  }
+  return true;
+}
 export class Inspector {
   // Caller can wire this to its reconnect routine; invoked when the UI
   // POSTs /reconnect.
@@ -290,6 +310,39 @@ const STATIC_TYPES: Record<string, string> = {
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolvePath(here, "../../public");
 
+// C1 + C11 — defense-in-depth headers on every static asset response.
+//   default-src 'self'   — no cross-origin loads.
+//   script-src 'self'    — no inline scripts, no eval. Every script must
+//                          be an external file served by this same inspector.
+//   style-src ... 'unsafe-inline' — inspector's app.js sets a few inline
+//                          styles (backgrounds, borders); dropping it would
+//                          break the UI. Refactor is a follow-up.
+//   connect-src 'self'   — SSE + fetch back to the inspector only.
+//   frame-ancestors 'none' — no clickjacking. X-Frame-Options: DENY for
+//                          older browsers that ignore CSP frame-ancestors.
+//   object-src 'none', base-uri 'self', form-action 'self' — misc hardening.
+// nosniff neutralizes MIME sniffing so a static file served as text/plain
+// can't be rendered as HTML by an older browser that guesses.
+const CSP_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "connect-src 'self'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+].join("; ");
+
+function setStaticSecurityHeaders(res: ServerResponse): void {
+  res.setHeader("content-security-policy", CSP_POLICY);
+  res.setHeader("x-content-type-options", "nosniff");
+  res.setHeader("x-frame-options", "DENY");
+  res.setHeader("referrer-policy", "no-referrer");
+}
+
 async function serveStatic(res: ServerResponse, name: string): Promise<void> {
   const ext = name.slice(name.lastIndexOf("."));
   const type = STATIC_TYPES[ext];
@@ -300,6 +353,7 @@ async function serveStatic(res: ServerResponse, name: string): Promise<void> {
     const body = await readFile(resolvePath(publicDir, name));
     res.statusCode = 200;
     res.setHeader("content-type", type);
+    setStaticSecurityHeaders(res);
     res.end(body);
   } catch {
     res.statusCode = 404; res.end();
@@ -341,6 +395,7 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector: Inspector): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const reg = inspector.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
   let body: RevokeBody;
@@ -348,11 +403,45 @@ async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector
   catch { res.statusCode = 400; res.end("malformed body"); return; }
   const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
   if (!mcp) { res.statusCode = 400; res.end('missing "mcp"'); return; }
+  if (!authorizeWebhookMcp(req, res, inspector, mcp)) return;
   reg.revoke(mcp);
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
   res.end('{"ok":true}');
   inspector.publishWebhookSnapshot();
+}
+
+// F7: verify the caller's bearer token identifies them as owner of `mcp`.
+// Loopback-trust alone is NOT enough — a sibling MCP running in the same
+// container (same UID, same loopback) can otherwise subscribe to any other
+// MCP's webhook events. The token is minted per-MCP by the supervisor and
+// delivered to the child as MCP_WEBHOOK_TOKEN; the SDK's
+// createWebhookEndpoint sends it as Authorization: Bearer <token>.
+// Returns true if authorized (caller may continue); false if not (response
+// has already been written with 403).
+function authorizeWebhookMcp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+  requestedMcp: string,
+): boolean {
+  const resolve = inspector.mcpActions?.resolveMcpByWebhookToken;
+  // If no resolver wired (test harness / older boot path), permit — the
+  // production boot path always wires it. Tests that want to exercise the
+  // auth gate must provide the resolver.
+  if (!resolve) return true;
+  const header = req.headers["authorization"];
+  const auth = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
+  const m = /^Bearer\s+(.+)$/i.exec(auth ?? "");
+  const token = m?.[1]?.trim();
+  const owner = token ? resolve(token) : undefined;
+  if (owner !== requestedMcp) {
+    res.statusCode = 403;
+    res.setHeader("content-type", "application/json");
+    res.end('{"ok":false,"error":"webhook subscription: token does not match requested MCP"}');
+    return false;
+  }
+  return true;
 }
 
 interface ToolCallBody {
@@ -367,6 +456,7 @@ interface ToolCallBody {
 // for inbound RPC. Loopback-bound only — same trust boundary as the rest
 // of the inspector. See CLAUDE.md "Inspector port is localhost-only".
 async function handleToolCall(req: IncomingMessage, res: ServerResponse, inspector: Inspector): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const dispatch = inspector.toolDispatch;
   if (!dispatch) {
     res.statusCode = 503;
@@ -409,6 +499,7 @@ async function handleMcpAction(
   inspector: Inspector,
   action: "reloadCreds" | "restart",
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
   if (!actions) {
     res.statusCode = 503;
@@ -454,6 +545,7 @@ async function handleApplySessionCreds(
   res: ServerResponse,
   inspector: Inspector,
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
   res.setHeader("content-type", "application/json");
   if (!actions?.applySessionCreds) {
@@ -509,6 +601,7 @@ async function handleClearSessionCreds(
   res: ServerResponse,
   inspector: Inspector,
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
   res.setHeader("content-type", "application/json");
   if (!actions?.clearSessionCreds) {
@@ -585,10 +678,11 @@ async function handleEnvKeys(
 }
 
 async function handleRescanLocal(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
   inspector: Inspector,
 ): Promise<void> {
+  if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
   res.setHeader("content-type", "application/json");
   if (!actions?.rescanLocal) {
@@ -609,6 +703,7 @@ async function handleRescanLocal(
 function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Inspector, mcp: string): void {
   const reg = inspector.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
+  if (!authorizeWebhookMcp(req, res, inspector, mcp)) return;
 
   res.statusCode = 200;
   res.setHeader("content-type", "text/event-stream");
@@ -658,6 +753,7 @@ export function startInspector(port: number, inspector: Inspector): void {
     const path = url.pathname;
     if (path === "/events") return handleEvents(req, res, inspector);
     if (path === "/reconnect" && req.method === "POST") {
+      if (!guardCsrf(req, res)) return;
       inspector.onReconnect?.();
       res.statusCode = 202;
       res.setHeader("content-type", "application/json");

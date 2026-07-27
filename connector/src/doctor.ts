@@ -238,7 +238,7 @@ async function checkPostgresUrl(
       remediation: "point at a Postgres 14+ instance (or run docker-compose.prod.yml which brings one up)",
     };
   }
-  if (skipNetwork) return { name: "postgres-url", status: "ok", message: `${url} (reachability check skipped)` };
+  if (skipNetwork) return { name: "postgres-url", status: "ok", message: `${redact(url)} (reachability check skipped)` };
   // The important test for doctor is "did the operator set it and does it
   // parse". Actually connecting requires spinning up the pg client, which
   // pulls in a Postgres dep we don't want to import from doctor. So we

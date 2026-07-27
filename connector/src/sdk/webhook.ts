@@ -111,7 +111,16 @@ export function createWebhookEndpoint(opts: WebhookEndpointOptions): Promise<Web
         port,
         path: `/internal/webhook/stream?mcp=${encodeURIComponent(opts.mcp)}`,
         method: "GET",
-        headers: { accept: "text/event-stream" },
+        headers: {
+          accept: "text/event-stream",
+          // F7: prove this child is the MCP it claims to subscribe as.
+          // Token is set in the child's env by McpSupervisor.mergeEnv;
+          // the inspector's authorizeWebhookMcp does the constant-time
+          // compare and 403s on mismatch.
+          ...(process.env.MCP_WEBHOOK_TOKEN
+            ? { authorization: `Bearer ${process.env.MCP_WEBHOOK_TOKEN}` }
+            : {}),
+        },
       }, (res) => {
         ssRes = res;
         if (res.statusCode !== 200) {
@@ -205,7 +214,16 @@ function postRevoke(port: number, mcp: string): Promise<void> {
       port,
       path: "/internal/webhook/revoke",
       method: "POST",
-      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+      headers: {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(body),
+        // F3: inspector CSRF guard requires this header on state-changing POSTs.
+        "x-inspector-request": "1",
+        // F7: same identity token as the stream subscribe.
+        ...(process.env.MCP_WEBHOOK_TOKEN
+          ? { authorization: `Bearer ${process.env.MCP_WEBHOOK_TOKEN}` }
+          : {}),
+      },
     }, (res) => {
       res.resume();
       res.on("end", () => resolve());

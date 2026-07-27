@@ -23,7 +23,7 @@ spec:
       {{- end }}
       containers:
         - name: connector
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required — pin an explicit version (do NOT use 'latest'). Set via --set image.tag=<version> or values override." .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: CONNECTOR_NAME

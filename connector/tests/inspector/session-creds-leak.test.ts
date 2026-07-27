@@ -138,7 +138,7 @@ function teardown(harness: Harness): void {
 async function postJson(port: number, path: string, body: unknown): Promise<{ status: number; text: string }> {
   const res = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-inspector-request": "1" },
     body: JSON.stringify(body),
   });
   return { status: res.status, text: await res.text() };

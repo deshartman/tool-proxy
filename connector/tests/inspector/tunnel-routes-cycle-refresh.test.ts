@@ -33,7 +33,10 @@ function mockRequest(method: string, body?: unknown): IncomingMessage {
   return {
     method,
     url: "/internal/tunnel/creds",
-    headers: {},
+    headers: {
+      "content-type": "application/json",
+      "x-inspector-request": "1",
+    },
     on: vi.fn(),
     [Symbol.asyncIterator]: async function* () {
       if (body !== undefined) yield Buffer.from(JSON.stringify(body), "utf8");

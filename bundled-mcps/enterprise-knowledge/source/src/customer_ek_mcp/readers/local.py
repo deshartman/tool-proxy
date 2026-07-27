@@ -12,11 +12,14 @@ if the ref_doc_id is the same as when those chunks were inserted.
 from __future__ import annotations
 
 import os
+import stat
+from pathlib import Path
 from urllib.parse import urlparse
 
 from llama_index.core import SimpleDirectoryReader
 from llama_index.core.schema import Document
 
+from customer_ek_mcp.config import local_roots
 
 KIND = "local"
 
@@ -38,6 +41,11 @@ def load(url: str, kind: str | None = None) -> tuple[list[Document], str]:
     if not os.path.exists(path):
         raise FileNotFoundError(f"local path does not exist: {path}")
 
+    # Verify regular file or directory (no device files)
+    st = os.stat(path)
+    if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+        raise ValueError(f"local path is not a regular file or directory: {path}")
+
     if os.path.isdir(path):
         docs = SimpleDirectoryReader(input_dir=path, recursive=True).load_data()
     else:
@@ -47,17 +55,44 @@ def load(url: str, kind: str | None = None) -> tuple[list[Document], str]:
 
 
 def _local_path(url: str) -> str | None:
-    """Return a filesystem path if `url` names a local file/directory, else None."""
+    """Return a validated filesystem path if `url` names a local file/directory within EK_LOCAL_ROOTS, else None."""
+    roots = local_roots()
+    if not roots:
+        return None
+
+    raw_path: str | None = None
     if url.startswith("/"):
-        return url
-    parsed = urlparse(url)
-    if parsed.scheme == "file":
-        return parsed.path
-    if parsed.scheme == "":
-        # Bare relative path. Treat as local; SimpleDirectoryReader will
-        # fail with a useful error if it doesn't exist.
-        return url
-    return None
+        raw_path = url
+    else:
+        parsed = urlparse(url)
+        if parsed.scheme == "file":
+            raw_path = parsed.path
+        elif parsed.scheme == "":
+            raw_path = url
+
+    if not raw_path:
+        return None
+
+    try:
+        # Canonicalize path and follow symlinks
+        resolved = Path(raw_path).resolve(strict=True)
+    except Exception:
+        return None
+
+    # Check if resolved path is relative to at least one allowed root
+    allowed = False
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+            allowed = True
+            break
+        except ValueError:
+            continue
+
+    if not allowed:
+        return None
+
+    return str(resolved)
 
 
 def _stabilize_doc_ids(docs: list[Document]) -> None:
