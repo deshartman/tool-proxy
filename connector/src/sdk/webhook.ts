@@ -93,8 +93,8 @@ export function createWebhookEndpoint(opts: WebhookEndpointOptions): Promise<Web
 
     let currentUrl: string | undefined;
     let stopped = false;
-    let ssReq: ReturnType<typeof httpRequest> | undefined;
-    let ssRes: IncomingMessage | undefined;
+    let sseReq: ReturnType<typeof httpRequest> | undefined;
+    let sseRes: IncomingMessage | undefined;
 
     const fail = (err: Error) => {
       if (currentUrl === undefined) {
@@ -122,7 +122,7 @@ export function createWebhookEndpoint(opts: WebhookEndpointOptions): Promise<Web
             : {}),
         },
       }, (res) => {
-        ssRes = res;
+        sseRes = res;
         if (res.statusCode !== 200) {
           fail(new Error(`webhook stream rejected by inspector: HTTP ${res.statusCode}`));
           res.resume();
@@ -148,7 +148,7 @@ export function createWebhookEndpoint(opts: WebhookEndpointOptions): Promise<Web
       });
       req.on("error", (e) => fail(e));
       req.end();
-      ssReq = req;
+      sseReq = req;
     };
 
     const handleSseBlock = (block: string) => {
@@ -196,8 +196,8 @@ export function createWebhookEndpoint(opts: WebhookEndpointOptions): Promise<Web
       stop: async () => {
         if (stopped) return;
         stopped = true;
-        try { ssRes?.destroy(); } catch { /* ignore */ }
-        try { ssReq?.destroy(); } catch { /* ignore */ }
+        try { sseRes?.destroy(); } catch { /* ignore */ }
+        try { sseReq?.destroy(); } catch { /* ignore */ }
         await postRevoke(port, opts.mcp).catch((e) => log.warn({ err: e as Error, mcp: opts.mcp }, `revoke POST failed`));
       },
     });
