@@ -1111,7 +1111,7 @@ The connector itself stays a passthrough — it does NOT declare `sampling`, `el
 
 ## v1.3 — Customer drop-in approval gate
 
-> **Status: protocol drafted; connector implementation in progress on branch `feature/mcp-creds-config`.** Older controllers that don't speak v1.3 keep working — they don't see `mcp-discovered`, so customer drop-ins stay pending forever (fail-closed). See §"v1.3 — Backwards compat" below.
+> **Status: shipped.** Older controllers that don't speak v1.3 keep working — they don't see `mcp-discovered`, so customer drop-ins stay pending forever (fail-closed). See §"v1.3 — Backwards compat" below.
 
 ### Why
 

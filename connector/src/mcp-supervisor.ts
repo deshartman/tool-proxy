@@ -717,7 +717,14 @@ export class McpSupervisor {
       if (proc.exitCode == null && proc.signalCode == null) {
         proc.kill("SIGTERM");
         await new Promise<void>((res) => {
-          const t = setTimeout(() => { proc.kill("SIGKILL"); res(); }, 2000);
+          const t = setTimeout(() => {
+            this.opts.log.warn(
+              { name: entry.spec.name, pid: proc.pid },
+              `child ignored SIGTERM after 2s — sending SIGKILL`,
+            );
+            proc.kill("SIGKILL");
+            res();
+          }, 2000);
           proc.once("exit", () => { clearTimeout(t); res(); });
         });
       }

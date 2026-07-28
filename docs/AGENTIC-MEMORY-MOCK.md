@@ -1,8 +1,7 @@
 # AGENTIC-MEMORY-MOCK — Controller-side handoff
 
-> **Status:** v1 (2026-07-17) — mocked reference implementation only
+> **Status:** v1 — mocked reference implementation only
 > **Repo location:** `bundled-mcps/agentic-memory/` (drop-in) + `connector/tests/integration/agentic-memory-smoke.test.ts` (spec walk)
-> **Implements:** [MEMORY-MCP-INTERFACE.md v2 (2026-07-16)](../.claude/plans/MEMORY-MCP-INTERFACE.md) — the customer-side of §§4–7, §10, §11
 
 This document is what the Controller team consumes to integrate against a running instance of the agentic-memory mock. It describes the **actual wire shape** the connector advertises, not the spec-idealised shape — read §2 first.
 
@@ -17,7 +16,7 @@ A single Type 1 drop-in inside the MCP shim (`bundled-mcps/agentic-memory/`) tha
 - **Complete** — implements all 12 required tools AND both optional tools (`memory_semantic_prune_refs`, `memory_semantic_merge_identities`). The capability advertisement says `supportsPruneRefs: true` and `supportsIdentityMerge: true`.
 - **Non-authoritative** — fake data only. No real backing store, no vector search, no PII policy, no audit trail. Use it as a wire-shape reference and a smoke-test target — not as a production dependency.
 
-Wire prefix on all tool / prompt names: **`agentic-memory.`** (this is the folder name in `mcp/local/` and therefore the server name in the connector's tool namespacing).
+Wire prefix on all tool / prompt names: **`agentic-memory.`** (this is the folder name under `bundled-mcps/` and therefore the server name in the connector's tool namespacing).
 
 ---
 
