@@ -7,7 +7,7 @@ name: Deploy to Fly.io
 #   - Manual `workflow_dispatch` (force a redeploy without a code change)
 #
 # Delegates to the same `./scripts/deploy/fly-deploy.sh` operators use locally.
-# See .claude/plans/GIT-FLY-DEPLOY.md for the full architecture rationale.
+# See architectural-plans/GIT-FLY-DEPLOY.md for the full CI/CD design.
 #
 # Prereqs (one-time, out of scope for this workflow):
 #   - Repo secret `FLY_API_TOKEN` set to a Fly deploy token scoped to the app.
@@ -31,6 +31,15 @@ name: Deploy to Fly.io
 on:
   push:
     branches: [main]
+    # Skip deploys for doc-only pushes. A mixed code+doc push STILL deploys —
+    # GitHub only skips when every changed file matches an ignored path. To
+    # force a deploy on a doc-only tip (e.g. redeploy current image without a
+    # code change), use `workflow_dispatch` instead.
+    paths-ignore:
+      - '**/*.md'
+      - '.claude/**'
+      - 'architectural-plans/**'
+      - 'docs/**'
   workflow_dispatch: {}
 
 concurrency:
@@ -39,7 +48,11 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # Depot self-hosted runner — no GitHub-hosted runners are attached to
+    # internal repos in the twilio-demos org. `ubuntu-latest` would queue
+    # forever with no runner_name assigned. See pr-checks.yml header for
+    # the full org-policy explanation.
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 20
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -2,18 +2,27 @@ name: PR checks
 
 # Typecheck + vitest suite on every PR into `main`.
 #
-# Twilio-demos org policy (also enforced on the sibling AgenticProcedure repo):
-#   - Every action reference MUST be a full 40-char commit SHA. Tag/branch refs
-#     are rejected at runtime with `startup_failure` and zero logs.
-#   - Only whitelisted vendors (`actions/*`, `depot/*`, `aws-actions/*`,
-#     `anthropics/*`, `oven-sh/*`) are allowed. `pnpm/action-setup` and
-#     `superfly/flyctl-actions` are NOT — hence the curl-install of flyctl in
-#     deploy-main.yml and the vanilla setup-node here.
-#   - Bump versions by looking up tag → SHA:
-#       gh api repos/actions/checkout/tags
-#       gh api repos/actions/setup-node/tags
+# See architectural-plans/GIT-FLY-DEPLOY.md for the full CI/CD design.
 #
-# See .claude/plans/GIT-FLY-DEPLOY.md for the full architecture rationale.
+# Twilio-demos org policy (verified against the sibling AgenticProcedure repo):
+#
+#   1. `runs-on: depot-ubuntu-24.04` — NOT `ubuntu-latest`. The org attaches
+#      NO GitHub-hosted runners to internal repos. Using `ubuntu-latest`
+#      queues the job forever with no `runner_name` and no error message.
+#      The `depot-ubuntu-24.04` label is a shared runner pool visible at
+#      Settings → Actions → Runners.
+#   2. `sha_pinning_required: true` — every action reference must be a full
+#      40-char commit SHA. Tag/branch refs are rejected at runtime with
+#      `startup_failure` and zero logs.
+#   3. `allowed_actions: selected` — only whitelisted vendors work:
+#      `actions/*`, `depot/*`, `aws-actions/*`, `anthropics/*`, `oven-sh/*`.
+#      `pnpm/action-setup` and `superfly/flyctl-actions` are NOT — hence the
+#      curl-install of flyctl in deploy-main.yml and the vanilla setup-node
+#      here.
+#
+# Bump SHAs by looking up tag → SHA:
+#   gh api repos/actions/checkout/tags --jq '.[0] | {name, sha: .commit.sha}'
+#   gh api repos/actions/setup-node/tags --jq '.[0] | {name, sha: .commit.sha}'
 
 on:
   pull_request:
@@ -25,7 +34,10 @@ concurrency:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # Depot self-hosted runner — no GitHub-hosted runners are attached to
+    # internal repos in the twilio-demos org. `ubuntu-latest` would queue
+    # forever with no runner_name assigned.
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
