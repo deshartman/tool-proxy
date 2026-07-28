@@ -549,6 +549,7 @@ async function bootFromDb(): Promise<void> {
       getManifest: () => manifest,
       tunnel: pendingTunnel,
       log: dispatcherLog.info.bind(dispatcherLog),
+      isRestarting: (name) => supervisor.isRestarting(name),
     }).attach();
 
     startTimers();
