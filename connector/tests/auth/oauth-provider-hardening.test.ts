@@ -4,7 +4,7 @@ import { OAuthClientCredentialsProvider } from "../../src/auth/oauth-provider.js
 // C6 + C9 — single-flight refresh + defensive access_token validation
 // for the OAuth2 client_credentials provider used on WS-handshake auth.
 
-describe("OAuthClientCredentialsProvider — C9 access_token validation", () => {
+describe("OAuthClientCredentialsProvider — token response validation", () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => { globalThis.fetch = originalFetch; });
 
@@ -16,33 +16,51 @@ describe("OAuthClientCredentialsProvider — C9 access_token validation", () => 
   };
 
   it("rejects missing access_token", async () => {
-    stubFetch({ expires_in: 3600 });
+    stubFetch({ token_type: "Bearer", expires_in: 3600 });
     const p = new OAuthClientCredentialsProvider("id", "secret", "https://token.example");
-    await expect(p.accessToken()).rejects.toThrow(/invalid access_token/);
+    await expect(p.accessToken()).rejects.toThrow(/access_token/);
   });
 
   it("rejects null access_token", async () => {
-    stubFetch({ expires_in: 3600, access_token: null });
+    stubFetch({ token_type: "Bearer", expires_in: 3600, access_token: null });
     const p = new OAuthClientCredentialsProvider("id", "secret", "https://token.example");
-    await expect(p.accessToken()).rejects.toThrow(/invalid access_token/);
+    await expect(p.accessToken()).rejects.toThrow(/access_token/);
   });
 
   it("rejects empty-string access_token", async () => {
-    stubFetch({ expires_in: 3600, access_token: "" });
+    stubFetch({ token_type: "Bearer", expires_in: 3600, access_token: "" });
     const p = new OAuthClientCredentialsProvider("id", "secret", "https://token.example");
-    await expect(p.accessToken()).rejects.toThrow(/invalid access_token/);
+    await expect(p.accessToken()).rejects.toThrow(/access_token/);
   });
 
   it("rejects number access_token", async () => {
-    stubFetch({ expires_in: 3600, access_token: 42 });
+    stubFetch({ token_type: "Bearer", expires_in: 3600, access_token: 42 });
     const p = new OAuthClientCredentialsProvider("id", "secret", "https://token.example");
-    await expect(p.accessToken()).rejects.toThrow(/invalid access_token/);
+    await expect(p.accessToken()).rejects.toThrow(/access_token/);
   });
 
-  it("accepts a well-formed response", async () => {
-    stubFetch({ expires_in: 3600, access_token: "jwt.abc.def" });
+  it("rejects non-bearer token_type (RFC 6749 §5.1)", async () => {
+    stubFetch({ access_token: "jwt.abc.def", token_type: "MAC", expires_in: 3600 });
+    const p = new OAuthClientCredentialsProvider("id", "secret", "https://token.example");
+    await expect(p.accessToken()).rejects.toThrow(/token_type/);
+  });
+
+  it("rejects missing token_type", async () => {
+    stubFetch({ access_token: "jwt.abc.def", expires_in: 3600 });
+    const p = new OAuthClientCredentialsProvider("id", "secret", "https://token.example");
+    await expect(p.accessToken()).rejects.toThrow(/token_type/);
+  });
+
+  it("accepts a well-formed response with token_type=Bearer", async () => {
+    stubFetch({ access_token: "jwt.abc.def", token_type: "Bearer", expires_in: 3600 });
     const p = new OAuthClientCredentialsProvider("id", "secret", "https://token.example");
     await expect(p.accessToken()).resolves.toBe("jwt.abc.def");
+  });
+
+  it("accepts case-insensitive token_type (bearer / BEARER)", async () => {
+    stubFetch({ access_token: "jwt.lower", token_type: "bearer", expires_in: 3600 });
+    const p = new OAuthClientCredentialsProvider("id", "secret", "https://token.example");
+    await expect(p.accessToken()).resolves.toBe("jwt.lower");
   });
 });
 
@@ -58,7 +76,7 @@ describe("OAuthClientCredentialsProvider — C6 single-flight refresh", () => {
     globalThis.fetch = (async () => {
       fetchCount++;
       await pending;  // hold every fetch open until we release
-      return new Response(JSON.stringify({ access_token: "jwt.1", expires_in: 3600 }), {
+      return new Response(JSON.stringify({ access_token: "jwt.1", token_type: "Bearer", expires_in: 3600 }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -84,7 +102,7 @@ describe("OAuthClientCredentialsProvider — C6 single-flight refresh", () => {
       if (fetchCount === 1) {
         return new Response("boom", { status: 500 });
       }
-      return new Response(JSON.stringify({ access_token: "jwt.recovered", expires_in: 3600 }), {
+      return new Response(JSON.stringify({ access_token: "jwt.recovered", token_type: "Bearer", expires_in: 3600 }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });

@@ -98,12 +98,13 @@ const TSX_BIN = join(dirname(requireFromHere.resolve("tsx/package.json")), "dist
 //
 // Computed once at boot. Walks up from this module's directory collecting
 // every `node_modules` directory, joined with the platform path delimiter.
+const MAX_ANCESTOR_HOPS = 16;
 function computeDropinNodePath(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const out: string[] = [];
   let cursor = here;
-  // Cap at 16 hops as a safety belt; in practice we hit the FS root in 4–5.
-  for (let i = 0; i < 16; i++) {
+  // Cap as a safety belt; in practice we hit the FS root in 4–5 hops.
+  for (let hop = 0; hop < MAX_ANCESTOR_HOPS; hop++) {
     out.push(join(cursor, "node_modules"));
     const parent = dirname(cursor);
     if (parent === cursor) break;

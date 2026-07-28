@@ -8,6 +8,7 @@ import type { WebhookRegistry, WebhookEvent } from "../tunnel/webhook-registry.j
 import type { McpStatus } from "../mcp-supervisor.js";
 import { createLogger } from "../logger.js";
 import { envString } from "../env.js";
+import { BodyTooLargeError, readJsonBody } from "./read-body.js";
 
 const log = createLogger("inspector");
 
@@ -387,20 +388,16 @@ function handleEvents(req: IncomingMessage, res: ServerResponse, inspector: Insp
 
 interface RevokeBody { mcp?: unknown }
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  if (chunks.length === 0) return undefined;
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-}
-
 async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector: Inspector): Promise<void> {
   if (!guardCsrf(req, res)) return;
   const reg = inspector.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
   let body: RevokeBody;
   try { body = (await readJsonBody(req) as RevokeBody) ?? {}; }
-  catch { res.statusCode = 400; res.end("malformed body"); return; }
+  catch (error) {
+    if (error instanceof BodyTooLargeError) { res.statusCode = 413; res.end("payload too large"); return; }
+    res.statusCode = 400; res.end("malformed body"); return;
+  }
   const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
   if (!mcp) { res.statusCode = 400; res.end('missing "mcp"'); return; }
   if (!authorizeWebhookMcp(req, res, inspector, mcp)) return;
@@ -467,7 +464,10 @@ async function handleToolCall(req: IncomingMessage, res: ServerResponse, inspect
 
   let body: ToolCallBody;
   try { body = (await readJsonBody(req) as ToolCallBody) ?? {}; }
-  catch { res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return; }
+  catch (error) {
+    if (error instanceof BodyTooLargeError) { res.statusCode = 413; res.end('{"ok":false,"error":"payload too large"}'); return; }
+    res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return;
+  }
 
   const server = typeof body.server === "string" ? body.server : undefined;
   const tool = typeof body.tool === "string" ? body.tool : undefined;
@@ -509,7 +509,10 @@ async function handleMcpAction(
   }
   let body: McpActionBody;
   try { body = (await readJsonBody(req) as McpActionBody) ?? {}; }
-  catch { res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return; }
+  catch (error) {
+    if (error instanceof BodyTooLargeError) { res.statusCode = 413; res.end('{"ok":false,"error":"payload too large"}'); return; }
+    res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return;
+  }
   const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
   if (!mcp) {
     res.statusCode = 400;
@@ -555,7 +558,10 @@ async function handleApplySessionCreds(
   }
   let body: { mcp?: unknown; env?: unknown };
   try { body = (await readJsonBody(req) as { mcp?: unknown; env?: unknown }) ?? {}; }
-  catch { res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return; }
+  catch (error) {
+    if (error instanceof BodyTooLargeError) { res.statusCode = 413; res.end('{"ok":false,"error":"payload too large"}'); return; }
+    res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return;
+  }
   const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
   if (!mcp) {
     res.statusCode = 400;
@@ -611,7 +617,10 @@ async function handleClearSessionCreds(
   }
   let body: { mcp?: unknown };
   try { body = (await readJsonBody(req) as { mcp?: unknown }) ?? {}; }
-  catch { res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return; }
+  catch (error) {
+    if (error instanceof BodyTooLargeError) { res.statusCode = 413; res.end('{"ok":false,"error":"payload too large"}'); return; }
+    res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return;
+  }
   const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
   if (!mcp) {
     res.statusCode = 400;

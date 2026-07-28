@@ -350,18 +350,29 @@ async function bootFromDb(): Promise<void> {
   // SIGHUP — reload YAML, rebuild manifest, push delta.
   process.on("SIGHUP", () => { void onSighup(); });
 
-  // Graceful shutdown.
-  const shutdown = (signal: string): void => {
+  // Graceful shutdown. stopAll() awaits every child's SIGTERM (+ 2s SIGKILL
+  // fallback), so a hung child previously left the .then(exit(0)) chain
+  // dangling — process would still die via orchestrator SIGKILL, but the
+  // exit code became indistinguishable from a genuine crash. try/catch
+  // preserves the intended exit code (0 clean / 1 shutdown-error) which
+  // Fargate + K8s use to decide retry behaviour.
+  const shutdown = async (signal: string): Promise<void> => {
     shuttingDown = true;
     log.info({ signal }, `shutting down`);
     reconnectCtl.cancel();
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (discoveryTimer) clearInterval(discoveryTimer);
     tunnel?.close(`signal:${signal}`);
-    void supervisor.stopAll().then(() => process.exit(0));
+    try {
+      await supervisor.stopAll();
+      process.exit(0);
+    } catch (error) {
+      log.error({ err: error }, `stopAll failed during shutdown`);
+      process.exit(1);
+    }
   };
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
+  process.on("SIGINT", () => { void shutdown("SIGINT"); });
 
   // ─── connect / reconnect ────────────────────────────────────────────────
   async function connectTunnelDb(reason: string): Promise<void> {

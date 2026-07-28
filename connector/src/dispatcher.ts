@@ -38,7 +38,16 @@ export class Dispatcher {
     const previous = this.deps.tunnel.onframe;
     this.deps.tunnel.onframe = (frame) => {
       if (frame.type === "rpc") {
-        void this.handleRpcFrame(frame.payload);
+        // Top-level catch — handleRpcFrame is already exhaustive about
+        // replying with tool_failed / replyKind per-branch, so this fires
+        // only for programmer-error throws that escape the method itself
+        // (e.g. a future refactor throwing before the try). Log through
+        // pino instead of leaking into unhandledRejection; we can't reply
+        // with an error frame because the request id lives inside
+        // handleRpcFrame's scope.
+        this.handleRpcFrame(frame.payload).catch((error) => {
+          this.log(`unhandled rpc error: ${(error as Error)?.message ?? String(error)}`);
+        });
         return;
       }
       previous?.(frame);
@@ -139,14 +148,14 @@ export class Dispatcher {
     const args = params?.arguments;
     const id = req.id ?? null;
 
-    if (!qualifiedName.includes(".")) {
+    const dot = qualifiedName.indexOf(".");
+    if (dot <= 0 || dot === qualifiedName.length - 1) {
       this.reply({
         id,
-        error: { code: E_INVALID_PARAMS, message: "tool name must be `${server}.${tool}`" },
+        error: { code: E_INVALID_PARAMS, message: "tool name must be `${server}.${tool}` with non-empty parts" },
       });
       return;
     }
-    const dot = qualifiedName.indexOf(".");
     const serverName = qualifiedName.slice(0, dot);
     const toolName = qualifiedName.slice(dot + 1);
 
@@ -225,14 +234,14 @@ export class Dispatcher {
     const id = req.id ?? null;
     const params = (req.params ?? {}) as { name?: unknown; arguments?: unknown };
     const qualifiedName = typeof params.name === "string" ? params.name : "";
-    if (!qualifiedName.includes(".")) {
+    const dot = qualifiedName.indexOf(".");
+    if (dot <= 0 || dot === qualifiedName.length - 1) {
       this.reply({
         id,
-        error: { code: E_INVALID_PARAMS, message: "prompt name must be `${server}.${prompt}`" },
+        error: { code: E_INVALID_PARAMS, message: "prompt name must be `${server}.${prompt}` with non-empty parts" },
       });
       return;
     }
-    const dot = qualifiedName.indexOf(".");
     const serverName = qualifiedName.slice(0, dot);
     const promptName = qualifiedName.slice(dot + 1);
 
