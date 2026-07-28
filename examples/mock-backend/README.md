@@ -114,17 +114,30 @@ run once on next boot.
 
 ## Local dev
 
-```bash
-# Start a Postgres locally (or fly-proxy the Fly one via `fly proxy 5432:5432 -a twilio-tool-sdk-db`),
-# then export the DSN:
-export MOCK_POSTGRES_URL="postgres://postgres:<pw>@localhost:5432/crm"
+Zero-config from a fresh clone:
 
-# Boot the service:
-npm install && npm run build && node dist/server.js
+```bash
+./scripts/start-mock-server.sh
 ```
 
-Migrations run on first boot; the `crm` database must exist (create it
-manually with `psql -c "CREATE DATABASE crm"` if starting fresh).
+The script auto-starts the dev Postgres container
+(`mcp-shim-ek-postgres` via `deploy/compose/docker-compose.dev.yml`),
+idempotently creates the `crm` database, defaults `MOCK_POSTGRES_URL`
+to the container's DSN, and boots the service on port `7400`. Sources
+`examples/mock-backend/.env` if present (wins over auto-provisioning).
+Migrations run on first boot.
+
+Manual override — point at a different Postgres (e.g. fly-proxy the
+production one via `fly proxy 5432:5432 -a twilio-tool-sdk-db`):
+
+```bash
+export MOCK_POSTGRES_URL="postgres://postgres:<pw>@localhost:5432/crm"
+./scripts/start-mock-server.sh
+```
+
+The `crm` database must already exist on that Postgres (`psql -c
+"CREATE DATABASE crm"`); the script's idempotent `CREATE DATABASE`
+only fires against the auto-provisioned dev container.
 
 ## Production (Fly.io)
 
