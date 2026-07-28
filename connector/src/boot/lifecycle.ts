@@ -207,6 +207,10 @@ async function bootFromDb(): Promise<void> {
   const supervisor = new McpSupervisor({
     log,
     servers,
+    // MCP_READINESS_TIMEOUT_MS lets operators raise the port-readiness
+    // wait beyond the default 15s on slower hardware or when running
+    // many drop-ins whose tsx cold-starts compound. Unset = 15000.
+    readyTimeoutMs: envNumber("MCP_READINESS_TIMEOUT_MS", 15000),
     onSpawn: ({ name, envSources }) => {
       const dirEnvKeys = Object.entries(envSources).filter(([, src]) => src === "dir/.env").map(([k]) => k);
       const controllerEnvKeys = Object.entries(envSources).filter(([, src]) => src === "controller").map(([k]) => k);
