@@ -11,6 +11,18 @@
 #
 # Local flags:
 #   ./scripts/deploy/fly-deploy.sh --skip-build     # if you know dist is fresh
+#   ./scripts/deploy/fly-deploy.sh --redeploy-only  # skip the 5-op bootstrap;
+#                                                   # just run `fly deploy`.
+#                                                   # Used by CI (see
+#                                                   # .github/workflows/deploy-main.yml)
+#                                                   # because Fly deploy tokens
+#                                                   # are app-scoped and can't
+#                                                   # run `fly postgres create`
+#                                                   # (org-level auth needed).
+#                                                   # The 4 bootstrap ops are
+#                                                   # idempotent + one-time —
+#                                                   # once done locally, CI
+#                                                   # only needs to redeploy.
 #
 # `deploy apply` is non-interactive by design — no prompt flags to pass through.
 # For a first-time setup you need `deploy init` first (which does take --yes);
@@ -42,15 +54,22 @@ if [[ ! -f deploy/fly/fly.toml ]]; then
   exit 1
 fi
 
-# ── Skip build if operator asked ───────────────────────────────────────────
+# ── Parse local flags; pass anything else through to `deploy apply` ────────
 SKIP_BUILD=0
+REDEPLOY_ONLY=0
 FILTERED_ARGS=()
 for arg in "$@"; do
-  if [[ "$arg" == "--skip-build" ]]; then
-    SKIP_BUILD=1
-  else
-    FILTERED_ARGS+=("$arg")
-  fi
+  case "$arg" in
+    --skip-build)
+      SKIP_BUILD=1
+      ;;
+    --redeploy-only)
+      REDEPLOY_ONLY=1
+      ;;
+    *)
+      FILTERED_ARGS+=("$arg")
+      ;;
+  esac
 done
 
 # ── Install deps if missing ────────────────────────────────────────────────
@@ -74,6 +93,22 @@ if [[ ! -f connector/dist/index.js ]]; then
 fi
 
 # ── Fire ───────────────────────────────────────────────────────────────────
+# --redeploy-only shortcut: skip the 4 bootstrap ops (apps create, postgres
+# create + attach, secrets set, volumes create — all one-time, all
+# org-permission-heavy) and just run step [5/5] of `deploy apply` verbatim.
+# This is the CI path — app-scoped Fly deploy tokens can't touch org-level
+# resources, but they CAN run `fly deploy` on the target app.
+# See connector/src/deploy/apply.ts:263 for the reference invocation
+# — we mirror it exactly (CWD=repo-root, -c deploy/fly/fly.toml).
+if [[ $REDEPLOY_ONLY -eq 1 ]]; then
+  if [[ ! -x "$(command -v fly)" ]]; then
+    echo "[fly-deploy] error: fly CLI not on PATH (needed for --redeploy-only)" >&2
+    exit 1
+  fi
+  echo "[fly-deploy] --redeploy-only: running fly deploy directly (skipping bootstrap)"
+  exec fly deploy -c deploy/fly/fly.toml
+fi
+
 # Empty-array quoting under `set -u` — `"${arr[@]:-}"` expands to a literal
 # empty string that Node's parseArgs then sees as an unexpected positional.
 # Branch on array length instead.

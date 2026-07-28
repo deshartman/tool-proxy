@@ -85,8 +85,12 @@ jobs:
       - name: Build connector
         run: npm run build
 
-      # --skip-build tells the deploy script to trust the freshly built dist/.
-      # Uses the SAME script operators use locally — CI and local flows share
-      # this one code path so drift between them is structurally impossible.
+      # --redeploy-only skips the 4-step Fly bootstrap (apps/postgres/secrets/
+      # volumes create) — those need org-level permissions the app-scoped
+      # FLY_API_TOKEN doesn't have. Once bootstrapped locally, ongoing
+      # redeploys only need `fly deploy` which app-scoped tokens can run.
+      # --skip-build tells the script to trust the freshly built dist/.
+      # Same script operators use locally — CI and local flows share this
+      # one code path so drift between them is structurally impossible.
       - name: Deploy to Fly
-        run: ./scripts/deploy/fly-deploy.sh --skip-build
+        run: ./scripts/deploy/fly-deploy.sh --redeploy-only --skip-build
