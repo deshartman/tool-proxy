@@ -31,13 +31,21 @@ __pycache__/
 # controller push, bundled-mcps/ auto-discovery, and customer-mcps/ drop-ins.
 # The tracked source-of-truth template was retired in the customer-repo
 # carve-out; a personal working-tree copy at ./connector.yaml stays gitignored.
+# EXCEPTION: deploy/fly/connector.yaml IS tracked — it's the Twilio-demo
+# Fly deploy's connector config (delivered into the Machine via fly.toml
+# [[files]]) and is needed by the deploy-main.yml GitHub Action.
 **/connector.yaml
+!deploy/fly/connector.yaml
 
 # Fly.io generated fly.toml. `mcp-connector deploy init --target fly` writes
 # it to deploy/fly/fly.toml; the sibling fly.toml.example ships as the
 # tracked reference.
+# EXCEPTION: deploy/fly/fly.toml IS tracked — it's the Twilio-demo deploy
+# config (app = "twilio-tool-sdk") and is needed by the deploy-main.yml
+# GitHub Action. Customer deploys still generate their own via `deploy init`.
 **/fly.toml
 !**/fly.toml.example
+!deploy/fly/fly.toml
 
 # EK bundle's declarative source list — legacy customer-authored yaml.
 # Retiring in EK-SOURCES-CONSUMER-UI.md (persistence moves to Postgres +
