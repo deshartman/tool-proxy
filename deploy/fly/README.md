@@ -59,7 +59,9 @@ Under the hood `deploy apply` runs the five Fly operations you'd otherwise type 
 
 ### Push-to-deploy from `main`
 
-Once the first bootstrap deploy above has run, ongoing redeploys are automated via GitHub Actions. `.github/workflows/deploy-main.yml` fires on every push to `main` (PR merge or direct push both trigger it) and runs the same `./scripts/deploy/fly-deploy.sh` you'd invoke locally. Requires the repo secret `FLY_API_TOKEN`:
+Once the first bootstrap deploy above has run (locally, with a full-user Fly login), ongoing redeploys are automated via GitHub Actions — verified end-to-end 2026-07-28, first green run took 1m37s. `.github/workflows/deploy-main.yml` fires on every push to `main` (PR merge or direct push both trigger it) and runs `./scripts/deploy/fly-deploy.sh --redeploy-only --skip-build`. The `--redeploy-only` flag skips the 4-step bootstrap (apps/postgres/secrets/volumes create) — those need org-level permissions the app-scoped `FLY_API_TOKEN` doesn't have. Bootstrap is a one-time human-in-the-loop step; CI does redeploys forever.
+
+Requires the repo secret `FLY_API_TOKEN`:
 
 ```bash
 flyctl tokens create deploy \
