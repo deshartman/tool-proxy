@@ -15,7 +15,7 @@
 
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
 import type { McpServerConnection } from "../servers/index.js";
-import { buildManifest, dropinSpecsToMap } from "../manifest/build.js";
+import { buildManifest } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
 import { validateManifestSchemas } from "../manifest/validate.js";
 import { TunnelClient } from "../tunnel/client.js";
@@ -33,8 +33,8 @@ import { LocalMcpsCoordinator } from "../tunnel/local-mcps-coordinator.js";
 import { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
 import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
-import { discoverBundled, discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
-import { resolveAuthFromEnv, resolveAuthFromRow, type AuthResolution } from "./auth.js";
+import { discoverBundled, discoverDropins, type DropinSpec } from "../dropin.js";
+import { resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
 import { ConfigStore, type ControllerRow } from "../config-store/index.js";
