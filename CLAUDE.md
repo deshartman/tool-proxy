@@ -300,6 +300,8 @@ Three complementary shapes ship alongside the OCI image:
 
 `mcp-connector deploy apply --target fly` pairs with `deploy init`. Under the hood, `apply` spawns Fly's CLI directly — five commands with idempotency guards (see [`src/deploy/apply.ts`](connector/src/deploy/apply.ts)). `spawn` is DI'd for test injection (native ESM blocks `vi.spyOn` on `child_process.spawnSync`). Other targets return "not yet implemented" from `apply`; operators use the cloud's native tool (`aws` / `kubectl` / `az` / `docker compose`) per the init README appendix.
 
+**Push-to-deploy via GitHub Actions.** Two workflows under [`.github/workflows/`](.github/workflows/): `pr-checks.yml` runs `npm run build` (typecheck via `tsc -b`) + `npm test` on every PR against `main`; `deploy-main.yml` runs `./scripts/deploy/fly-deploy.sh --skip-build` on every push to `main` (PR merge or direct push). Deploy workflow reuses the SAME shell script operators run locally — drift between local and CI flows is structurally impossible. `FLY_API_TOKEN` is a repo secret scoped to the `twilio-tool-sdk` Fly app. Workflow files are SHA-pinned per Twilio-demos org policy (`sha_pinning_required: true`, restricted `allowed_actions` whitelist — `superfly/flyctl-actions` NOT on it, so flyctl is curl-installed). CD is not gated on PR checks today; direct pushes to `main` deploy immediately.
+
 `mcp-connector doctor` complements all three: run before boot to catch missing env / bad key file / unreachable Postgres.
 
 ## OpenAI / LLM
