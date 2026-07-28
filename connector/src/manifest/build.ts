@@ -1,6 +1,7 @@
 import type { ConnectorConfig } from "../config.js";
 import { authorOf } from "../config.js";
 import { isDropinSpec } from "../dropin.js";
+import { createLogger } from "../logger.js";
 import type { McpServerConnection } from "../servers/index.js";
 import { toDescriptor } from "../servers/index.js";
 import type {
@@ -10,6 +11,8 @@ import type {
   ServerDescriptor,
   ToolManifest,
 } from "../tunnel/frames.js";
+
+const log = createLogger("manifest-build");
 
 // Aggregate tools/list (and, when capabilities advertise them, prompts/list +
 // resources/list + resources/templates/list) across local MCP servers and
@@ -108,7 +111,7 @@ async function buildServerDescriptor(
   specByName: Map<string, import("../config.js").McpServerSpec>,
   envKeysFor?: (name: string) => Promise<string[]>,
 ): Promise<ServerDescriptor> {
-  const tools = await server.listTools();
+  const tools = await safeList(server.listTools(), `tools/list ${server.name}`);
   const spec = specByName.get(server.name);
   // spec should always exist — servers come from the same config — but
   // default to "customer" if the lookup misses rather than erroring;
@@ -163,8 +166,7 @@ async function safeList<T>(promise: Promise<T[]>, context: string): Promise<T[]>
   try {
     return await promise;
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(`[manifest-build] ${context} failed: ${(error as Error)?.message ?? String(error)}`);
+    log.error({ context, err: error }, "list failed");
     return [];
   }
 }
