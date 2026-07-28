@@ -15,7 +15,7 @@
 
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
 import type { McpServerConnection } from "../servers/index.js";
-import { buildManifest, dropinSpecsToMap } from "../manifest/build.js";
+import { buildManifest } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
 import { validateManifestSchemas } from "../manifest/validate.js";
 import { TunnelClient } from "../tunnel/client.js";
@@ -33,8 +33,8 @@ import { LocalMcpsCoordinator } from "../tunnel/local-mcps-coordinator.js";
 import { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
 import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
-import { discoverBundled, discoverDropins, isDropinSpec, type DropinSpec } from "../dropin.js";
-import { resolveAuthFromEnv, resolveAuthFromRow, type AuthResolution } from "./auth.js";
+import { discoverBundled, discoverDropins, type DropinSpec } from "../dropin.js";
+import { resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { requireEnv } from "./require-env.js";
 import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
 import { ConfigStore, type ControllerRow } from "../config-store/index.js";
@@ -356,6 +356,12 @@ async function bootFromDb(): Promise<void> {
   // exit code became indistinguishable from a genuine crash. try/catch
   // preserves the intended exit code (0 clean / 1 shutdown-error) which
   // Fargate + K8s use to decide retry behaviour.
+  //
+  // ConfigStore's pg.Pool is drained via store.close() AFTER stopAll so
+  // final creds-update writes have a chance to land. A store-close failure
+  // is logged but does NOT override the exit code from stopAll — a stuck
+  // MCP child is a more actionable orchestrator signal than a leaked DB
+  // connection.
   const shutdown = async (signal: string): Promise<void> => {
     shuttingDown = true;
     log.info({ signal }, `shutting down`);
@@ -363,13 +369,19 @@ async function bootFromDb(): Promise<void> {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (discoveryTimer) clearInterval(discoveryTimer);
     tunnel?.close(`signal:${signal}`);
+    let exitCode = 0;
     try {
       await supervisor.stopAll();
-      process.exit(0);
     } catch (error) {
       log.error({ err: error }, `stopAll failed during shutdown`);
-      process.exit(1);
+      exitCode = 1;
     }
+    try {
+      await store.close();
+    } catch (error) {
+      log.warn({ err: error }, `config store close failed`);
+    }
+    process.exit(exitCode);
   };
   process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
   process.on("SIGINT", () => { void shutdown("SIGINT"); });
@@ -537,6 +549,7 @@ async function bootFromDb(): Promise<void> {
       getManifest: () => manifest,
       tunnel: pendingTunnel,
       log: dispatcherLog.info.bind(dispatcherLog),
+      isRestarting: (name) => supervisor.isRestarting(name),
     }).attach();
 
     startTimers();

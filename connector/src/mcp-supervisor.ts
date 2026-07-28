@@ -481,6 +481,14 @@ export class McpSupervisor {
     return this.entries.has(name);
   }
 
+  // Cheap process-state predicate used by the dispatcher to enrich the
+  // mcp_disconnected log line during a rapid-restart window. Returns false
+  // for unknown entries (matches "not restarting" — the caller's log is
+  // observability, not authorization).
+  isRestarting(name: string): boolean {
+    return this.entries.get(name)?.status.process === "restarting";
+  }
+
   // Add ONE spec post-boot. Idempotent: a duplicate name is silently skipped
   // (matches register()'s behavior). Caller must call startOne() to spawn.
   // Optional `meta` lets the controller-config coordinator mark the entry

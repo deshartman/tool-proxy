@@ -23,6 +23,13 @@ export interface DispatcherDeps {
   getManifest: () => ToolManifest;
   tunnel: TunnelClient;
   log?: (line: string) => void;
+  // Optional supervisor hook. Lets the dispatcher distinguish "MCP is
+  // being restarted" from "MCP is gone" when a mid-flight tool call sees
+  // its target removed from the servers map. Used only to enrich the
+  // mcp_disconnected log line — the reply kind stays the same. Absent →
+  // dispatcher falls back to the bare "mcp_disconnected" label (pre-2026-07-28
+  // behavior).
+  isRestarting?: (name: string) => boolean;
 }
 
 export class Dispatcher {
@@ -190,7 +197,14 @@ export class Dispatcher {
       const disconnected = !this.deps.servers.has(serverName);
       const kind = disconnected ? "mcp_disconnected" : "tool_failed";
       this.replyKind(id, kind, detail);
-      this.log(`tools/call ${qualifiedName} failed (${kind}): ${detail}`);
+      // Log-level hint: distinguish a mid-restart disconnect from a truly-
+      // gone MCP. Supervisor state is the source of truth; the servers
+      // map races the restart window. Reply kind stays "mcp_disconnected"
+      // either way — this is observability, not wire semantics.
+      const restartHint = disconnected && this.deps.isRestarting?.(serverName)
+        ? " — restart in progress"
+        : "";
+      this.log(`tools/call ${qualifiedName} failed (${kind}): ${detail}${restartHint}`);
     } finally {
       this.inFlight--;
     }
