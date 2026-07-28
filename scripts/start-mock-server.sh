@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Boots the mock customer service used by the orders MCP demo. Dev-only.
-# Reads optional PORT from examples/mock-backend/.env (default 7200).
+# Boots the mock customer service used by the crm MCP demo. Dev-only.
+# Zero-config on a fresh clone: auto-provisions the dev Postgres container,
+# auto-creates the `crm` database, and defaults MOCK_POSTGRES_URL — no .env
+# template to copy. Reads examples/mock-backend/.env if present (wins over
+# auto-provisioning). Default PORT is 7400.
 
 set -euo pipefail
 
@@ -16,10 +19,41 @@ trap cleanup EXIT INT TERM
 
 MOCK_DIR="$ROOT/examples/mock-backend"
 ENV_FILE="$MOCK_DIR/.env"
+COMPOSE_FILE="$ROOT/deploy/compose/docker-compose.dev.yml"
+DEV_PG_CONTAINER="mcp-shim-ek-postgres"
+DEV_MOCK_PG_URL="postgres://ek:ek-dev-password@localhost:5433/crm"
 
 if [ -f "$ENV_FILE" ]; then
-  echo "[mock-customers] sourcing $ENV_FILE"
+  echo "[mock-customers] sourcing $ENV_FILE (optional override)"
   set -a; source "$ENV_FILE"; set +a
+fi
+
+# Auto-provision the dev Postgres + crm DB if MOCK_POSTGRES_URL isn't already
+# set. Mirrors scripts/start-connector.sh's POSTGRES_URL bootstrap so either
+# script can run first on a fresh clone. The compose file only seeds
+# `enterprise_knowledge`; `crm` is the mock-backend's DB and needs a separate
+# CREATE (idempotent — the pg_database probe skips it on subsequent runs).
+if [ -z "${MOCK_POSTGRES_URL:-}" ]; then
+  if ! docker ps --filter "name=$DEV_PG_CONTAINER" --format '{{.Names}}' | grep -q .; then
+    echo "[mock-customers] starting dev Postgres ($DEV_PG_CONTAINER)..."
+    docker compose -f "$COMPOSE_FILE" up -d ek-postgres
+    echo -n "[mock-customers] waiting for Postgres readiness"
+    for _ in $(seq 1 30); do
+      if docker exec "$DEV_PG_CONTAINER" pg_isready -U ek -d enterprise_knowledge >/dev/null 2>&1; then
+        echo " — ready"
+        break
+      fi
+      echo -n "."
+      sleep 1
+    done
+  fi
+  if ! docker exec "$DEV_PG_CONTAINER" psql -U ek -d postgres -tAc \
+        "SELECT 1 FROM pg_database WHERE datname='crm'" | grep -q 1; then
+    echo "[mock-customers] creating crm database..."
+    docker exec "$DEV_PG_CONTAINER" psql -U ek -d postgres -c "CREATE DATABASE crm"
+  fi
+  export MOCK_POSTGRES_URL="$DEV_MOCK_PG_URL"
+  echo "[mock-customers] MOCK_POSTGRES_URL auto-set: $MOCK_POSTGRES_URL"
 fi
 
 # tsx ships with the connector workspace; reuse it.
