@@ -27,6 +27,7 @@ Set these only when the default doesn't match your infrastructure.
 | `MCP_BUNDLED_DIR` | `/app/bundled-mcps` | Where the connector's boot scanner discovers Twilio-shipped MCPs. Baked at image-build time; override only when extending the image via volume mount rather than derived-image `COPY`. |
 | `MCP_DROPIN_DIR` | `/var/lib/mcp-connector/customer-mcps` | Where the connector discovers customer-authored Type 1 drop-ins. The derived-image + volume-mount delivery paths both land content here. |
 | `MCP_BASE_PORT` | `7100` | Starting port for the auto-assignment probe for Type 1 drop-in child processes. Bump to avoid collision with anything else in the container's network namespace. |
+| `MCP_READINESS_TIMEOUT_MS` | `15000` | How long the supervisor waits for a spawned MCP child's port to accept a connection before it gives up and marks the entry `permanently-failed`. Bump on slower hardware or when many drop-ins boot in sequence (tsx cold-starts compound per-child). Under db mode the failed entry surfaces in the inspector's MCP Status panel; siblings keep booting either way (supervisor's log-and-continue). |
 | `LOG_LEVEL` | `info` | Pino level. `debug` for verbose troubleshooting; `warn` in prod if you want quieter logs. |
 | `CONNECTOR_VERSION` | `dev` | Version string surfaced in the manifest and boot log. CI stamps this at build time. |
 

@@ -229,7 +229,14 @@ export class McpSupervisor {
   constructor(opts: SupervisorOpts) {
     this.opts = {
       basePort: opts.basePort ?? envNumber("MCP_BASE_PORT", 7100),
-      readyTimeoutMs: opts.readyTimeoutMs ?? 5000,
+      // Default bumped 5000 → 15000 on 2026-07-28 after `sample` consistently
+      // blew the probe on Fly when it landed third in the alphabetical spawn
+      // order (agentic-memory → crm → sample). tsx cold-start compounds
+      // per-child and 5s was too tight for a shared-cpu-1x Fly machine.
+      // Callers can still override via opts.readyTimeoutMs; the boot loop
+      // wires it to the MCP_READINESS_TIMEOUT_MS env var so operators can
+      // raise it further on slower hardware without a code change.
+      readyTimeoutMs: opts.readyTimeoutMs ?? 15000,
       ...opts,
     };
   }
