@@ -70,7 +70,7 @@ flyctl tokens create deploy \
       --repo twilio-demos/conversation-agent-tool-sdk
 ```
 
-`.github/workflows/pr-checks.yml` runs typecheck + vitest on every PR into `main`. Deploy is NOT gated on PR checks — direct pushes to `main` deploy immediately. Twilio-demos org policy requires SHA-pinned action refs and blocks `superfly/flyctl-actions` — the deploy workflow curl-installs flyctl instead.
+`.github/workflows/pr-checks.yml` runs typecheck + vitest on every PR into `main`. Deploy is NOT gated on PR checks — direct pushes to `main` deploy immediately. Twilio-demos org policy requires SHA-pinned action refs, self-hosted `depot-ubuntu-24.04` runners (no GitHub-hosted runners on internal repos), and blocks `superfly/flyctl-actions` (the deploy workflow curl-installs flyctl instead). Doc-only pushes are skipped via `paths-ignore`.
 
 Then configure the tunnel via the inspector (below).
 
