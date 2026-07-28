@@ -1,0 +1,79 @@
+name: Deploy to Fly.io
+
+# Push-to-deploy for the mcp-connector Fly app (`twilio-tool-sdk`).
+#
+# Fires on:
+#   - `push` to `main` (PR merge or direct push both trigger it)
+#   - Manual `workflow_dispatch` (force a redeploy without a code change)
+#
+# Delegates to the same `./scripts/deploy/fly-deploy.sh` operators use locally.
+# See .claude/plans/GIT-FLY-DEPLOY.md for the full architecture rationale.
+#
+# Prereqs (one-time, out of scope for this workflow):
+#   - Repo secret `FLY_API_TOKEN` set to a Fly deploy token scoped to the app.
+#     Generate:
+#       flyctl tokens create deploy \
+#         --app twilio-tool-sdk \
+#         --expiry 8760h \
+#         --name github-actions \
+#         | gh secret set FLY_API_TOKEN \
+#             --repo twilio-demos/conversation-agent-tool-sdk
+#     Token expires after 1 year — rotate by rerunning the same command.
+#   - `deploy/fly/fly.toml` exists in the repo (checked in — generated once via
+#     `mcp-connector deploy init --target fly`).
+#   - App + Postgres already exist on Fly (bootstrapped via a local
+#     `./scripts/deploy/fly-deploy.sh` run). CI does the ongoing redeploy path
+#     only; it does not re-bootstrap Postgres, volumes, or secrets. Those are
+#     idempotent inside `mcp-connector deploy apply --target fly`, so a CI run
+#     against a fresh app would work — but the first run is deliberately a
+#     human-in-the-loop step per OPERATOR-RUNBOOK.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # flyctl install via curl — Twilio-demos org policy blocks
+      # `superfly/flyctl-actions/setup-flyctl` (not on the allowed_actions
+      # whitelist). Curl-install is exactly what that action does under the
+      # hood. Export ~/.fly/bin onto $GITHUB_PATH so subsequent steps see it.
+      - name: Install flyctl
+        run: |
+          curl -L https://fly.io/install.sh | sh
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # We build here (not inside fly-deploy.sh) so that the shell script sees
+      # a fresh dist/ and short-circuits its own build. `mcp-connector deploy
+      # apply --target fly` needs connector/dist/index.js to spawn its five
+      # idempotent Fly ops (see scripts/deploy/fly-deploy.sh header comment).
+      - name: Build connector
+        run: npm run build
+
+      # --skip-build tells the deploy script to trust the freshly built dist/.
+      # Uses the SAME script operators use locally — CI and local flows share
+      # this one code path so drift between them is structurally impossible.
+      - name: Deploy to Fly
+        run: ./scripts/deploy/fly-deploy.sh --skip-build

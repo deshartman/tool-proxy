@@ -57,6 +57,21 @@ mcp-connector deploy apply --target fly
 
 Under the hood `deploy apply` runs the five Fly operations you'd otherwise type by hand: `fly apps create`, `fly postgres create + attach --variable-name POSTGRES_URL` (Fly's default `DATABASE_URL` doesn't match what the connector reads), `fly secrets set CONNECTOR_KEY_B64`, `fly volumes create state`, and finally `fly deploy`. See [`connector/src/deploy/apply.ts`](../../connector/src/deploy/apply.ts) for the exact sequence.
 
+### Push-to-deploy from `main`
+
+Once the first bootstrap deploy above has run, ongoing redeploys are automated via GitHub Actions. `.github/workflows/deploy-main.yml` fires on every push to `main` (PR merge or direct push both trigger it) and runs the same `./scripts/deploy/fly-deploy.sh` you'd invoke locally. Requires the repo secret `FLY_API_TOKEN`:
+
+```bash
+flyctl tokens create deploy \
+  --app twilio-tool-sdk \
+  --expiry 8760h \
+  --name github-actions \
+  | gh secret set FLY_API_TOKEN \
+      --repo twilio-demos/conversation-agent-tool-sdk
+```
+
+`.github/workflows/pr-checks.yml` runs typecheck + vitest on every PR into `main`. Deploy is NOT gated on PR checks — direct pushes to `main` deploy immediately. Twilio-demos org policy requires SHA-pinned action refs and blocks `superfly/flyctl-actions` — the deploy workflow curl-installs flyctl instead.
+
 Then configure the tunnel via the inspector (below).
 
 ## Deploy the mock backend (demo only)
