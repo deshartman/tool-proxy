@@ -5,6 +5,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { guardCsrf } from "./server.js";
+import { BodyTooLargeError, readJsonBody } from "./read-body.js";
 import type { ConfigStore, ControllerInput, ControllerRow } from "../config-store/index.js";
 import { isHttpsControllerUrl } from "../boot/require-env.js";
 
@@ -54,17 +55,6 @@ interface TunnelRoutesDeps {
   configStore: ConfigStore;
   dialTunnel: (row: ControllerRow) => Promise<void>;
   cycleTunnel: (reason: string) => Promise<void>;
-}
-
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  if (chunks.length === 0) return undefined;
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    throw new Error("malformed JSON");
-  }
 }
 
 function setJsonHeaders(res: ServerResponse): void {
@@ -163,7 +153,12 @@ async function handlePostCreds(
   let body: unknown;
   try {
     body = await readJsonBody(req);
-  } catch {
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      res.statusCode = 413;
+      res.end(JSON.stringify({ ok: false, error: "payload too large" }));
+      return;
+    }
     res.statusCode = 400;
     res.end(JSON.stringify({ ok: false, error: "malformed JSON body" }));
     return;

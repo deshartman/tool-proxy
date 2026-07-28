@@ -1,12 +1,23 @@
+import { z } from "zod";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("oauth");
 
-interface TokenResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-}
+// Runtime shape check for the token endpoint's JSON body. Enforces:
+//   - access_token: non-empty string (else next handshake sends `Bearer undefined`)
+//   - token_type: case-insensitive "bearer" — RFC 6749 §5.1 (reject MAC / DPoP / etc.
+//     because the connector doesn't know how to present them)
+//   - expires_in: integer ≥ 60s (the cache check uses 60s headroom; anything lower
+//     would cause a tight refresh loop)
+// Failure throws through mint() into the same connect-failure path as an HTTP error.
+const TokenResponse = z.object({
+  access_token: z.string().min(1),
+  token_type: z.string().refine(
+    (v) => v.toLowerCase() === "bearer",
+    { message: "expected token_type=bearer" },
+  ),
+  expires_in: z.number().int().min(60),
+});
 
 // OAuth2 client_credentials provider for the WS-handshake bearer.
 //
@@ -63,26 +74,15 @@ export class OAuthClientCredentialsProvider {
     if (!res.ok) {
       throw new Error(`OAuth token mint failed: ${res.status}`);
     }
-    const data = (await res.json()) as TokenResponse;
-    // Defensive floor: contract guarantees expires_in is a positive integer
-    // seconds ≥ 300. Anything below 60 would cause a tight refresh loop
-    // (the cache check uses 60s headroom) — fail loudly instead, so a
-    // controller-side regression surfaces as a clear error rather than a
-    // log flood.
-    if (typeof data.expires_in !== "number" || data.expires_in < 60) {
+    const parsed = TokenResponse.safeParse(await res.json());
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const field = issue?.path.join(".") || "response";
       throw new Error(
-        `OAuth token mint returned invalid expires_in: ${String(data.expires_in)} (expected positive integer seconds ≥ 60)`,
+        `OAuth token mint returned invalid ${field}: ${issue?.message ?? "unknown"}`,
       );
     }
-    // C9 (security hardening) — validate access_token is a non-empty string.
-    // Without this, a malformed provider response ({expires_in: 3600,
-    // access_token: null} or missing entirely) caches `undefined` and the
-    // connector sends `Bearer undefined` on next handshake.
-    if (typeof data.access_token !== "string" || !data.access_token) {
-      throw new Error(
-        `OAuth token mint returned invalid access_token: ${String(data.access_token)} (expected non-empty string)`,
-      );
-    }
+    const data = parsed.data;
     this.cached = {
       jwt: data.access_token,
       expiresAt: Date.now() + data.expires_in * 1000,
