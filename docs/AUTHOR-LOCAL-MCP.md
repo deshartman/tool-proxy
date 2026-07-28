@@ -225,7 +225,7 @@ npm install <sdk>
 
 That creates a local `package.json` + `node_modules` inside the folder. The SDK stays out of the workspace hoist (deliberate — keeps drop-in MCPs from accidentally importing each other's deps). The connector's start-up loop installs them once on first boot.
 
-No in-repo MCP currently uses the third-party-SDK shape; the prior `mcp/bundled/twilio/` bundle did before it was retired in favor of the standalone `@deshartman/twilio-mcp` npm package loaded as a Type 2 controller-config entry.
+No in-repo MCP currently uses the third-party-SDK shape.
 
 ## Authoring rules to know
 

@@ -173,8 +173,15 @@ export class Dispatcher {
       this.log(`tools/call ${qualifiedName} ok`);
     } catch (err) {
       const detail = (err as Error)?.message ?? String(err);
-      this.replyKind(id, "tool_failed", detail);
-      this.log(`tools/call ${qualifiedName} failed: ${detail}`);
+      // If the server disappeared from the map while we were awaiting a
+      // reply, the supervisor closed the connection under us (typical
+      // cause: creds-update / rapid restart / Type 2 config-delta). Reply
+      // with a specific error kind so the controller can distinguish this
+      // from a genuine tool crash, and log it plainly.
+      const disconnected = !this.deps.servers.has(serverName);
+      const kind = disconnected ? "mcp_disconnected" : "tool_failed";
+      this.replyKind(id, kind, detail);
+      this.log(`tools/call ${qualifiedName} failed (${kind}): ${detail}`);
     } finally {
       this.inFlight--;
     }
