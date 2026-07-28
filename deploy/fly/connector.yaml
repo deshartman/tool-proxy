@@ -1,0 +1,30 @@
+# Fly deploy — connector config delivered into the Machine via [[files]] in
+# fly.toml (guest_path /etc/mcp-connector/config.yaml).
+#
+# The drop-in scanner auto-discovers agentic-memory from /app/bundled-mcps/.
+# Enterprise Knowledge (EK) is listed below as a Type 3 bundle. On Fly,
+# EK will FAIL at boot (needs a reachable Postgres+pgvector and Ollama
+# sidecar — neither is deployed here yet). That's OK — the connector's
+# startAll swallows per-entry boot failures and continues (see
+# fix/supervisor-continue-on-fail). EK surfaces as `permanently-failed`
+# in the inspector's MCP Status panel; agentic-memory keeps working.
+#
+# To make EK actually functional, deploy the sidecar infra and set:
+#   EK_PGVECTOR_DSN   (postgres with the `vector` extension)
+#   EK_EMBEDDER=ollama
+#   OLLAMA_URL        (URL of the Ollama sidecar; internal .flycast is fine)
+# See bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md.
+
+mcp_servers:
+  - name: enterprise_knowledge
+    bundled: enterprise-knowledge
+    dir: /app/bundled-mcps/enterprise-knowledge
+    timeout_ms: 600000
+
+policy:
+  fail_mode: fail_fast
+  log_tool_args: redacted
+  max_concurrent_calls: 64
+  discovery_interval_ms: 30000
+  heartbeat_interval_ms: 1500
+  tool_timeout_ms: 5000
