@@ -13,26 +13,41 @@
 
 set -euo pipefail
 
+# ─── Multi-instance: optional port arg (see architectural-plans/MULTI-INSTANCE.md) ─
+# First arg is the inspector port (default 9090). Enables running multiple
+# connector instances on one host, each dialing a different controller.
+# Path B naming: port 9090 uses the historical 'mcp_connector' schema
+# (preserves existing state); other ports get 'mcp_connector_<port>'.
+# Port-derived env exports are applied later, right before spawning node,
+# so they win over anything sourced from .env.
+PORT="${1:-9090}"
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Per-port PID file. Same port → kill prior instance. Different port →
+# instances coexist. Replaces the old pgrep-by-filename kill which took
+# down siblings on other ports.
+mkdir -p "$ROOT/.local"
+PIDFILE="$ROOT/.local/pid-${PORT}"
+
 cleanup() {
   echo
-  echo "[start-connector] shutting down..."
+  echo "[start-connector] shutting down (port $PORT)..."
+  rm -f "${PIDFILE:-}" 2>/dev/null || true
   kill 0 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
-# Kill any prior runs of THIS script (their child node processes go down
-# via the trap above). Don't blanket-kill node — that catches unrelated work.
-echo "[start-connector] cleaning up any prior runs of this script..."
-SELF_PID=$$
-for pid in $(pgrep -f 'scripts/start-connector\.sh' 2>/dev/null); do
-  [ "$pid" = "$SELF_PID" ] && continue
-  echo "  killing prior run pid $pid"
-  kill -TERM "$pid" 2>/dev/null || true
-done
-sleep 1
+if [ -f "$PIDFILE" ]; then
+  OLD_PID=$(cat "$PIDFILE" 2>/dev/null || echo "")
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "[start-connector] killing prior instance on port $PORT (pid $OLD_PID)"
+    kill -TERM "$OLD_PID" 2>/dev/null || true
+    sleep 1
+  fi
+fi
+echo $$ > "$PIDFILE"
 
 CONNECTOR_DIR="$ROOT/connector"
 CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
@@ -206,6 +221,24 @@ if [ -z "${MCP_BUNDLED_DIR:-}" ]; then
   echo "[start-connector] MCP_BUNDLED_DIR=$MCP_BUNDLED_DIR"
 fi
 
+# ─── Port-derived instance env (applied here, AFTER .env sourcing) ─────────
+# INSPECTOR_PORT and MCP_BASE_PORT: CLI arg always wins over .env — multi-
+# instance mode needs these locked to the port arg. POSTGRES_SCHEMA is
+# .env-overrideable via ${VAR:-default} so a user can pin an explicit
+# schema for one-off cases. Path B derivation:
+#   port 9090 → schema 'mcp_connector' (historical default, preserves state)
+#   other    → schema 'mcp_connector_<port>' (fresh per-port schema)
+# MCP_BASE_PORT spacing (100 per port) keeps drop-in child ports from
+# initial collision under auto-probe.
+export INSPECTOR_PORT="$PORT"
+export MCP_BASE_PORT="$((7100 + (PORT - 9090) * 100))"
+if [ "$PORT" = "9090" ]; then
+  export POSTGRES_SCHEMA="${POSTGRES_SCHEMA:-mcp_connector}"
+else
+  export POSTGRES_SCHEMA="${POSTGRES_SCHEMA:-mcp_connector_${PORT}}"
+fi
+
+echo "[start-connector] port=$PORT inspector=http://localhost:$PORT schema=$POSTGRES_SCHEMA"
 echo "[start-connector] starting connector with CONNECTOR_CONFIG=$YAML_FILE"
 CONNECTOR_CONFIG="$YAML_FILE" node "$CONNECTOR_BIN" start &
 

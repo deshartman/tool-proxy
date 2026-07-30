@@ -30,6 +30,17 @@ Set these only when the default doesn't match your infrastructure.
 | `MCP_READINESS_TIMEOUT_MS` | `15000` | How long the supervisor waits for a spawned MCP child's port to accept a connection before it gives up and marks the entry `permanently-failed`. Bump on slower hardware or when many drop-ins boot in sequence (tsx cold-starts compound per-child). Under db mode the failed entry surfaces in the inspector's MCP Status panel; siblings keep booting either way (supervisor's log-and-continue). |
 | `LOG_LEVEL` | `info` | Pino level. `debug` for verbose troubleshooting; `warn` in prod if you want quieter logs. |
 | `CONNECTOR_VERSION` | `dev` | Version string surfaced in the manifest and boot log. CI stamps this at build time. |
+| `POSTGRES_SCHEMA` | `mcp_connector` | Postgres schema for the `controllers` + `encryption_meta` tables. Auto-derived by `scripts/start-connector.sh` in multi-instance mode (see below); an explicit env value wins. |
+
+### Multi-instance dev mode (`start-connector.sh <port>`)
+
+When you pass a port arg to the dev launcher, three of the above variables are auto-derived so multiple connector instances can coexist on one host, each with its own tunnel identity:
+
+| Variable | Derivation |
+|---|---|
+| `INSPECTOR_PORT` | `<port>` (CLI arg always wins over `.env`) |
+| `MCP_BASE_PORT` | `7100 + (<port> - 9090) × 100` (spacing avoids drop-in child port collisions across instances) |
+| `POSTGRES_SCHEMA` | `mcp_connector` when `<port>=9090` (historical default, preserves state); else `mcp_connector_<port>`. An explicit env value wins. |
 
 ## Per-bundle vars (Twilio-shipped MCPs)
 
