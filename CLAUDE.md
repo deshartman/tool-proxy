@@ -163,6 +163,8 @@ export CONNECTOR_KEY_FILE=/tmp/connector.key
 ./scripts/start-connector.sh
 ```
 
+**Multi-instance dev workflow.** Pass an optional port arg (`./scripts/start-connector.sh 9091`) to spin up additional connectors on the same host, each with its own tunnel identity. Each port gets its own `POSTGRES_SCHEMA` (`mcp_connector` for 9090 to preserve historical state; `mcp_connector_<port>` otherwise) and its own `MCP_BASE_PORT`. Instances coexist via per-port PID files at `.local/pid-<port>` — same-port second run kills the first; different ports run in parallel. Env-var derivations documented in [docs/ENV-VARS.md](docs/ENV-VARS.md).
+
 First boot lands on an empty `controllers` row — the inspector renders "Configure Tunnel". Fill in the modal (controller URL, name, auth posture); the connector seals + persists identity + creds to the row, then reconnects.
 
 Inspector UI: <http://localhost:9090/>. There's only one inspector per connector process.
