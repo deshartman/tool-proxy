@@ -151,7 +151,9 @@ Exit 0 = all green. In the inspector, the MCP Server panel should show every MCP
 
 **Tunnel bearer / OAuth secret** — rotate in the controller UI (**Rotate Secret**). Prior value has a 24 h grace window. `fly machine restart` to force the pickup sooner.
 
-**Master key** — rare (only if compromised). Wipe the Postgres schema, mint a new key, redeploy. Full recipe in [`deploy/fly/README.md`](../../deploy/fly/README.md#master-key-rotation).
+**Master key** — rare (only if compromised). Wipe the Postgres schema, mint a new key, redeploy. Full recipe in [`OPERATOR-RUNBOOK.md`](OPERATOR-RUNBOOK.md#master-key-rotation-rare--only-if-the-master-key-is-compromised).
+
+**Full app recovery** — if the Fly app itself is destroyed (not just its Machines), CI can't rebuild (its `FLY_API_TOKEN` is app-scoped and can't create apps). Re-run `./scripts/deploy/fly-deploy.sh` locally against your Fly org — the script is idempotent. See [`OPERATOR-RUNBOOK.md`](OPERATOR-RUNBOOK.md#full-app-recovery-after-fly-apps-destroy-or-accidental-deletion).
 
 ## Graduate to managed Postgres
 
@@ -183,7 +185,7 @@ Fly's defaults would violate the connector's load-bearing invariants. The scaffo
 
 ## Reference
 
-- [`deploy/fly/README.md`](../../deploy/fly/README.md) — full operator runbook (rotation recipes, Postgres attach quirks, common troubleshooting).
+- [`OPERATOR-RUNBOOK.md`](OPERATOR-RUNBOOK.md) — full operator runbook (rotation recipes, recovery from destroyed apps, Postgres attach quirks, common troubleshooting).
 - [`deploy/fly/fly.toml.example`](../../deploy/fly/fly.toml.example) — hand-editable reference config (the CLI generates the same shape).
 - `CODE-DEPLOY` design record (internal) — D1–D5 rationale (why Fly Postgres, why entrypoint script, why 1 GB volume, why single region, why private mock).
 - [`README.md`](README.md) — umbrella deploy doc, common prereqs.

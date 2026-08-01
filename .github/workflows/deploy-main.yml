@@ -31,10 +31,13 @@ name: Deploy to Fly.io
 on:
   push:
     branches: [main]
-    # Skip deploys for doc-only pushes. A mixed code+doc push STILL deploys —
-    # GitHub only skips when every changed file matches an ignored path. To
-    # force a deploy on a doc-only tip (e.g. redeploy current image without a
-    # code change), use `workflow_dispatch` instead.
+    # Skip deploys for doc-only pushes AND empty commits. GitHub only skips
+    # when every changed file matches an ignored path — and an empty commit
+    # has zero changed files, which also triggers the skip. So
+    # `git commit --allow-empty && git push` will NOT redeploy. To force a
+    # deploy without a code change (e.g. redeploy the current image), use
+    # `workflow_dispatch` instead — either the "Run workflow" button in the
+    # Actions UI, or `gh workflow run deploy-main.yml --ref main`.
     paths-ignore:
       - '**/*.md'
       - '.claude/**'
