@@ -181,6 +181,51 @@ You should also see in the inspector:
 - **Frames panel** — heartbeats flowing every ~1.5s
 - **Webhooks panel** — allocated URLs per MCP that called `createWebhookEndpoint`
 
+## Recovery
+
+### Full app recovery (after `fly apps destroy` or accidental deletion)
+
+If the entire Fly app is gone — not just its Machines — the CI push-to-deploy
+path fails at `fly deploy` with `Error: app not found`. `--redeploy-only`
+intentionally skips the four bootstrap steps (they need org-level auth the
+app-scoped `FLY_API_TOKEN` lacks — see the comment header in
+[`.github/workflows/deploy-main.yml`](../../.github/workflows/deploy-main.yml)).
+
+Rebuild locally from the same script CI uses:
+
+```bash
+# From the repo root, with flyctl authed to the target Fly org:
+./scripts/deploy/fly-deploy.sh
+```
+
+The script is idempotent — each of the five steps checks for existing state
+before creating (see `applyFly()` in
+[`connector/src/deploy/apply.ts`](../../connector/src/deploy/apply.ts) — the
+`appExists` / `secretExists` / `volumeExists` guards, plus the "already
+exists" swallow on `fly postgres attach`). Deleting only Machines does NOT
+require this path — `fly deploy` alone (or the CI's `--redeploy-only`)
+recreates them against the existing app.
+
+After a full app recreate, rotate the CI token — the previous token was
+minted against the destroyed app instance:
+
+```bash
+flyctl tokens create deploy \
+  --app <CONNECTOR-APP> \
+  --expiry 8760h \
+  --name github-actions \
+  | gh secret set FLY_API_TOKEN \
+      --repo <owner>/<repo>
+```
+
+Then trigger CI to verify: any `main` push (or
+`gh workflow run deploy-main.yml`) exercises the redeploy path against the
+new app.
+
+Tunnel identity + creds sit in the fresh Postgres (empty). Reconfigure via
+the inspector's Configure Tunnel modal — same flow as
+[step 7](#7-configure-the-tunnel-via-the-inspector).
+
 ## Rotation
 
 ### Master key rotation (rare — only if the master key is compromised)
