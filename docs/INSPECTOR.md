@@ -51,6 +51,7 @@ One row per MCP, with:
 - **tools** count.
 - **restarts** count + last reason (e.g. `creds-update`, `manual`, `session-creds-expired`).
 - **mcpId** when the MCP came from the controller (3rd-party MCP roster).
+- Click the MCP's name to open its message history (every request sent and response / notification received) in the right pane. History persists across selections until **Restart** is clicked, which clears it.
 - Two action buttons:
   - **Reload creds** — re-fetch creds from the controller. Restarts the child if values change.
   - **Restart** — re-spawn the child with current env. Resets the consecutive-failure counter.
@@ -135,6 +136,7 @@ The inspector exposes a small set of HTTP routes on the loopback. **All of these
 | `POST` | `/mcp/session-creds-apply` | Apply developer-pasted session creds (W-S4) |
 | `POST` | `/mcp/session-creds-clear` | Drop the session creds layer (W-S4) |
 | `GET`  | `/mcp/env-keys?mcp=<name>` | List declared envKeys (read-only) |
+| `GET`  | `/mcp/messages?mcp=<name>` | Read one MCP's message-history log (read-only) |
 | `POST` | `/tool/call`   | Invoke a tool through the same dispatch path the controller uses |
 | `GET`  | `/internal/webhook/stream?mcp=<name>` | SDK ↔ connector IPC: SSE stream of webhook events |
 | `POST` | `/internal/webhook/revoke` | SDK ↔ connector IPC: explicit teardown |
