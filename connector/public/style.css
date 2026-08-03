@@ -464,13 +464,17 @@ h2 {
 .mcp-message-item { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.6rem; }
 .mcp-message-item.mcp-message-error { border-left: 3px solid var(--red); }
 .mcp-message-item.mcp-message-notification { border-left: 3px solid var(--yellow); }
-.mcp-message-head { display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 0.72rem; }
+.mcp-message-head { display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 0.72rem; cursor: pointer; }
 .mcp-message-ts { color: var(--muted); }
 .mcp-message-dir.out { color: var(--accent); }
 .mcp-message-dir.in { color: var(--green); }
 .mcp-message-method { color: var(--purple); }
 .mcp-message-kind { color: var(--muted); margin-left: auto; text-transform: uppercase; font-size: 0.65rem; }
-.mcp-message-payload { margin: 6px 0 0; font-size: 0.72rem; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+/* Collapsed by default — payload only renders once .expanded is toggled on
+ * the item (click the head). No max-height/overflow: expanding shows the
+ * full payload at full height; the detail pane itself scrolls. */
+.mcp-message-payload { display: none; margin: 6px 0 0; font-size: 0.72rem; white-space: pre-wrap; word-break: break-all; }
+.mcp-message-item.expanded .mcp-message-payload { display: block; }
 
 /* Frame log */
 .controls { font-size: 0.7rem; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); display: flex; gap: 12px; align-items: center; }
