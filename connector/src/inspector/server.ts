@@ -6,6 +6,7 @@ import type { FrameTap, WsState } from "../tunnel/client.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 import type { WebhookRegistry, WebhookEvent } from "../tunnel/webhook-registry.js";
 import type { McpStatus } from "../mcp-supervisor.js";
+import type { McpMessageTap } from "../servers/message-tap.js";
 import { createLogger } from "../logger.js";
 import { envString } from "../env.js";
 import { BodyTooLargeError, readJsonBody } from "./read-body.js";
@@ -69,7 +70,9 @@ export type InspectorEvent =
   | { kind: "frame"; tap: FrameTap }
   | { kind: "manifest"; manifest: ToolManifest }
   | { kind: "webhooks"; webhooks: WebhookSummary[] }
-  | { kind: "mcpStatuses"; mcpStatuses: McpStatus[] };
+  | { kind: "mcpStatuses"; mcpStatuses: McpStatus[] }
+  | { kind: "mcpMessage"; tap: McpMessageTap }
+  | { kind: "mcpMessagesCleared"; mcp: string };
 
 export interface WebhookEventSummary {
   body: unknown;
@@ -274,6 +277,37 @@ export class Inspector {
       this.frames.splice(0, this.frames.length - RING_SIZE);
     }
     this.broadcast({ kind: "frame", tap });
+  }
+
+  private readonly mcpMessages = new Map<string, McpMessageTap[]>();
+  private static readonly MCP_MESSAGE_RING_SIZE = 500;
+
+  // Record one tap and broadcast it live. Called from the `record` callback
+  // wrapWithMessageTap() is given, wired in boot/lifecycle.ts's onConnect.
+  // Deliberately NOT included in snapshot() — per-MCP logs multiplied across
+  // every connected MCP would bloat every subscriber's snapshot payload,
+  // most of whom never open this pane. Fetched on demand via GET
+  // /mcp/messages instead (see getMcpMessages).
+  recordMcpMessage(tap: McpMessageTap): void {
+    const list = this.mcpMessages.get(tap.mcp) ?? [];
+    list.push(tap);
+    if (list.length > Inspector.MCP_MESSAGE_RING_SIZE) {
+      list.splice(0, list.length - Inspector.MCP_MESSAGE_RING_SIZE);
+    }
+    this.mcpMessages.set(tap.mcp, list);
+    this.broadcast({ kind: "mcpMessage", tap });
+  }
+
+  // Read-only snapshot of one MCP's current log. Backs GET /mcp/messages.
+  getMcpMessages(mcp: string): McpMessageTap[] {
+    return [...(this.mcpMessages.get(mcp) ?? [])];
+  }
+
+  // Wipe one MCP's log and tell any open pane to clear. Called from the
+  // restart action in boot/lifecycle.ts, BEFORE the child actually restarts.
+  clearMcpMessages(mcp: string): void {
+    this.mcpMessages.delete(mcp);
+    this.broadcast({ kind: "mcpMessagesCleared", mcp });
   }
 
   snapshot(): InspectorEvent {
@@ -805,6 +839,14 @@ export function startInspector(port: number, inspector: Inspector): void {
       const mcp = url.searchParams.get("mcp");
       if (!mcp) { res.statusCode = 400; res.end('missing "mcp" query param'); return; }
       void handleEnvKeys(req, res, inspector, mcp);
+      return;
+    }
+    if (path === "/mcp/messages" && req.method === "GET") {
+      const mcp = url.searchParams.get("mcp");
+      if (!mcp) { res.statusCode = 400; res.end('missing "mcp" query param'); return; }
+      res.setHeader("content-type", "application/json");
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, messages: inspector.getMcpMessages(mcp) }));
       return;
     }
 

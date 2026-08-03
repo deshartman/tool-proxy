@@ -15,6 +15,7 @@
 
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
 import type { McpServerConnection } from "../servers/index.js";
+import { wrapWithMessageTap } from "../servers/message-tap.js";
 import { buildManifest } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
 import { validateManifestSchemas } from "../manifest/validate.js";
@@ -224,7 +225,16 @@ async function bootFromDb(): Promise<void> {
       await refreshManifestAndPushDelta();
     },
     onConnect: (name, connection) => {
-      notifications.attachToConnection(name, connection);
+      // Tap every request/response + notification so the inspector's MCP
+      // Status → message-history pane has something to show. Re-`set`s the
+      // shared `servers` map entry (the supervisor just stored the raw
+      // connection one line earlier) so dispatcher.ts, manifest/build.ts,
+      // and the inspector's own tool-runner all read the tapped version.
+      const tapped = inspector
+        ? wrapWithMessageTap(name, connection, (tap) => inspector.recordMcpMessage(tap))
+        : connection;
+      notifications.attachToConnection(name, tapped);
+      servers.set(name, tapped);
     },
   });
   supervisor.register(allSpecs);
@@ -504,6 +514,7 @@ async function bootFromDb(): Promise<void> {
           await creds.reload(reqInfo.mcp, reqInfo.author, reqInfo.envKeys, reqInfo.mcpId);
         },
         restart: async (name: string) => {
+          inspector.clearMcpMessages(name);
           const ok = await supervisor.restart(name, "manual");
           if (!ok) throw new Error(`unknown MCP "${name}"`);
         },

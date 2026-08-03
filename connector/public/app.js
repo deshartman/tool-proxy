@@ -695,6 +695,10 @@ function applySelectionHighlight() {
   document.querySelectorAll('.webhook-event').forEach((el) => {
     el.classList.toggle('selected', el.dataset.webhookKey === webhookKey);
   });
+  const mcpMessagesName = selection?.kind === 'mcpMessages' ? selection.serverName : null;
+  document.querySelectorAll('.mcp-status-name-btn').forEach((el) => {
+    el.classList.toggle('selected', el.dataset.mcp === mcpMessagesName);
+  });
   // Highlight the .tunnel-name-btn whose data-tunnel-id matches the selection,
   // mirroring the .server-name-btn behavior above.
   const tunnelId = selection?.kind === 'tunnel' ? selection.tunnelId : null;
@@ -774,6 +778,52 @@ function buildMcpDetailPanel(sel) {
   return buildMcpCredsView(sel.serverName);
 }
 
+// MCP Status panel → click an MCP's name → this pane. History persists
+// across selection switches until the operator clicks Restart, which
+// broadcasts 'mcpMessagesCleared' (handled in the SSE switch below).
+function buildMcpMessagesDetail(sel) {
+  elDetailTitle.textContent = `${sel.serverName} · messages`;
+  const wrap = document.createElement('div');
+  wrap.className = 'mcp-messages-view';
+  const list = document.createElement('ul');
+  list.className = 'mcp-messages-list';
+  list.innerHTML = `<li class="muted">Loading…</li>`;
+  wrap.appendChild(list);
+
+  void (async () => {
+    try {
+      const resp = await fetch(`/mcp/messages?mcp=${encodeURIComponent(sel.serverName)}`);
+      const body = await resp.json().catch(() => ({}));
+      const messages = (body.ok && Array.isArray(body.messages)) ? body.messages : [];
+      list.replaceChildren();
+      if (messages.length === 0) {
+        list.innerHTML = `<li class="muted">No messages yet — call a tool or list something to see traffic here.</li>`;
+        return;
+      }
+      for (const tap of messages) list.appendChild(buildMcpMessageRow(tap));
+    } catch (e) {
+      list.innerHTML = `<li class="muted">${escapeHtml(String(e.message || e))}</li>`;
+    }
+  })();
+
+  return wrap;
+}
+
+function buildMcpMessageRow(tap) {
+  const li = document.createElement('li');
+  li.className = `mcp-message-item mcp-message-${tap.kind}`;
+  li.innerHTML = `
+    <div class="mcp-message-head">
+      <span class="mcp-message-ts">${fmtTs(tap.ts)}</span>
+      <span class="mcp-message-dir ${tap.direction}">${tap.direction === 'out' ? '→' : '←'}</span>
+      <span class="mcp-message-method">${escapeHtml(tap.method)}</span>
+      <span class="mcp-message-kind">${escapeHtml(tap.kind)}</span>
+    </div>
+    <pre class="mcp-message-payload">${escapeHtml(JSON.stringify(tap.payload, null, 2))}</pre>
+  `;
+  return li;
+}
+
 function buildWebhookDetail(sel) {
   const { sid, status } = summarizeEvent(sel.event);
   const heading = formatWebhookHeading(sid, status);
@@ -807,6 +857,7 @@ const DETAIL_BUILDERS = {
   mcp: buildMcpDetailPanel,
   webhook: buildWebhookDetail,
   tunnel: (sel) => buildTunnelDetailPanel(sel),
+  mcpMessages: buildMcpMessagesDetail,
 };
 
 function renderDetail() {
@@ -1187,6 +1238,17 @@ function appendFrame(tap) {
   while (elFrames.children.length > 500) elFrames.lastChild?.remove();
 }
 
+// Append a live message tap to the currently-open pane, if it's showing
+// this tap's MCP. No-op otherwise — the ring buffer on the server side
+// is the source of truth for when the pane is (re)opened.
+function appendMcpMessageIfSelected(tap) {
+  if (!(selection?.kind === 'mcpMessages' && selection.serverName === tap.mcp)) return;
+  const list = elDetailContent.querySelector('.mcp-messages-list');
+  if (!list) return;
+  if (list.querySelector('.muted')) list.replaceChildren(); // clear "Loading…" / "No messages yet"
+  list.appendChild(buildMcpMessageRow(tap));
+}
+
 // Operator-facing header info (connector name+id, last register-ack,
 // tunnel-open-since). Optional fields render as em-dash when absent so the
 // layout doesn't shift between unbound and bound states. Timestamps come
@@ -1274,6 +1336,7 @@ function renderMcpStatuses(list) {
   for (const status of list) {
     elMcpStatusList.appendChild(buildMcpStatusRow(status));
   }
+  applySelectionHighlight();
 }
 
 function buildMcpStatusRow(s) {
@@ -1305,7 +1368,7 @@ function buildMcpStatusRow(s) {
     : '';
   li.innerHTML = `
     <div class="mcp-status-head">
-      <span class="mcp-status-name">${escapeHtml(s.name)}</span>
+      <button type="button" class="mcp-status-name-btn" data-mcp="${escapeHtml(s.name)}"><span class="mcp-status-name">${escapeHtml(s.name)}</span></button>
       ${sourceBadge}
       ${awaitingBadge}
       <span class="mcp-status-state">${escapeHtml(s.process)}</span>
@@ -1327,6 +1390,10 @@ function buildMcpStatusRow(s) {
   const status = li.querySelector('.mcp-action-status');
   reload.addEventListener('click', () => void invokeMcpAction('/mcp/reload-creds', s.name, status));
   restart.addEventListener('click', () => void invokeMcpAction('/mcp/restart', s.name, status));
+  const nameBtn = li.querySelector('.mcp-status-name-btn');
+  nameBtn.addEventListener('click', () => {
+    setSelection({ kind: 'mcpMessages', key: `mcpMessages:${s.name}`, serverName: s.name });
+  });
   return li;
 }
 
@@ -1506,6 +1573,10 @@ function connectSse() {
       case 'frame':    appendFrame(ev.tap); break;
       case 'webhooks': renderWebhooks(ev.webhooks); break;
       case 'mcpStatuses': renderMcpStatuses(ev.mcpStatuses); break;
+      case 'mcpMessage': appendMcpMessageIfSelected(ev.tap); break;
+      case 'mcpMessagesCleared':
+        if (selection?.kind === 'mcpMessages' && selection.serverName === ev.mcp) renderDetail();
+        break;
     }
   };
   es.onerror = () => { /* EventSource auto-retries */ };
