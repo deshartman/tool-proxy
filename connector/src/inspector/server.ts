@@ -566,6 +566,35 @@ async function handleMcpAction(
   }
 }
 
+// Standalone "Clear" button next to Restart on the MCP Status row — wipes
+// that MCP's message-history log without touching the child process.
+// Doesn't go through McpActions/the supervisor at all: Inspector owns the
+// log directly (same as `frames`), so there's nothing to route through.
+async function handleClearMcpMessages(
+  req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+): Promise<void> {
+  if (!guardCsrf(req, res)) return;
+  let body: McpActionBody;
+  try { body = (await readJsonBody(req) as McpActionBody) ?? {}; }
+  catch (error) {
+    if (error instanceof BodyTooLargeError) { res.statusCode = 413; res.end('{"ok":false,"error":"payload too large"}'); return; }
+    res.statusCode = 400; res.end('{"ok":false,"error":"malformed body"}'); return;
+  }
+  const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
+  if (!mcp) {
+    res.statusCode = 400;
+    res.setHeader("content-type", "application/json");
+    res.end('{"ok":false,"error":"missing mcp"}');
+    return;
+  }
+  inspector.clearMcpMessages(mcp);
+  res.statusCode = 202;
+  res.setHeader("content-type", "application/json");
+  res.end('{"ok":true}');
+}
+
 // INSPECTOR-CREDS-VISIBILITY (W-S4): apply developer-pasted session env
 // values for an MCP. Body shape: `{mcp: string, env: Record<string, string>}`.
 // Response: `{ok: true, expiresAt: number | undefined}` — the value expiry
@@ -823,6 +852,10 @@ export function startInspector(port: number, inspector: Inspector): void {
     }
     if (path === "/mcp/restart" && req.method === "POST") {
       void handleMcpAction(req, res, inspector, "restart");
+      return;
+    }
+    if (path === "/mcp/messages/clear" && req.method === "POST") {
+      void handleClearMcpMessages(req, res, inspector);
       return;
     }
     if (path === "/mcp/rescan-local" && req.method === "POST") {

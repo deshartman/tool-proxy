@@ -821,6 +821,11 @@ function buildMcpMessageRow(tap) {
     </div>
     <pre class="mcp-message-payload">${escapeHtml(JSON.stringify(tap.payload, null, 2))}</pre>
   `;
+  // Collapsed by default (just the summary line); click the head to expand
+  // to full height (no internal scrolling) and click again to collapse.
+  li.querySelector('.mcp-message-head').addEventListener('click', () => {
+    li.classList.toggle('expanded');
+  });
   return li;
 }
 
@@ -1382,14 +1387,19 @@ function buildMcpStatusRow(s) {
     <div class="mcp-status-actions">
       <button type="button" class="mcp-action-reload" data-mcp="${escapeHtml(s.name)}">Reload creds</button>
       <button type="button" class="mcp-action-restart" data-mcp="${escapeHtml(s.name)}">Restart</button>
+      <button type="button" class="mcp-action-clear" data-mcp="${escapeHtml(s.name)}">Clear</button>
       <span class="mcp-action-status"></span>
     </div>
   `;
   const reload = li.querySelector('.mcp-action-reload');
   const restart = li.querySelector('.mcp-action-restart');
+  const clear = li.querySelector('.mcp-action-clear');
   const status = li.querySelector('.mcp-action-status');
   reload.addEventListener('click', () => void invokeMcpAction('/mcp/reload-creds', s.name, status));
   restart.addEventListener('click', () => void invokeMcpAction('/mcp/restart', s.name, status));
+  // Clears the message-history log only — doesn't touch the child process.
+  // Distinct from Restart (which also clears, as a side effect of respawning).
+  clear.addEventListener('click', () => void invokeMcpAction('/mcp/messages/clear', s.name, status));
   const nameBtn = li.querySelector('.mcp-status-name-btn');
   nameBtn.addEventListener('click', () => {
     setSelection({ kind: 'mcpMessages', key: `mcpMessages:${s.name}`, serverName: s.name });
