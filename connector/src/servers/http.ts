@@ -1,5 +1,4 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { McpServerSpec } from "../config.js";
 import { makeConnection, type McpServerConnection } from "./index.js";
 
@@ -17,7 +16,13 @@ export async function connectHttp(spec: Extract<McpServerSpec, { transport: "htt
     ? { requestInit: { headers: spec.headers } }
     : undefined;
   const transport = new StreamableHTTPClientTransport(new URL(spec.endpoint), transportOpts);
-  const client = new Client({ name: "mcp-shim-connector", version: "0.1.0" }, { capabilities: {} });
+  // versionNegotiation 'auto' probes server/discover and speaks 2026-07-28
+  // when the upstream supports it, falling back to the 2025 initialize
+  // handshake otherwise ("support both"). The probe is a cheap HTTP request.
+  const client = new Client(
+    { name: "mcp-shim-connector", version: "0.1.0" },
+    { capabilities: {}, versionNegotiation: { mode: "auto" } },
+  );
   await client.connect(transport);
   return makeConnection(spec.name, "http", client);
 }

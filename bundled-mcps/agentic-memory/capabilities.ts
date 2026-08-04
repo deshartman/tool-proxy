@@ -1,13 +1,15 @@
 // Custom capabilities advertised on the MCP `initialize` response per
-// MEMORY-MCP-INTERFACE.md §7. Wrapped under `experimental."agentic-memory"`
-// because MCP's ServerCapabilitiesSchema strips unknown top-level keys —
-// see the docstring on CreateMcpHttpServerOptions.capabilities in
-// connector/src/sdk/http-server.ts.
+// MEMORY-MCP-INTERFACE.md §7. Wrapped under the first-class
+// `extensions."agentic-memory"` field: MCP `2026-07-28` promotes `extensions`
+// to a standard ServerCapabilities member — the sanctioned home for custom
+// capability groups. (Earlier revisions used `experimental` because the SDK
+// schema stripped unknown top-level keys; see the docstring on
+// CreateMcpHttpServerOptions.capabilities in connector/src/sdk/http-server.ts.)
 //
 // The Controller-side handoff for this shape lives in
-// docs/AGENTIC-MEMORY-MOCK.md.
+// docs/AGENTIC-MEMORY-MOCK.md — the Controller reads `extensions."agentic-memory"`.
 const capabilities = {
-  experimental: {
+  extensions: {
     "agentic-memory": {
       protocolVersion: "2026-07",
       identity: {

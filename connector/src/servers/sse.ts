@@ -1,3 +1,5 @@
+import { Client, SSEClientTransport } from "@modelcontextprotocol/client";
+
 // SSE outbound transport for 3rd-party MCPs (W-E5 of MCP-LOADING).
 //
 // The MCP SDK's SSEClientTransport pre-dates StreamableHTTPClientTransport;
@@ -10,9 +12,6 @@
 // streamable-http. We support it for backwards compat with upstream MCPs
 // that haven't migrated yet. The connector itself ships only
 // streamable-http for its own Type 1 MCPs.
-
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { McpServerSpec } from "../config.js";
 import { makeConnection, type McpServerConnection } from "./index.js";
 
@@ -30,7 +29,12 @@ export async function connectSse(spec: Extract<McpServerSpec, { transport: "http
     ? { requestInit: { headers: spec.headers } }
     : undefined;
   const transport = new SSEClientTransport(new URL(spec.endpoint), transportOpts);
-  const client = new Client({ name: "mcp-shim-connector", version: "0.1.0" }, { capabilities: {} });
+  // See servers/http.ts — 'auto' negotiates 2026-07-28 where available,
+  // falls back to the 2025 handshake ("support both").
+  const client = new Client(
+    { name: "mcp-shim-connector", version: "0.1.0" },
+    { capabilities: {}, versionNegotiation: { mode: "auto" } },
+  );
   await client.connect(transport);
   return makeConnection(spec.name, "http", client);
 }

@@ -2,8 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 // End-to-end smoke walk of MEMORY-MCP-INTERFACE.md §11.1. Exercises the
 // agentic-memory drop-in the way the connector's dropin-runner would: load
@@ -98,11 +97,11 @@ describe("agentic-memory drop-in — §11.1 validation walk", () => {
     store.commit();
   });
 
-  it("Step 1 — capabilities handshake exposes the §7 shape under experimental.agentic-memory", () => {
+  it("Step 1 — capabilities handshake exposes the §7 shape under extensions.agentic-memory", () => {
     const caps = client.getServerCapabilities() as Record<string, unknown> | undefined;
     expect(caps).toBeDefined();
-    const experimental = caps!.experimental as Record<string, unknown> | undefined;
-    const am = experimental!["agentic-memory"] as Record<string, unknown>;
+    const extensions = caps!.extensions as Record<string, unknown> | undefined;
+    const am = extensions!["agentic-memory"] as Record<string, unknown>;
     expect(am.protocolVersion).toBe("2026-07");
     expect(am.identity).toBeDefined();
     expect(am.memory).toBeDefined();

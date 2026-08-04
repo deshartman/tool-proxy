@@ -3,12 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Pin the W-E5 transport-dispatch branch in src/servers/connect.ts.
 //
 // Manual scenarios surfaced by the controller-driven roster: an operator
-// can pick Transport=sse / streamable-http / websocket / stdio in the
-// "New 3rd Party MCP" UI. The connector translates each to McpServerSpec
-// shape — which has only `http` / `stdio` transports — and routes the
-// HTTP-family variants through `__transportKind`. If dispatch picks the
-// wrong transport class, the upstream connection silently uses the wrong
-// protocol (e.g. SSE entry tries to streamable-POST and the server 405s).
+// can pick Transport=sse / streamable-http / stdio in the "New 3rd Party
+// MCP" UI. The connector translates each to McpServerSpec shape — which has
+// only `http` / `stdio` transports — and routes the HTTP-family variants
+// through `__transportKind`. If dispatch picks the wrong transport class,
+// the upstream connection silently uses the wrong protocol (e.g. SSE entry
+// tries to streamable-POST and the server 405s). A stale `websocket` entry
+// (transport removed in SDK v2) must be rejected clearly, not misrouted.
 //
 // We mock the SDK transport constructors and the Client.connect so this
 // test exercises ONLY the dispatch decision — not real network I/O.
@@ -18,26 +19,21 @@ import type { McpServerSpec } from "../../src/config.js";
 // Capture which transport class was instantiated.
 const constructed: Array<{ kind: string; url: string; opts?: unknown }> = [];
 
-vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
-  return {
-    Client: class MockClient {
-      async connect() { /* noop */ }
-      async close() { /* noop */ }
-      async listTools() { return { tools: [] }; }
-      async callTool() { return {}; }
-    },
-  };
-});
-
-vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+// One mock per module — Client + both HTTP-family transports come from the
+// same v2 package root, so they must be returned from a SINGLE vi.mock (a
+// second vi.mock of the same module replaces the first, it does not merge).
+vi.mock("@modelcontextprotocol/client", () => ({
+  Client: class MockClient {
+    async connect() { /* noop */ }
+    async close() { /* noop */ }
+    async listTools() { return { tools: [] }; }
+    async callTool() { return {}; }
+  },
   StreamableHTTPClientTransport: class {
     constructor(url: URL, opts?: unknown) {
       constructed.push({ kind: "streamable-http", url: url.toString(), opts });
     }
   },
-}));
-
-vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
   SSEClientTransport: class {
     constructor(url: URL, opts?: unknown) {
       constructed.push({ kind: "sse", url: url.toString(), opts });
@@ -45,15 +41,7 @@ vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
   },
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/websocket.js", () => ({
-  WebSocketClientTransport: class {
-    constructor(url: URL) {
-      constructed.push({ kind: "websocket", url: url.toString() });
-    }
-  },
-}));
-
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
+vi.mock("@modelcontextprotocol/client/stdio", () => ({
   StdioClientTransport: class {
     constructor(opts: unknown) {
       constructed.push({ kind: "stdio", url: "(stdio)", opts });
@@ -94,7 +82,10 @@ describe("connectServer dispatch", () => {
     expect(constructed[0]).toMatchObject({ kind: "sse", url: "https://example.com/mcp/sse" });
   });
 
-  it("http spec with __transportKind: 'websocket' → WebSocketClientTransport", async () => {
+  it("http spec with __transportKind: 'websocket' → rejected (transport removed in SDK v2)", async () => {
+    // WebSocket is no longer an MCP transport. A stale entry from an older
+    // controller must be rejected clearly — never misrouted to connectHttp,
+    // which would try to speak HTTP at a wss:// endpoint.
     const spec: McpServerSpec & { __transportKind?: string } = {
       name: "x",
       transport: "http",
@@ -102,9 +93,8 @@ describe("connectServer dispatch", () => {
       __transportKind: "websocket",
       timeout_ms: 5000,
     };
-    await connectServer(spec);
-    expect(constructed).toHaveLength(1);
-    expect(constructed[0]).toMatchObject({ kind: "websocket", url: "wss://example.com/mcp" });
+    await expect(connectServer(spec)).rejects.toThrow(/websocket.*no longer supported/i);
+    expect(constructed).toHaveLength(0);
   });
 
   it("stdio spec → StdioClientTransport (kind never consulted)", async () => {
@@ -193,8 +183,7 @@ describe("connectServer dispatch", () => {
 
   it("passes spec.headers through requestInit.headers for http and sse", async () => {
     // W-E3 wire-through is the load-bearing piece for the Authorization
-    // header. Pin that connectHttp and connectSse both forward it; the
-    // WebSocket transport drops it (with a warn — separate test).
+    // header. Pin that connectHttp and connectSse both forward it.
     const httpSpec: McpServerSpec = {
       name: "x",
       transport: "http",

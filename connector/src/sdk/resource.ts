@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 // One module per resource. Each resource owns its own URI + read handler
 // and registers itself on the server. Templates use the SDK's

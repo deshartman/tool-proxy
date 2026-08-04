@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 // One module per tool. Each tool owns its own zod-typed args + handler and
 // registers itself on the server. Keeping the interface minimal (name +
