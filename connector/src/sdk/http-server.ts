@@ -1,8 +1,6 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { toNodeHandler } from "@modelcontextprotocol/node";
 import type { Tool } from "./tool.js";
 import type { Prompt } from "./prompt.js";
 import type { Resource } from "./resource.js";
@@ -37,13 +35,11 @@ export interface CreateMcpHttpServerOptions {
   // groups. Standard keys stay auto-managed — do NOT set `tools`,
   // `prompts`, or `resources` here.
   //
-  // IMPORTANT: MCP's ServerCapabilitiesSchema is `.strip()` — unknown
-  // top-level keys are removed by the SDK on both send and receive. Custom
-  // shapes MUST be nested under `experimental` (Record<string, object>) or
-  // `extensions` (same shape), which the schema preserves. Vendor
-  // convention is a single-key namespace so the receiver can find the
-  // group without collision:
-  //   capabilities: { experimental: { "your-mcp-name": { ...your fields } } }
+  // Under MCP `2026-07-28`, `extensions` is a first-class field on
+  // ServerCapabilities and is the sanctioned home for custom capability
+  // groups. Vendor convention is a single-key namespace so the receiver
+  // can find the group without collision:
+  //   capabilities: { extensions: { "your-mcp-name": { ...your fields } } }
   capabilities?: Record<string, unknown>;
 }
 
@@ -52,17 +48,18 @@ export interface McpHttpServerHandle {
   close(): Promise<void>;
 }
 
-// Customer-authored Type 1 MCP servers call this from their `server.ts`.
-// Stateful StreamableHTTPServerTransport with randomUUID session IDs is the
-// only mode the SDK's HTTP transport supports for our use.
+// Customer-authored Type 1 MCP servers call this from their `server.ts`, and
+// every drop-in / bundled MCP reaches it through the drop-in runner.
+//
+// Serves MCP `2026-07-28` and — via createMcpHandler's default
+// `legacy: 'stateless'` — the 2025-era protocol too: one endpoint, both eras,
+// a fresh McpServer built per request (the 2026-07-28 model is stateless —
+// no `Mcp-Session-Id`). The connector's own outbound client negotiates the
+// era per connection (see servers/*.ts `versionNegotiation`).
 export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Promise<McpHttpServerHandle> {
   const requestedPort = opts.port ?? envNumber("PORT", 0);
   const prompts = opts.prompts ?? [];
   const resources = opts.resources ?? [];
-
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
 
   // Capabilities follow the registered surface. McpServer's runtime tracks
   // which categories have handlers; we still need to advertise on the wire
@@ -76,35 +73,45 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
   if (resources.length > 0) capabilities.resources = {};
   else delete capabilities.resources;
 
-  const server = new McpServer(
-    { name: opts.name, version: opts.version ?? "0.1.0" },
-    { capabilities }
-  );
-  for (const tool of opts.tools) tool.register(server);
-  for (const prompt of prompts) prompt.register(server);
-  for (const resource of resources) resource.register(server);
+  // createMcpHandler drives a FRESH McpServer per request (the 2026-07-28
+  // protocol is per-request / stateless). Registration is cheap; each request
+  // gets its own server instance carrying the same tool/prompt/resource set.
+  const buildServer = (): McpServer => {
+    const server = new McpServer(
+      { name: opts.name, version: opts.version ?? "0.1.0" },
+      { capabilities },
+    );
+    for (const tool of opts.tools) tool.register(server);
+    for (const prompt of prompts) prompt.register(server);
+    for (const resource of resources) resource.register(server);
 
-  // McpServer wires its tools/list handler lazily — only on the first
-  // registerTool() call. A creds-gated MCP that registers zero tools (e.g.
-  // a Type 1 MCP awaiting its API token over the wire) would otherwise
-  // return -32601 "Method not found" to tools/list, killing the
-  // connector's buildManifest at boot. Install an empty-list handler
-  // ourselves so the wire response is the normal MCP semantics: "server up,
-  // 0 tools right now." The supervisor's creds-update restart re-spawns
-  // with non-empty tools, and the SDK's own lazy-init takes over.
-  //
-  // We do NOT install equivalent empty handlers for prompts/list and
-  // resources/list — the connector only calls those when the upstream
-  // server has DECLARED the matching capability. With zero registered
-  // prompts we don't declare capabilities.prompts above, the connector's
-  // manifest builder skips listPrompts(), and we never see -32601. Same
-  // for resources. Tools is special: capabilities.tools is always set
-  // (every MCP we ship advertises tools).
-  if (opts.tools.length === 0) {
-    server.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [] }));
-  }
+    // McpServer wires its tools/list handler lazily — only on the first
+    // registerTool() call. A creds-gated MCP that registers zero tools (e.g.
+    // a Type 1 MCP awaiting its API token over the wire) would otherwise
+    // return -32601 "Method not found" to tools/list, killing the
+    // connector's buildManifest at boot. Install an empty-list handler
+    // ourselves so the wire response is the normal MCP semantics: "server up,
+    // 0 tools right now." The supervisor's creds-update restart re-spawns
+    // with non-empty tools, and the SDK's own lazy-init takes over.
+    //
+    // We do NOT install equivalent empty handlers for prompts/list and
+    // resources/list — the connector only calls those when the upstream
+    // server has DECLARED the matching capability. With zero registered
+    // prompts we don't declare capabilities.prompts above, the connector's
+    // manifest builder skips listPrompts(), and we never see -32601. Same
+    // for resources. Tools is special: capabilities.tools is always set
+    // (every MCP we ship advertises tools).
+    if (opts.tools.length === 0) {
+      server.server.setRequestHandler("tools/list", () => ({ tools: [] }));
+    }
+    return server;
+  };
 
-  await server.connect(transport);
+  // Default legacy: 'stateless' → the same handler also serves 2025-era
+  // clients through the established stateless idiom. toNodeHandler adapts the
+  // web-standard handler to Node (req, res) and reads/parses the body itself.
+  const handler = createMcpHandler(buildServer);
+  const nodeMcp = toNodeHandler(handler);
 
   // Resolve the envKeys list surfaced on /envkeys. Server-level opts.envKeys
   // wins when provided (use when items register conditionally and the
@@ -130,21 +137,8 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
         res.end("not found");
         return;
       }
-      const chunks: Buffer[] = [];
-      req.on("data", (c) => chunks.push(c));
-      req.on("end", () => {
-        let body: unknown;
-        if (chunks.length > 0) {
-          try {
-            body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          } catch {
-            res.statusCode = 400;
-            res.end("malformed body");
-            return;
-          }
-        }
-        void transport.handleRequest(req, res, body);
-      });
+      // toNodeHandler owns body reading + era routing (2025 / 2026-07-28).
+      void nodeMcp(req, res);
     });
 
     http.once("error", rejectListen);
@@ -161,7 +155,15 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
       }, `listening`);
       resolveListen({
         port,
-        close: () => new Promise<void>((res) => http.close(() => res())),
+        close: () =>
+          new Promise<void>((res) => {
+            http.close(() => {
+              // Release the handler's per-request event bus / subscriptions
+              // alongside the socket. Swallow any close error — we're tearing
+              // down regardless.
+              Promise.resolve(handler.close()).then(() => res(), () => res());
+            });
+          }),
       });
     });
   });

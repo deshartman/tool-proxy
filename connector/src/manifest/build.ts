@@ -141,6 +141,8 @@ async function buildServerDescriptor(
   if (resources.length > 0) descriptor.resources = resources;
   if (resourceTemplates.length > 0) descriptor.resourceTemplates = resourceTemplates;
   if (caps && Object.keys(caps).length > 0) descriptor.capabilities = caps;
+  // §9.2 — negotiated protocol era, captured on the connection at connect time.
+  if (server.protocolVersion) descriptor.protocolVersion = server.protocolVersion;
   // INSPECTOR-CREDS-VISIBILITY (W-S7): aggregate envKeys union for the
   // MCP, surfaced so the inspector can render an "Awaiting config" badge
   // when the MCP declared keys but no creds are set. Best-effort: a

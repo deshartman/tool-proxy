@@ -462,7 +462,11 @@ async function bootFromDb(): Promise<void> {
 
     localMcps.bind({ send: (frame) => pendingTunnel.send(frame) });
     approval.bind({ send: (frame) => pendingTunnel.send(frame) });
-    notifications.bind({ send: (frame) => pendingTunnel.send(frame) });
+    // §9.1 — upstream list_changed re-lists the manifest and pushes a
+    // manifest-delta (not a raw mcp-notification). refreshManifestAndPushDelta
+    // is a hoisted function declaration in this scope; `void` discards its
+    // promise the same way the discovery timer does.
+    notifications.bind({ onListChanged: () => void refreshManifestAndPushDelta() });
 
     const tokenRef = { current: currentToken };
     // Capture row.id into a const so TS narrows across the callback closures.

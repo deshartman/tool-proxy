@@ -1,7 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { buildManifest } from "@connector/manifest/build.js";
 import { createMcpHttpServer, type McpHttpServerHandle } from "@connector/sdk/http-server.js";
 import { makeConnection, type McpServerConnection } from "@connector/servers/index.js";

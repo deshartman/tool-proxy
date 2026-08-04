@@ -612,7 +612,7 @@ interface McpConfigAckFrame {
 }
 ```
 
-Sent after applying a snapshot or delta. `status: "skipped"` is reserved for entries the connector cannot run today — for example, an entry missing a required field (`http` without `url`, `stdio` without `command`) or, on a future connector version, an unrecognised transport. The controller surfaces this in the row's status badge. As of 2026-06-21 (v1.1) all five wire transports — `stdio` / `http` / `streamable-http` / `sse` / `websocket` — are supported by the connector; field-validation skips remain.
+Sent after applying a snapshot or delta. `status: "skipped"` is reserved for entries the connector cannot run today — for example, an entry missing a required field (`http` without `url`, `stdio` without `command`) or, on a future connector version, an unrecognised transport. The controller surfaces this in the row's status badge. As of the MCP SDK-v2 migration (2026-08-04) the connector supports four transports — `stdio` / `http` / `streamable-http` / `sse`. **`websocket` is rejected at connect** (non-fatal, per-entry): SDK v2 removed the WebSocket transport (WebSocket is not an MCP spec transport). The wire type still lists `websocket` so a stale entry parses rather than failing the whole snapshot, but that entry does not start; controllers should stop offering it (remove WebSocket from the 3rd-party transport dropdown). Field-validation skips also remain.
 
 **`status: "removed"` arrives after the row is already gone.** The controller deletes its row before sending `mcp-config-delta { removed: [mcpId] }`, so by the time the matching `removed` ack lands the row is no longer in the DB. The handler MUST tolerate the row being absent — log + drop, don't upsert. A naive "always upsert by mcpId" handler would FK-error here.
 
@@ -673,7 +673,7 @@ type McpAuthSpec =
 | `http` + `url` | Type 2 http (`transport: "http"`, `endpoint: <url>`, `headers: {...}` synthesized from auth) |
 | `streamable-http` + `url` | Same as `http` (the SDK transport choice; connector treats them identically on the spec layer) |
 | `sse` + `url` | Type 2 sse — supervisor `transport: "http"` spec with internal `__transportKind: "sse"` marker; routed to `connectSse` in [`servers/connect.ts`](../connector/src/servers/connect.ts). Auth headers flow through `requestInit.headers` on the recurring POST requests. |
-| `websocket` + `url` | Type 2 websocket — supervisor `transport: "http"` spec with internal `__transportKind: "websocket"` marker; routed to `connectWebSocket`. Separate from the connector ↔ controller `/mcp-tunnel` WS. **Auth must be embedded in the URL** (token query param, basic-auth in URL userinfo, etc.) — the SDK's WebSocket transport accepts no headers; resolved auth headers are dropped with a warn. |
+| `websocket` + `url` | **Removed (SDK v2).** WebSocket is not an MCP spec transport; SDK v2 dropped `WebSocketClientTransport`. A `websocket` entry now fails at connect with a clear "unsupported transport" error (non-fatal — that one MCP fails, siblings unaffected). Controllers should drop WebSocket from the transport dropdown. Still independent from the `/mcp-tunnel` WS — see the clarification below. |
 
 > **WebSocket clarification (CRITICAL).** A `transport: "websocket"` 3rd-party MCP means the **connector dials a separate WS** out to the upstream MCP server's URL to talk JSON-RPC. This is **completely independent** from the connector ↔ controller `/mcp-tunnel` WS that this entire protocol rides on. They share no auth, no socket, no lifecycle.
 
@@ -1028,6 +1028,12 @@ interface ServerDescriptor {
     completions?: {};
     logging?:    {};
   };
+
+  // v1.4 / §9.2 additive — the MCP protocol revision the connector negotiated
+  // with this upstream ("2026-07-28" / "2025-11-25"). Advisory: the controller
+  // may render a per-MCP era badge. Absent when the SDK client didn't expose a
+  // negotiated version. Older controllers ignore it (unknown-fields rule).
+  protocolVersion?: string;
 }
 
 interface PromptDescriptor {
@@ -1078,6 +1084,8 @@ Upstream errors flow back unchanged.
 
 ### `mcp-notification` frame (connector → controller)
 
+> **Superseded by v1.4 (§9.1 / §9.4) — NO LONGER EMITTED.** As of the full 2026-07-28 adoption, the connector does not forward raw MCP notifications to the controller — a UI-only controller can't interpret raw MCP. Instead: upstream `*/list_changed` triggers a manifest re-list → **`manifest-delta`** (the frame the controller already applies); `progress` / `message` / `resources/updated` / `cancelled` are **consumed connector-side** (no tunnel consumer). This frame type stays defined so an older controller that still has a handler parses it harmlessly, but the connector emits none. The v1.2 description below is retained for historical context. See `tunnel/notification-forwarder.ts`.
+
 Server-initiated notifications emitted by an MCP get wrapped and forwarded as a single new frame. **Connector is a pure forwarder — payload is opaque.** Same async-free `send()` path as the existing `webhook` frame so a notification burst doesn't starve heartbeats.
 
 ```ts
@@ -1106,7 +1114,7 @@ The connector itself stays a passthrough — it does NOT declare `sampling`, `el
 
 ### Backwards compat
 
-- **Older controller, new connector.** Connector advertises `prompts[]` / `resources[]` in the manifest; older controller sees only the `tools[]` field it always read. Connector emits `mcp-notification` frames; older controller logs+drops per the unknown-frames rule. Tools-only flow keeps working.
+- **Older controller, new connector.** Connector advertises `prompts[]` / `resources[]` in the manifest; older controller sees only the `tools[]` field it always read. As of v1.4 the connector no longer emits `mcp-notification` frames at all — runtime tool changes arrive as `manifest-delta` (which older controllers already apply), so nothing is logged+dropped. Tools-only flow keeps working.
 - **Newer controller, older connector.** Controller calls `prompts/list` over the tunnel; older connector's dispatcher returns `-32601 method not found`. Controller treats that exactly like a server that didn't declare the prompts capability.
 
 ## v1.3 — Customer drop-in approval gate
