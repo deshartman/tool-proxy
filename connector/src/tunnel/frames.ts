@@ -83,6 +83,11 @@ export interface ServerDescriptor {
   resources?: ResourceDescriptor[];
   resourceTemplates?: ResourceTemplateDescriptor[];
   capabilities?: ServerCapabilitiesAdvert;
+  // §9.2 additive — the MCP protocol revision the connector negotiated with
+  // this upstream ("2026-07-28" / "2025-11-25"). Advisory: the controller may
+  // render a per-MCP era badge. Older controllers ignore it. Absent when the
+  // SDK client didn't expose the negotiated version.
+  protocolVersion?: string;
 }
 
 export interface ToolManifest {
@@ -354,9 +359,15 @@ export interface LocalMcpsRescanAckFrame {
 // envelope) — the connector validates the wrapping shape but doesn't
 // interpret. Examples: `notifications/progress`, `notifications/message`
 // (logging/message on the wire), `notifications/resources/updated`,
-// `notifications/{tools,prompts,resources}/list_changed`. The controller
-// correlates progress by `params.progressToken`, resource updates by
-// `params.uri`. The connector is a pure forwarder.
+// `notifications/{tools,prompts,resources}/list_changed`.
+//
+// §9.1/§9.4 (NO LONGER EMITTED): the connector no longer forwards raw MCP
+// notifications to the controller (a UI-only controller can't act on raw MCP).
+// `*/list_changed` now triggers a manifest re-list → `manifest-delta`; all
+// other notifications (progress / message / resources/updated / cancelled)
+// are consumed connector-side (dropped — no tunnel consumer). This type is
+// retained so an older controller still parses the frame, but nothing sends
+// it. See NotificationForwarder for the routing.
 export interface McpNotificationFrame {
   type: "mcp-notification";
   server: string;             // matches ServerDescriptor.name

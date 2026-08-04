@@ -1,3 +1,7 @@
+import { Client } from "@modelcontextprotocol/client";
+import type { McpSubscription, SubscriptionFilter } from "@modelcontextprotocol/client";
+import { createLogger } from "../logger.js";
+
 // Connection-shape types + the makeConnection helper. This module exists
 // independently of connectHttp / connectStdio (which live in their own
 // transport files and dispatch through ./connect.js) so the cycle that used
@@ -10,8 +14,6 @@
 //
 // `npx madge --circular connector/src` reports zero cycles after
 // this split.
-
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type {
   PromptDescriptor,
   ResourceDescriptor,
@@ -44,6 +46,11 @@ export interface McpServerConnection {
   // surface them on the wire as part of ServerDescriptor.capabilities (used
   // by the controller to decide which optional method panels to render).
   capabilities?: ServerCapabilitiesAdvert;
+  // §9.2 — the MCP protocol revision negotiated with this upstream at
+  // initialize time (e.g. "2026-07-28" / "2025-11-25"). Captured at connect
+  // time so the manifest builder can surface it per ServerDescriptor.
+  // undefined when the client (or a test mock) doesn't expose the accessor.
+  protocolVersion?: string;
   listTools(): Promise<DiscoveredTool[]>;
   callTool(name: string, args: unknown, opts: { timeoutMs: number }): Promise<unknown>;
   // Optional surface — only servers that advertised the matching capability
@@ -103,10 +110,46 @@ export function makeConnection(
     ? (client.getServerCapabilities() as ServerCapabilitiesAdvert | undefined)
     : undefined;
 
+  // §9.2 — exact negotiated protocol revision string ("2026-07-28" /
+  // "2025-11-25"). Distinct from getProtocolEra() (the "modern"/"legacy"
+  // label used below); the manifest surfaces the precise revision per MCP.
+  const protocolVersion = (client as { getNegotiatedProtocolVersion?: () => string | undefined })
+    .getNegotiatedProtocolVersion?.();
+
+  // 2026-07-28 removed unsolicited server→client notifications: tools/prompts/
+  // resources list_changed and per-resource resources/updated are delivered
+  // ONLY on a `subscriptions/listen` stream the client opens. We open one for
+  // the change types the server advertised; the SDK routes its notifications to
+  // the same fallbackNotificationHandler installed above, so they reach the
+  // controller unchanged (listen() is era-transparent that way). On a 2025-era
+  // connection these arrive unsolicited and listen() throws — hence modern-only.
+  // Per-resource subscriptions open their own streams in subscribeResource.
+  const era = (client as { getProtocolEra?: () => string | undefined }).getProtocolEra?.();
+  const isModern = era === "modern";
+  const subLog = createLogger(`mcp:${name}`);
+  let changeSub: McpSubscription | undefined;
+  const resourceSubs = new Map<string, McpSubscription>();
+
+  if (isModern) {
+    const filter: SubscriptionFilter = {};
+    const caps = capabilities as Record<string, { listChanged?: boolean } | undefined> | undefined;
+    if (caps?.tools?.listChanged) filter.toolsListChanged = true;
+    if (caps?.prompts?.listChanged) filter.promptsListChanged = true;
+    if (caps?.resources?.listChanged) filter.resourcesListChanged = true;
+    if (Object.keys(filter).length > 0) {
+      // Fire-and-forget: connection setup must not block on the listen ack.
+      void client.listen(filter).then(
+        (sub) => { changeSub = sub; },
+        (err) => subLog.warn({ err: String(err) }, "subscriptions/listen (list_changed) failed to open"),
+      );
+    }
+  }
+
   return {
     name,
     transport,
     capabilities,
+    protocolVersion,
     async listTools(): Promise<DiscoveredTool[]> {
       const result = await client.listTools();
       return result.tools.map((tool) => ({
@@ -120,7 +163,6 @@ export function makeConnection(
     async callTool(toolName, args, opts) {
       return client.callTool(
         { name: toolName, arguments: args as Record<string, unknown> | undefined },
-        undefined,
         { timeout: opts.timeoutMs },
       );
     },
@@ -164,9 +206,26 @@ export function makeConnection(
       return client.readResource({ uri }, { timeout: opts.timeoutMs });
     },
     async subscribeResource(uri, opts) {
+      // 2026: per-resource updates arrive on a subscriptions/listen stream
+      // scoped to this URI (notifications route to the fallback forwarder).
+      // 2025: the classic resources/subscribe RPC (unsolicited updates).
+      if (isModern) {
+        const sub = await client.listen({ resourceSubscriptions: [uri] }, { timeout: opts.timeoutMs });
+        await resourceSubs.get(uri)?.close().catch(() => {}); // idempotent re-subscribe
+        resourceSubs.set(uri, sub);
+        return {};
+      }
       return client.subscribeResource({ uri }, { timeout: opts.timeoutMs });
     },
     async unsubscribeResource(uri, opts) {
+      if (isModern) {
+        const sub = resourceSubs.get(uri);
+        if (sub) {
+          resourceSubs.delete(uri);
+          await sub.close().catch(() => {});
+        }
+        return {};
+      }
       return client.unsubscribeResource({ uri }, { timeout: opts.timeoutMs });
     },
     async complete(params, opts) {
@@ -180,6 +239,11 @@ export function makeConnection(
       return () => notifSubscribers.delete(handler);
     },
     async close() {
+      // Tear down any 2026 listen streams first; client.close() then aborts
+      // the transport. Every close() here is idempotent.
+      await changeSub?.close().catch(() => {});
+      for (const sub of resourceSubs.values()) await sub.close().catch(() => {});
+      resourceSubs.clear();
       await client.close();
     },
   };

@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 // One module per prompt. Each prompt owns its own arg validation + handler
 // and registers itself on the server. Mirrors the Tool interface — keep the

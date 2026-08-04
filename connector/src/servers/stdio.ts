@@ -1,5 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Client } from "@modelcontextprotocol/client";
 import type { McpServerSpec } from "../config.js";
 import { makeConnection, type McpServerConnection } from "./index.js";
 
@@ -23,7 +23,19 @@ export async function connectStdio(
   const [command, ...args] = spec.command;
   const resolvedEnv = env ?? legacyEnv(spec);
   const transport = new StdioClientTransport({ command, args, env: resolvedEnv });
-  const client = new Client({ name: "mcp-shim-connector", version: "0.1.0" }, { capabilities: {} });
+  // 'auto' negotiates 2026-07-28 where available, else the 2025 handshake
+  // ("support both"). NOTE: on stdio the SDK probes via a short-lived SIBLING
+  // process (the command is spawned twice on connect). Fine for lightweight
+  // servers; a heavy 2025-era bundle known never to speak 2026 could skip the
+  // probe via client.connect(transport, { prior: { kind: "legacy" } }). Not
+  // needed today — connect happens once per spawn, not per request.
+  const client = new Client(
+    { name: "mcp-shim-connector", version: "0.1.0" },
+    // §9.3 — autoFulfill:false: no MCP fulfiller exists (no LLM, UI-only
+    // controller). An `input_required` result surfaces as a typed error from
+    // callTool → dispatcher relays `tool_failed`, not a maxRounds retry spin.
+    { capabilities: {}, versionNegotiation: { mode: "auto" }, inputRequired: { autoFulfill: false } },
+  );
   await client.connect(transport);
   return makeConnection(spec.name, "stdio", client);
 }

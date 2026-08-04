@@ -20,7 +20,7 @@ Wire prefix on all tool / prompt names: **`agentic-memory.`** (this is the folde
 
 ---
 
-## 2. Spec deviation — custom capabilities go under `experimental`
+## 2. Custom capabilities go under the first-class `extensions` field
 
 **Read this before wiring the Controller side.**
 
@@ -35,7 +35,7 @@ MEMORY-MCP-INTERFACE.md §7 places the custom capability shape at the top level 
 }
 ```
 
-MCP's `ServerCapabilitiesSchema` (`@modelcontextprotocol/sdk`) uses `.strip()` — unknown top-level keys are removed by the SDK on both send and receive. The spec's top-level `identity`, `memory`, `protocolVersion`, and `unknownFieldBehavior` fields would be dropped before the Controller's client ever sees them.
+The spec's top-level `identity`, `memory`, `protocolVersion`, and `unknownFieldBehavior` fields can't sit at the top level of `capabilities`. MCP `2026-07-28` promotes **`extensions`** to a first-class `ServerCapabilities` member — the sanctioned home for custom capability groups, and verified preserved end-to-end through `client.getServerCapabilities()`. (Pre-2026 the SDK's `ServerCapabilitiesSchema` used `.strip()`, dropping unknown top-level keys, so providers wrapped custom shapes under `experimental`; `extensions` supersedes that. `experimental` still works for pre-2026 peers.)
 
 **What the mock advertises instead** (verified via `client.getServerCapabilities()`):
 
@@ -44,7 +44,7 @@ MCP's `ServerCapabilitiesSchema` (`@modelcontextprotocol/sdk`) uses `.strip()` �
   "tools": {},
   "prompts": {},
   "resources": {},
-  "experimental": {
+  "extensions": {
     "agentic-memory": {
       "protocolVersion": "2026-07",
       "identity": {
@@ -80,14 +80,14 @@ MCP's `ServerCapabilitiesSchema` (`@modelcontextprotocol/sdk`) uses `.strip()` �
 
 ```typescript
 const caps = client.getServerCapabilities();
-const am = caps?.experimental?.["agentic-memory"];
+const am = caps?.extensions?.["agentic-memory"];
 if (!am) throw new Error("provider does not advertise the agentic-memory capability group");
 if (am.protocolVersion !== "2026-07") throw new Error(`unsupported protocol ${am.protocolVersion}`);
 ```
 
-**Why the vendor namespace (`agentic-memory`)?** `experimental` is `Record<string, object>`. Nesting everything under a single vendor-namespaced key gives the Controller a stable path to find the group and prevents collision if a customer runs *two* memory providers under one shim.
+**Why the vendor namespace (`agentic-memory`)?** `extensions` is `Record<string, object>`. Nesting everything under a single vendor-namespaced key gives the Controller a stable path to find the group and prevents collision if a customer runs *two* memory providers under one shim.
 
-**Recommendation for the interface spec:** amend §7 to specify the `experimental` envelope explicitly. Every MCP provider will hit this the moment they use the standard SDK.
+**Recommendation for the interface spec:** amend §7 to specify the `extensions` envelope explicitly — the first-class `2026-07-28` home for custom capability groups.
 
 ---
 
@@ -216,7 +216,7 @@ To exercise it through the running connector (real WS tunnel, real controller mo
 
 1. Ensure `bundled-mcps/agentic-memory/` is present (it is — this is the drop-in itself).
 2. Start the connector: `./scripts/start-connector.sh` from the repo root.
-3. Open <http://localhost:9090/> → the Available Tools panel lists all 14; the Frames panel shows the initialize handshake with `experimental.agentic-memory` intact.
+3. Open <http://localhost:9090/> → the Available Tools panel lists all 14; the Frames panel shows the handshake with `extensions.agentic-memory` intact.
 
 ---
 

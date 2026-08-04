@@ -1,7 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createMcpHttpServer, type McpHttpServerHandle } from "@connector/sdk/http-server.js";
 
 // Pins the factory's `capabilities` option — the seam that lets protocol
@@ -30,19 +28,20 @@ describe("createMcpHttpServer with custom capabilities", () => {
     }
   });
 
-  it("advertises custom capability keys via the MCP `experimental` envelope alongside standard presence keys", async () => {
-    // MCP's ServerCapabilitiesSchema strips unknown top-level keys — but
-    // `experimental` (a Record<string, object>) is the spec's designated
-    // home for non-standard capability groups. Our factory passes
-    // `capabilities` through verbatim, so callers who need to advertise
-    // custom shapes wrap them under `experimental` with a vendor
-    // namespace ("agentic-memory" here).
+  it("advertises custom capability keys via the MCP `extensions` envelope alongside standard presence keys", async () => {
+    // MCP `2026-07-28` promotes `extensions` (a Record<string, object>) to a
+    // first-class ServerCapabilities field — the sanctioned home for
+    // non-standard capability groups. Our factory passes `capabilities`
+    // through verbatim, so callers advertise custom shapes under `extensions`
+    // with a vendor namespace ("agentic-memory" here). This also pins that
+    // v2's ServerCapabilitiesSchema PRESERVES `extensions` (does not strip it)
+    // end-to-end through getServerCapabilities().
     handle = await createMcpHttpServer({
       name: "custom-caps-test",
       tools: [],
       port: 0,
       capabilities: {
-        experimental: {
+        extensions: {
           "agentic-memory": {
             protocolVersion: "2026-07",
             identity: { supported: true, maxAliases: 100 },
@@ -63,9 +62,9 @@ describe("createMcpHttpServer with custom capabilities", () => {
     const caps = client.getServerCapabilities() as Record<string, unknown> | undefined;
     expect(caps).toBeDefined();
     expect(caps!.tools).toBeDefined();
-    const experimental = caps!.experimental as Record<string, unknown> | undefined;
-    expect(experimental).toBeDefined();
-    const am = experimental!["agentic-memory"] as Record<string, unknown>;
+    const extensions = caps!.extensions as Record<string, unknown> | undefined;
+    expect(extensions).toBeDefined();
+    const am = extensions!["agentic-memory"] as Record<string, unknown>;
     expect(am.protocolVersion).toBe("2026-07");
     expect(am.identity).toEqual({ supported: true, maxAliases: 100 });
     expect(am.memory).toEqual({
@@ -97,7 +96,12 @@ describe("createMcpHttpServer with custom capabilities", () => {
     await client.connect(transport);
 
     const caps = client.getServerCapabilities() as Record<string, unknown> | undefined;
-    expect(caps!.tools).toEqual({});
+    // v2's McpServer augments the tools presence key with `listChanged: true`
+    // (it supports tools/list_changed via subscriptions/listen). The point of
+    // this test is unchanged: the caller's `tools: "banana"` is overwritten by
+    // the factory-managed capability and cannot shadow the SDK's tools
+    // contract.
+    expect(caps!.tools).toEqual({ listChanged: true });
     // prompts / resources are only added when items are registered — with
     // zero prompts and zero resources, the caller's collision values are
     // stripped (the assignment is unconditional after the length checks

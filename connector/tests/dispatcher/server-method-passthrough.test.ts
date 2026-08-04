@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
 import { Dispatcher } from "@connector/dispatcher.js";
@@ -51,8 +50,8 @@ const sampleTool: Tool = {
       "ping",
       {
         description: "test ping",
-        inputSchema: { who: z.string().optional() },
-        outputSchema: { value: z.string() },
+        inputSchema: z.object({ who: z.string().optional() }),
+        outputSchema: z.object({ value: z.string() }),
       },
       async ({ who }) => ({
         structuredContent: { value: `pong ${who ?? "world"}` },
@@ -69,7 +68,7 @@ const greetingPrompt: Prompt = {
       "greeting",
       {
         description: "Friendly greeting prompt",
-        argsSchema: { who: z.string() },
+        argsSchema: z.object({ who: z.string() }),
       },
       ({ who }) => ({
         messages: [{
