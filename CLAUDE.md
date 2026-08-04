@@ -126,6 +126,7 @@ Customers consume the OCI image, never the npm package. `connector/package.json`
 - **`examples/mock-backend`** — Postgres-backed customer store consumed by the crm drop-in. Deploys as its own private-only Fly app. HTTP boundary is load-bearing — swapping Postgres for a real CRM (Salesforce / Zendesk / etc.) is a mock-side change; the drop-in stays a `fetch` client.
 - **`bundled-mcps/agentic-memory`** — Type 1 drop-in (Node). Mock memory + identity provider. Wire-inventory + custom-capabilities envelope deviation at [docs/AGENTIC-MEMORY-MOCK.md](docs/AGENTIC-MEMORY-MOCK.md).
 - **`bundled-mcps/enterprise-knowledge`** — Type 3 config stub. Just a `.env.example`. Bundle *source* lives at [`bundled-mcps/enterprise-knowledge/source/`](bundled-mcps/enterprise-knowledge/source/); the source tree does *not* ship — `pip install` during image build populates `/opt/bundled-mcps/enterprise-knowledge/.venv/`.
+- **`bundled-mcps/salesforce`** — Type 1 drop-in (Node). Real Salesforce REST API access (SOQL/SOSL/describe/CRUD) via OAuth 2.0 Client Credentials Flow — client_id/secret only, no CLI session. Chosen over the official `@salesforce/mcp` package, which persists auth to `~/.sfdx` and doesn't fit this connector's env-var creds pipeline.
 
 Type 1 servers use a stateful `StreamableHTTPServerTransport` with `randomUUID` session IDs. Stateless mode does not work with the SDK's HTTP transport — it requires a per-request transport instance. The factory in `sdk/http-server.ts` is the one place this is set up.
 
