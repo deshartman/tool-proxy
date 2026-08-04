@@ -1028,6 +1028,12 @@ interface ServerDescriptor {
     completions?: {};
     logging?:    {};
   };
+
+  // v1.4 / §9.2 additive — the MCP protocol revision the connector negotiated
+  // with this upstream ("2026-07-28" / "2025-11-25"). Advisory: the controller
+  // may render a per-MCP era badge. Absent when the SDK client didn't expose a
+  // negotiated version. Older controllers ignore it (unknown-fields rule).
+  protocolVersion?: string;
 }
 
 interface PromptDescriptor {
@@ -1078,6 +1084,8 @@ Upstream errors flow back unchanged.
 
 ### `mcp-notification` frame (connector → controller)
 
+> **Superseded by v1.4 (§9.1 / §9.4) — NO LONGER EMITTED.** As of the full 2026-07-28 adoption, the connector does not forward raw MCP notifications to the controller — a UI-only controller can't interpret raw MCP. Instead: upstream `*/list_changed` triggers a manifest re-list → **`manifest-delta`** (the frame the controller already applies); `progress` / `message` / `resources/updated` / `cancelled` are **consumed connector-side** (no tunnel consumer). This frame type stays defined so an older controller that still has a handler parses it harmlessly, but the connector emits none. The v1.2 description below is retained for historical context. See `tunnel/notification-forwarder.ts`.
+
 Server-initiated notifications emitted by an MCP get wrapped and forwarded as a single new frame. **Connector is a pure forwarder — payload is opaque.** Same async-free `send()` path as the existing `webhook` frame so a notification burst doesn't starve heartbeats.
 
 ```ts
@@ -1106,7 +1114,7 @@ The connector itself stays a passthrough — it does NOT declare `sampling`, `el
 
 ### Backwards compat
 
-- **Older controller, new connector.** Connector advertises `prompts[]` / `resources[]` in the manifest; older controller sees only the `tools[]` field it always read. Connector emits `mcp-notification` frames; older controller logs+drops per the unknown-frames rule. Tools-only flow keeps working.
+- **Older controller, new connector.** Connector advertises `prompts[]` / `resources[]` in the manifest; older controller sees only the `tools[]` field it always read. As of v1.4 the connector no longer emits `mcp-notification` frames at all — runtime tool changes arrive as `manifest-delta` (which older controllers already apply), so nothing is logged+dropped. Tools-only flow keeps working.
 - **Newer controller, older connector.** Controller calls `prompts/list` over the tunnel; older connector's dispatcher returns `-32601 method not found`. Controller treats that exactly like a server that didn't declare the prompts capability.
 
 ## v1.3 — Customer drop-in approval gate

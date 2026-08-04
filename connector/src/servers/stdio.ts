@@ -31,7 +31,10 @@ export async function connectStdio(
   // needed today — connect happens once per spawn, not per request.
   const client = new Client(
     { name: "mcp-shim-connector", version: "0.1.0" },
-    { capabilities: {}, versionNegotiation: { mode: "auto" } },
+    // §9.3 — autoFulfill:false: no MCP fulfiller exists (no LLM, UI-only
+    // controller). An `input_required` result surfaces as a typed error from
+    // callTool → dispatcher relays `tool_failed`, not a maxRounds retry spin.
+    { capabilities: {}, versionNegotiation: { mode: "auto" }, inputRequired: { autoFulfill: false } },
   );
   await client.connect(transport);
   return makeConnection(spec.name, "stdio", client);

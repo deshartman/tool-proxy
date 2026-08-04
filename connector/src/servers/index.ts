@@ -46,6 +46,11 @@ export interface McpServerConnection {
   // surface them on the wire as part of ServerDescriptor.capabilities (used
   // by the controller to decide which optional method panels to render).
   capabilities?: ServerCapabilitiesAdvert;
+  // §9.2 — the MCP protocol revision negotiated with this upstream at
+  // initialize time (e.g. "2026-07-28" / "2025-11-25"). Captured at connect
+  // time so the manifest builder can surface it per ServerDescriptor.
+  // undefined when the client (or a test mock) doesn't expose the accessor.
+  protocolVersion?: string;
   listTools(): Promise<DiscoveredTool[]>;
   callTool(name: string, args: unknown, opts: { timeoutMs: number }): Promise<unknown>;
   // Optional surface — only servers that advertised the matching capability
@@ -105,6 +110,12 @@ export function makeConnection(
     ? (client.getServerCapabilities() as ServerCapabilitiesAdvert | undefined)
     : undefined;
 
+  // §9.2 — exact negotiated protocol revision string ("2026-07-28" /
+  // "2025-11-25"). Distinct from getProtocolEra() (the "modern"/"legacy"
+  // label used below); the manifest surfaces the precise revision per MCP.
+  const protocolVersion = (client as { getNegotiatedProtocolVersion?: () => string | undefined })
+    .getNegotiatedProtocolVersion?.();
+
   // 2026-07-28 removed unsolicited server→client notifications: tools/prompts/
   // resources list_changed and per-resource resources/updated are delivered
   // ONLY on a `subscriptions/listen` stream the client opens. We open one for
@@ -138,6 +149,7 @@ export function makeConnection(
     name,
     transport,
     capabilities,
+    protocolVersion,
     async listTools(): Promise<DiscoveredTool[]> {
       const result = await client.listTools();
       return result.tools.map((tool) => ({
