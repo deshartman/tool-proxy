@@ -16,7 +16,7 @@
 // `websocket` was removed in MCP SDK v2 (WebSocket is not a spec transport).
 // A stale `websocket` entry from an older controller is rejected clearly in
 // connectServer below — non-fatal per the supervisor's continue-on-fail.
-// See MCP-SDK-V2 plan §8 for the controller-side dropdown removal.
+// The controller-side counterpart (drop WebSocket from the transport dropdown) is out of repo.
 
 import type { McpServerSpec } from "../config.js";
 import type { McpServerConnection } from "./index.js";
@@ -53,7 +53,7 @@ export async function connectServer(
   if (kind === "websocket") {
     // WebSocket was removed as an MCP transport in SDK v2 (never a spec
     // transport). An entry only reaches here from an older controller that
-    // predates the dropdown removal (MCP-SDK-V2 plan §8). Reject clearly —
+    // predates the controller dropping WebSocket from its dropdown. Reject clearly —
     // the supervisor's per-entry catch keeps it non-fatal, so this one MCP
     // fails while its siblings and the rest of the manifest are unaffected.
     // Do NOT fall through to connectHttp: that would speak HTTP at a wss://
