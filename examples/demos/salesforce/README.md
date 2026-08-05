@@ -1,9 +1,20 @@
-# salesforce — Type 1 bundled MCP
+# salesforce — Type 1 demo drop-in (symlinked into `bundled-mcps/`)
 
-Twilio-authored Type 1 drop-in living under `bundled-mcps/salesforce/` — auto-discovered at
-connector boot (`MCP_BUNDLED_DIR`), non-gated (`author: "twilio"`), ships in the connector
-image automatically via the Dockerfile's blanket `COPY bundled-mcps bundled-mcps`. No `cp -r`
-step, no Dockerfile edit — unlike the reference-only demos under `examples/demos/`.
+Reference-material source lives here, at `examples/demos/salesforce/` — but unlike its
+siblings `sample`/`crm`, this one is **live at connector boot with no manual step**:
+`bundled-mcps/salesforce` is a **symlink** to this folder, tracked in git. The drop-in
+scanner follows the symlink transparently (confirmed via `fs.readdirSync`/`statSync`, which
+resolve symlinks by default), so local dev gets the same non-gated (`author: "twilio"`),
+auto-discovered behavior as a real `bundled-mcps/` entry — zero `cp -r`.
+
+The **production image** needs its own explicit line, since Docker's `COPY` copies a symlink
+as a symlink (not its target) — see `connector/Dockerfile`'s `COPY examples/demos/salesforce
+bundled-mcps/salesforce` line (mirrors `sample`/`crm`'s pattern, plus an `rm -f` to clear the
+dangling symlink the blanket `COPY bundled-mcps bundled-mcps` copied in first).
+
+**Status: parked**, pending `twilio-demos/conversation-agent-mcp-marketplace` — see
+`architectural-plans/SALESFORCE-MCP.md` in the repo root for the full history and resume
+plan. This bundle may move there instead of shipping in-tree.
 
 Gives an LLM/procedure real read+write access to a Salesforce org via the REST API,
 authenticated with OAuth 2.0 **Client Credentials Flow** — a client_id + client_secret the
@@ -14,8 +25,8 @@ customer provides, no browser login, no CLI session state.
 Type 1 drop-in. Folder ships `tools/`, `prompts/`, `resources/`, and a `lib/` folder (not
 scanned by the drop-in discoverer — shared helpers only). No `server.ts`, no `package.json`,
 no yaml entry — same discovery path as every other Type 1 bundle
-([`connector/src/dropin.ts`](../../connector/src/dropin.ts), synthesized child runtime in
-[`connector/src/sdk/dropin-runner.ts`](../../connector/src/sdk/dropin-runner.ts)).
+([`connector/src/dropin.ts`](../../../connector/src/dropin.ts), synthesized child runtime in
+[`connector/src/sdk/dropin-runner.ts`](../../../connector/src/sdk/dropin-runner.ts)).
 
 ## Surface
 
@@ -77,11 +88,11 @@ Do this once per org, before setting the env vars below:
 
 ## Getting it running
 
-Bundled MCPs are always on — no copy step. Fill in `.env` (copy from `.env.example`) with the
-three values above, then restart the connector (or click **Refresh local MCPs**). `salesforce`
-appears in the inspector immediately; tools flip to **Ready** once the env values resolve
-(dev: paste session creds via the inspector; production: controller-pushed via
-`creds-response`).
+Already live via the `bundled-mcps/salesforce` symlink — no copy step, dev or otherwise. Fill
+in `.env` here (copy from `.env.example`) with the three values above, then restart the
+connector (or click **Refresh local MCPs**). `salesforce` appears in the inspector
+immediately; tools flip to **Ready** once the env values resolve (dev: paste session creds
+via the inspector; production: controller-pushed via `creds-response`).
 
 ## Wire-format tool names
 

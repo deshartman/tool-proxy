@@ -1,5 +1,5 @@
 import type { Resource } from "@mcp-shim/connector/sdk";
-import { ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ResourceTemplate } from "@modelcontextprotocol/server";
 
 // Per-object describe() cache, populated by tools/describe-object.ts. Lets a
 // procedure `resources/read salesforce://schema/{objectName}` for cached

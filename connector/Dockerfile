@@ -72,6 +72,16 @@ COPY bundled-mcps bundled-mcps
 COPY examples/demos/sample bundled-mcps/sample
 COPY examples/demos/crm bundled-mcps/crm
 
+# Salesforce demo drop-in — canonical source lives at examples/demos/salesforce
+# (reference-only in the repo, symlinked from bundled-mcps/salesforce for local
+# dev discovery — no manual `cp -r` needed, unlike crm/sample above). The
+# blanket COPY above already copied that dev symlink into the image as-is
+# (dangling — its ../examples/demos/salesforce target isn't part of the
+# image); remove it before copying the real directory so the scanner finds
+# real files here, not a broken link.
+RUN rm -f bundled-mcps/salesforce
+COPY examples/demos/salesforce bundled-mcps/salesforce
+
 RUN set -e; \
     for dir in bundled-mcps/*/; do \
       [ -f "$dir/package.json" ] || continue; \
