@@ -1,20 +1,9 @@
-# salesforce — Type 1 demo drop-in (symlinked into `bundled-mcps/`)
+# salesforce — demo drop-in
 
-Reference-material source lives here, at `examples/demos/salesforce/` — but unlike its
-siblings `sample`/`crm`, this one is **live at connector boot with no manual step**:
-`bundled-mcps/salesforce` is a **symlink** to this folder, tracked in git. The drop-in
-scanner follows the symlink transparently (confirmed via `fs.readdirSync`/`statSync`, which
-resolve symlinks by default), so local dev gets the same non-gated (`author: "twilio"`),
-auto-discovered behavior as a real `bundled-mcps/` entry — zero `cp -r`.
-
-The **production image** needs its own explicit line, since Docker's `COPY` copies a symlink
-as a symlink (not its target) — see `connector/Dockerfile`'s `COPY examples/demos/salesforce
-bundled-mcps/salesforce` line (mirrors `sample`/`crm`'s pattern, plus an `rm -f` to clear the
-dangling symlink the blanket `COPY bundled-mcps bundled-mcps` copied in first).
-
-**Status: parked**, pending `twilio-demos/conversation-agent-mcp-marketplace` — see
-`architectural-plans/SALESFORCE-MCP.md` in the repo root for the full history and resume
-plan. This bundle may move there instead of shipping in-tree.
+Restored/added alongside `examples/demos/sample/` and `examples/demos/crm/` as reference
+material — it is **not** auto-loaded by the connector. Same activation pattern as those two:
+no tracked presence under `bundled-mcps/` in the source repo at all; that path only exists
+inside the built image.
 
 Gives an LLM/procedure real read+write access to a Salesforce org via the REST API,
 authenticated with OAuth 2.0 **Client Credentials Flow** — a client_id + client_secret the
@@ -86,13 +75,39 @@ Do this once per org, before setting the env vars below:
    for Client Credentials Flow to work. Use `https://test.salesforce.com` for a sandbox
    instead.
 
+## Installing this drop-in
+
+`examples/demos/salesforce/` is reference — the connector does not read from `examples/` at
+runtime. Two ways to activate it, same as `crm`/`sample`:
+
+### A. Dev — symlink (or copy) into the runtime drop-in dir
+
+```bash
+ln -s "$(pwd)/examples/demos/salesforce" customer-mcps/salesforce
+```
+
+`customer-mcps/*` is gitignored (runtime mount point, not a source tree) — a symlink here
+stays local to your machine and never needs a `git rm` when the target moves. This path is
+**approval-gated** (`author: "customer"`) — approve it once via the inspector's "Pending
+approval" lane after boot, same as any real customer drop-in.
+
+### B. Prod — ship in the connector image
+
+Already wired in `connector/Dockerfile`:
+
+```dockerfile
+COPY examples/demos/salesforce bundled-mcps/salesforce
+```
+
+This path is **not** gated (`author: "twilio"`) — the drop-in scanner picks it up on next
+boot with no approval step, same as `sample`/`crm`.
+
 ## Getting it running
 
-Already live via the `bundled-mcps/salesforce` symlink — no copy step, dev or otherwise. Fill
-in `.env` here (copy from `.env.example`) with the three values above, then restart the
-connector (or click **Refresh local MCPs**). `salesforce` appears in the inspector
-immediately; tools flip to **Ready** once the env values resolve (dev: paste session creds
-via the inspector; production: controller-pushed via `creds-response`).
+Fill in `.env` here (copy from `.env.example`) with the three values above, then restart the
+connector (or click **Refresh local MCPs**). Tools flip to **Ready** once the env values
+resolve (dev: paste session creds via the inspector; production: controller-pushed via
+`creds-response`).
 
 ## Wire-format tool names
 
