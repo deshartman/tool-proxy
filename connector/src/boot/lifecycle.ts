@@ -29,6 +29,7 @@ import { WebhookRegistry } from "../tunnel/webhook-registry.js";
 import { ReconnectController } from "../tunnel/reconnect.js";
 import { createFrameRouter } from "../tunnel/frame-router.js";
 import { CredsCoordinator } from "../tunnel/creds-coordinator.js";
+import { ControllerApiCoordinator } from "../tunnel/controller-api-coordinator.js";
 import { McpConfigCoordinator } from "../tunnel/mcp-config-coordinator.js";
 import { LocalMcpsCoordinator } from "../tunnel/local-mcps-coordinator.js";
 import { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
@@ -103,6 +104,13 @@ async function bootFromDb(): Promise<void> {
   // the closure hit a TDZ error ("Cannot access 'auth' before initialization")
   // whenever the paste flow fired in empty-DB mode.
   let tunnel: TunnelClient | undefined;
+  // v1.4 — Controller API calls. Same TDZ hoisting rationale as `tunnel`:
+  // the inspector loopback route (wired into mcpActions below) reads this
+  // at request time, not at route-registration time, so it must resolve
+  // to `undefined` (not throw) whenever no tunnel is connected — including
+  // during the empty-DB boot window before this function's row-exists
+  // branch ever runs.
+  let controllerApi: ControllerApiCoordinator | undefined;
   let row: ControllerRow | null = null;
   let auth: AuthResolution | undefined = undefined;
   let tunnelDialUrl: string | undefined = undefined;
@@ -416,6 +424,13 @@ async function bootFromDb(): Promise<void> {
     pendingTunnel.onclose = () => {
       log.info(`tunnel closed`);
       webhooks.onTunnelClose();
+      // v1.4: reject every in-flight controller-call immediately — a
+      // blocked customer-facing HTTP call should fail fast, not silently
+      // resume on the next reconnect — then drop the reference so the
+      // loopback route's tunnel_unavailable check sees "no tunnel" rather
+      // than a coordinator bound to a dead socket.
+      controllerApi?.onTunnelClose();
+      controllerApi = undefined;
       notifications.unbind();
       stopTimers();
       if (shuttingDown) return;
@@ -451,6 +466,16 @@ async function bootFromDb(): Promise<void> {
     const creds = new CredsCoordinator({
       send: (frame) => pendingTunnel.send(frame),
       supervisor,
+      log,
+    });
+
+    // v1.4 — fresh per dial, same lifetime as `creds` (not `webhooks`): a
+    // pending call whose tunnel drops mid-flight should fail fast rather
+    // than resume across reconnect. Assigned to the hoisted outer binding
+    // so the inspector loopback route (wired below) always reads the live
+    // instance.
+    controllerApi = new ControllerApiCoordinator({
+      send: (frame) => pendingTunnel.send(frame),
       log,
     });
 
@@ -497,6 +522,7 @@ async function bootFromDb(): Promise<void> {
       if (frame.type === "local-mcps-rescan") { void localMcps.rescanFromController(); return; }
       if (frame.type === "mcp-enable") { void approval.handleEnable(frame); return; }
       if (frame.type === "mcp-disable") { void approval.handleDisable(frame); return; }
+      if (frame.type === "controller-call-response") { controllerApi?.handleResponse(frame); return; }
       if (frame.type === "register-ack" && !frame.error) {
         // frame-router persists the token via onTokenMinted (wired above).
         baseRouter(frame);
@@ -545,6 +571,23 @@ async function bootFromDb(): Promise<void> {
         },
         fetchEnvKeys: async (name: string) => {
           return supervisor.fetchEnvKeys(name);
+        },
+        // v1.4: code-trust gate for the /internal/controller-api/call
+        // loopback route — is `name` Twilio-authored bundled code (never a
+        // customer drop-in)?
+        isAuthorTwilio: (name: string) => supervisor.isAuthorTwilio(name),
+        // v1.4: invoke a named controller-side action on behalf of `mcp`.
+        // Caller (the inspector route) has already verified `mcp` via
+        // resolveMcpByWebhookToken + isAuthorTwilio before reaching here.
+        // Rejects with a typed { code, message } error — "tunnel_unavailable"
+        // when no tunnel is connected, otherwise whatever the coordinator/
+        // controller returned (including "timeout").
+        callControllerApi: async (mcp: string, action: string, params: unknown, timeoutMs?: number) => {
+          if (!controllerApi) {
+            throw Object.assign(new Error("no tunnel connected"), { code: "tunnel_unavailable" });
+          }
+          const mcpId = mcpConfig.mcpIdFor(mcp);
+          return controllerApi.call(mcp, mcpId, action, params, timeoutMs);
         },
       };
     }

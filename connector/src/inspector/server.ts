@@ -134,6 +134,16 @@ export interface McpActions {
   // token, or undefined if no match. Constant-time-compared server-side.
   // Backed by supervisor.resolveMcpByWebhookToken.
   resolveMcpByWebhookToken?(token: string): string | undefined;
+  // v1.4: code-trust gate for /internal/controller-api/call — is `name`
+  // Twilio-authored bundled code (never a customer drop-in)? Backed by
+  // supervisor.isAuthorTwilio.
+  isAuthorTwilio?(name: string): boolean;
+  // v1.4: invoke a named controller-side action on behalf of `mcp` (caller
+  // has already verified `mcp` via resolveMcpByWebhookToken + isAuthorTwilio
+  // before reaching here). Rejects with a typed { code, message } error —
+  // "tunnel_unavailable" when no tunnel is connected, otherwise whatever the
+  // coordinator/controller returned (including "timeout").
+  callControllerApi?(mcp: string, action: string, params: unknown, timeoutMs?: number): Promise<unknown>;
 }
 
 const RING_SIZE = 500;
@@ -473,6 +483,78 @@ function authorizeWebhookMcp(
     return false;
   }
   return true;
+}
+
+interface ControllerApiCallBody {
+  action?: unknown;
+  params?: unknown;
+  timeoutMs?: unknown;
+}
+
+// v1.4 — Controller API calls (Twilio-bundled only). Reuses the webhook
+// per-MCP bearer token (MCP_WEBHOOK_TOKEN) rather than minting a second
+// token — same identity proof as /internal/webhook/*, via
+// resolveMcpByWebhookToken. Layers the code-trust gate (isAuthorTwilio) on
+// top before the call ever reaches the tunnel. Primarily for Type 3
+// (Python) bundles, which have no in-process SDK path; Type 1 (Node)
+// bundles get the nicer callControllerApi SDK helper, which is itself a
+// thin wrapper around this same route.
+async function handleControllerApiCall(
+  req: IncomingMessage,
+  res: ServerResponse,
+  inspector: Inspector,
+): Promise<void> {
+  if (!guardCsrf(req, res)) return;
+  const actions = inspector.mcpActions;
+  res.setHeader("content-type", "application/json");
+  if (!actions?.resolveMcpByWebhookToken || !actions.isAuthorTwilio || !actions.callControllerApi) {
+    res.statusCode = 503;
+    res.end(JSON.stringify({ error: { code: "not_configured", message: "controller API calls not configured" } }));
+    return;
+  }
+
+  const header = req.headers["authorization"];
+  const auth = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
+  const m = /^Bearer\s+(.+)$/i.exec(auth ?? "");
+  const token = m?.[1]?.trim();
+  const mcp = token ? actions.resolveMcpByWebhookToken(token) : undefined;
+  if (!mcp) {
+    res.statusCode = 403;
+    res.end(JSON.stringify({ error: { code: "not_authorized", message: "invalid or missing bearer token" } }));
+    return;
+  }
+  if (!actions.isAuthorTwilio(mcp)) {
+    res.statusCode = 403;
+    res.end(JSON.stringify({ error: { code: "not_authorized", message: "MCP is not Twilio-authored" } }));
+    return;
+  }
+
+  let body: ControllerApiCallBody;
+  try { body = (await readJsonBody(req) as ControllerApiCallBody) ?? {}; }
+  catch (error) {
+    if (error instanceof BodyTooLargeError) { res.statusCode = 413; res.end(JSON.stringify({ error: { code: "payload_too_large", message: "payload too large" } })); return; }
+    res.statusCode = 400; res.end(JSON.stringify({ error: { code: "bad_request", message: "malformed body" } })); return;
+  }
+  const action = typeof body.action === "string" ? body.action : undefined;
+  if (!action) {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ error: { code: "bad_request", message: 'missing "action"' } }));
+    return;
+  }
+  const timeoutMs = typeof body.timeoutMs === "number" ? body.timeoutMs : undefined;
+
+  try {
+    const result = await actions.callControllerApi(mcp, action, body.params, timeoutMs);
+    res.statusCode = 200;
+    res.end(JSON.stringify({ result }));
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? "controller_error";
+    const message = (err as Error)?.message ?? String(err);
+    // "tunnel_unavailable" (no live tunnel) is a 503 — distinct from a
+    // round-trip that actually reached the controller and failed (502).
+    res.statusCode = code === "tunnel_unavailable" ? 503 : 502;
+    res.end(JSON.stringify({ error: { code, message } }));
+  }
 }
 
 interface ToolCallBody {
@@ -840,6 +922,10 @@ export function startInspector(port: number, inspector: Inspector): void {
       const mcp = url.searchParams.get("mcp");
       if (!mcp) { res.statusCode = 400; res.end('missing "mcp" query param'); return; }
       handleStream(req, res, inspector, mcp);
+      return;
+    }
+    if (path === "/internal/controller-api/call" && req.method === "POST") {
+      void handleControllerApiCall(req, res, inspector);
       return;
     }
     if (path === "/tool/call" && req.method === "POST") {
