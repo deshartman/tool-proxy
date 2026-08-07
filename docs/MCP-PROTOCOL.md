@@ -1397,7 +1397,7 @@ The asymmetry favors the migration: a fresh connector against an old controller 
 
 ## v1.4 — Controller API calls (Twilio-bundled only)
 
-> **Status: shipped (mechanism only).** The frame pair, coordinator, author gate, and both call surfaces (in-process SDK for Type 1, inspector loopback for Type 3) are live. No bundled MCP calls it yet — that lands in a follow-up PR once the controller has at least one real action to call, and is exercised manually via the inspector's Frames panel rather than an automated end-to-end test.
+> **Status: shipped.** The frame pair, coordinator, author gate, and both call surfaces (in-process SDK for Type 1, inspector loopback for Type 3) are live. `examples/demos/outbound-demo/` is the first real caller — a demo drop-in invoking `outbound.place_call` / `outbound.send_message` (see [docs/OUTBOUND-CALLS.md](OUTBOUND-CALLS.md)); it's reference material like `examples/demos/{sample,crm,salesforce}`, not auto-loaded. No bundle shipped in `bundled-mcps/` by default calls it yet.
 
 ### Why
 
