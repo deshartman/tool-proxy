@@ -1458,6 +1458,8 @@ export interface ControllerCallResponseFrame {
 | `timeout` | Connector-side: no `controller-call-response` arrived within the timeout window. |
 | `unknown_action` | Controller doesn't recognize `action`. |
 | `not_authorized` | Controller's own re-check failed (e.g. its independent author/account-scope check) — should be rare since the connector gates before sending. |
+| `invalid_params` | `params` failed the action's own schema validation. Confirmed in use by `memory.append_event`. |
+| `cross_account` | `params` referenced a resource (e.g. a channel/identity) not owned by the account bound to this tunnel session. Confirmed in use by the `outbound.*` family — this is the account-scope gate (see Trust, above) surfacing as a typed error rather than a silent drop. |
 | `controller_error` | The action's own execution failed. |
 
 ### Timeout
@@ -1482,15 +1484,17 @@ A pending call whose tunnel drops mid-flight is rejected immediately (not paused
 Success:
 ```json
 // →
-{ "type": "controller-call", "requestId": "3fbd...", "mcp": "agentic-memory", "action": "memory.append_event", "params": { "customerId": "CU123", "event": "order_placed" } }
+{ "type": "controller-call", "requestId": "3fbd...", "mcp": "agentic-memory", "action": "memory.append_event", "params": { "identity": { "channel": "sms", "value": "+15551234567" }, "event": "your flight is delayed" } }
 // ←
-{ "type": "controller-call-response", "requestId": "3fbd...", "result": { "eventId": "evt_789" } }
+{ "type": "controller-call-response", "requestId": "3fbd...", "result": { "identityId": "id_789", "stored": true } }
 ```
+
+Note `memory.append_event`'s `identity` is customer-scoped only — no `channelId`/`agentId` on this action's params, unlike the `outbound.*` family. Memory is cross-channel and cross-agent by design; there's no channel or agent to scope it to.
 
 Controller-side failure:
 ```json
 // ←
-{ "type": "controller-call-response", "requestId": "3fbd...", "error": { "code": "unknown_action", "message": "no handler registered for memory.append_event" } }
+{ "type": "controller-call-response", "requestId": "3fbd...", "error": { "code": "unknown_action", "message": "no handler registered for that action" } }
 ```
 
 Timeout (no matching response ever arrives — the connector's own coordinator raises this, the controller never sends it):

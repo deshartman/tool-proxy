@@ -25,6 +25,10 @@
 //
 //   # 2. CLI flags (skips the config file entirely)
 //   node invoke.mjs --to=+15555550123 --agentId=ag_123 --channelId=ch_456 [--action=place_call]
+//
+// Pass --port=<port> (or set INSPECTOR_PORT) if your connector isn't on
+// the default 9090 — e.g. a second instance started with
+// ./scripts/start-connector.sh 9091.
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -32,7 +36,6 @@ import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const inspectorPort = process.env.INSPECTOR_PORT ?? "9090";
 
 function parseFlags(argv) {
   const flags = {};
@@ -44,6 +47,10 @@ function parseFlags(argv) {
 }
 
 const flags = parseFlags(process.argv.slice(2));
+// --port overrides INSPECTOR_PORT overrides the connector's own default
+// (9090) — useful when running a second connector instance per CLAUDE.md's
+// multi-instance dev workflow (./scripts/start-connector.sh 9091).
+const inspectorPort = flags.port ?? process.env.INSPECTOR_PORT ?? "9090";
 const usingFlags = Boolean(flags.to || flags.agentId || flags.channelId);
 
 let config;

@@ -114,6 +114,14 @@ Either way: the script prints a summary, prompts `Proceed? [y/N]`, and on
 confirmation POSTs to the connector inspector's `/tool/call` loopback
 route. Declining exits cleanly with no request sent.
 
+If your connector isn't on the default inspector port 9090 — e.g. a second
+instance started with `./scripts/start-connector.sh 9091` per CLAUDE.md's
+multi-instance dev workflow — pass `--port=<port>` (or set `INSPECTOR_PORT`):
+
+```bash
+./run-outbound.sh --port=9091 --to=... --agentId=... --channelId=...
+```
+
 ## Wire-format tool name
 
 Through the controller, the tool appears as `outbound-demo.invoke`. The
