@@ -1,0 +1,27 @@
+{{/*
+Opt-in only. The chart still ships NO Service by default
+(networkAccess.enabled defaults to false in values.yaml) — infra-level
+exposure (this Service) is a separate decision from the application-layer
+admin auth the connector itself enforces once traffic can reach it (see
+docs/NETWORK-ACCESS.md). Flipping this on without ALSO clicking "Enable
+network access" in the inspector just makes the port reachable to
+unauthenticated 401s; flipping it on is meaningless until that admin
+action has run at least once. ClusterIP by default — pair with an
+Ingress/Gateway of your own if you need traffic from outside the cluster.
+*/}}
+{{- if .Values.networkAccess.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-connector.fullname" . }}-inspector
+  labels:
+    {{- include "mcp-connector.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.networkAccess.serviceType }}
+  selector:
+    {{- include "mcp-connector.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: inspector
+      port: 9090
+      targetPort: inspector
+{{- end }}

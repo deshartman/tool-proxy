@@ -20,7 +20,7 @@ export class BodyTooLargeError extends Error {
   }
 }
 
-export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+async function readRawBody(req: IncomingMessage): Promise<Buffer> {
   let total = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -36,6 +36,19 @@ export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
     }
     chunks.push(buf);
   }
-  if (chunks.length === 0) return undefined;
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return Buffer.concat(chunks);
+}
+
+export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const raw = await readRawBody(req);
+  if (raw.length === 0) return undefined;
+  return JSON.parse(raw.toString("utf8"));
+}
+
+// application/x-www-form-urlencoded reader for the OAuth2 token endpoint —
+// a standard OAuth2 client library POSTs grant_type/client_id/client_secret
+// this way, not as JSON.
+export async function readUrlEncodedBody(req: IncomingMessage): Promise<URLSearchParams> {
+  const raw = await readRawBody(req);
+  return new URLSearchParams(raw.toString("utf8"));
 }

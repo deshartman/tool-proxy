@@ -24,6 +24,14 @@ Set these only when the default doesn't match your infrastructure.
 | `INSPECTOR_PORT` | `9090` | The loopback-only inspector UI. Set `0` to disable entirely. **Never expose to a public LB** — the Webhooks panel surfaces bcrypt-protected URLs by design. |
 | `INSPECTOR_BIND_ADDR` | `127.0.0.1` | Where the inspector binds. Loopback set: `127.0.0.1` / `::1` / `localhost`. Any other value REQUIRES `INSPECTOR_ALLOW_NONLOOPBACK=1` also be set — the connector otherwise refuses to boot. Prevents a silent typo from exposing copy-able webhook URLs. |
 | `INSPECTOR_ALLOW_NONLOOPBACK` | (unset) | Explicit opt-in for non-loopback `INSPECTOR_BIND_ADDR`. Set to `1` for Fly.io deployments using `::` behind the WireGuard mesh (with `fly ips list` empty). Do NOT set on any host with a public IP allocated. |
+
+These two remain reserved for the Fly.io WireGuard-mesh case only (see
+CLAUDE.md / [`docs/INSPECTOR.md`](INSPECTOR.md)) — they're unrelated to
+"Enable network access" (see [`docs/NETWORK-ACCESS.md`](NETWORK-ACCESS.md)).
+No new env vars back that feature: enabling network access, minting the
+admin secret, and onboarding machine-API clients are all DB/UI-driven at
+runtime, not env-var/restart-driven — a deliberate choice so rotation and
+onboarding never require a redeploy.
 | `MCP_BUNDLED_DIR` | `/app/bundled-mcps` | Where the connector's boot scanner discovers Twilio-shipped MCPs. Baked at image-build time; override only when extending the image via volume mount rather than derived-image `COPY`. |
 | `MCP_DROPIN_DIR` | `/var/lib/mcp-connector/customer-mcps` | Where the connector discovers customer-authored Type 1 drop-ins. The derived-image + volume-mount delivery paths both land content here. |
 | `MCP_BASE_PORT` | `7100` | Starting port for the auto-assignment probe for Type 1 drop-in child processes. Bump to avoid collision with anything else in the container's network namespace. |

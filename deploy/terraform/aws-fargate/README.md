@@ -49,3 +49,33 @@ Db mode (the recommended default) requires a Postgres instance and a
 `CONNECTOR_KEY_FILE` secret. This module doesn't provision Postgres — pair
 with `aws_db_instance` or `aws_rds_cluster` in the caller module. The
 connector's inspector Tunnel modal handles the row seeding on first boot.
+
+## Network access (opt-in, off by default)
+
+`security_group_id` is caller-supplied, so this module has no inbound rules
+of its own — the connector dials out and needs none. `assign_public_ip`
+stays `false` unconditionally; this feature is for reachability *within*
+the customer's VPC, never from the public internet.
+
+If you want the inspector's port 9090 reachable from elsewhere in your VPC
+(the operator UI, or the machine API's `/oauth/token` + outbound-calls
+route once that ships), add an inbound rule to the security group you pass
+in — scoped to the CIDR/security-group of whatever internal caller needs
+it, e.g.:
+
+```hcl
+resource "aws_security_group_rule" "connector_inspector" {
+  type              = "ingress"
+  from_port         = 9090
+  to_port           = 9090
+  protocol          = "tcp"
+  security_group_id = aws_security_group.connector_egress.id
+  cidr_blocks       = ["10.0.0.0/16"]  # scope to your VPC, not 0.0.0.0/0
+}
+```
+
+That alone doesn't expose anything unauthenticated — every non-loopback
+request still needs a valid admin session or bearer token; you still have
+to click "Enable network access" in the inspector (or it needs to already
+be enabled from a prior boot) before the app itself will bind wider than
+127.0.0.1. See `docs/NETWORK-ACCESS.md`.

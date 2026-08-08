@@ -1,4 +1,5 @@
 import pg from "pg";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { envString, envOptional } from "../env.js";
 import { schemaSql } from "./schema.js";
 import { MasterKey } from "./master-key.js";
@@ -33,6 +34,18 @@ export interface ControllerInput {
   oauthClientId?: string;          // required when authMode="oauth2-cc"
   oauthClientSecret?: string;      // required when authMode="oauth2-cc"
   oauthTokenUrl?: string;          // required when authMode="oauth2-cc"
+}
+
+export interface NetworkAccessState {
+  enabled: boolean;
+  hasSecret: boolean;
+}
+
+export interface ApiClientSummary {
+  clientId: string;
+  name: string | null;
+  createdAt: Date;
+  revokedAt: Date | null;
 }
 
 export class ConfigStore {
@@ -184,6 +197,124 @@ export class ConfigStore {
   async deleteController(): Promise<boolean> {
     const { rowCount } = await this.pool.query(`DELETE FROM ${this.schema}.controllers`);
     return (rowCount ?? 0) > 0;
+  }
+
+  // ─── Network access (admin secret) ─────────────────────────────────────
+
+  async getNetworkAccessState(): Promise<NetworkAccessState> {
+    const { rows } = await this.pool.query(
+      `SELECT admin_secret_ct, enabled FROM ${this.schema}.network_access WHERE id=1`
+    );
+    if (rows.length === 0) return { enabled: false, hasSecret: false };
+    return { enabled: rows[0].enabled, hasSecret: rows[0].admin_secret_ct !== null };
+  }
+
+  // Generates + seals + persists a fresh admin secret the FIRST time it's
+  // called. A second call while a secret already exists is a no-op — it
+  // never regenerates and never re-exposes the existing plaintext (that's
+  // what rotateAdminSecret() is for). Returns the plaintext only when a
+  // fresh secret was actually minted this call.
+  async mintAdminSecret(): Promise<{ plaintext: string | undefined }> {
+    const existing = await this.getNetworkAccessState();
+    if (existing.hasSecret) return { plaintext: undefined };
+    const plaintext = randomBytes(32).toString("base64url");
+    const ct = seal(Buffer.from(plaintext, "utf8"), this.key.bytes);
+    await this.pool.query(
+      `INSERT INTO ${this.schema}.network_access (id, admin_secret_ct, updated_at)
+       VALUES (1, $1, now())
+       ON CONFLICT (id) DO UPDATE SET admin_secret_ct = EXCLUDED.admin_secret_ct, updated_at = now()`,
+      [ct]
+    );
+    return { plaintext };
+  }
+
+  // Always regenerates, regardless of whether a secret already exists.
+  // The old plaintext stops verifying immediately (overwritten in place).
+  async rotateAdminSecret(): Promise<string> {
+    const plaintext = randomBytes(32).toString("base64url");
+    const ct = seal(Buffer.from(plaintext, "utf8"), this.key.bytes);
+    await this.pool.query(
+      `INSERT INTO ${this.schema}.network_access (id, admin_secret_ct, updated_at)
+       VALUES (1, $1, now())
+       ON CONFLICT (id) DO UPDATE SET admin_secret_ct = EXCLUDED.admin_secret_ct, updated_at = now()`,
+      [ct]
+    );
+    return plaintext;
+  }
+
+  async setNetworkAccessEnabled(enabled: boolean): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO ${this.schema}.network_access (id, enabled, updated_at)
+       VALUES (1, $1, now())
+       ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
+      [enabled]
+    );
+  }
+
+  // Constant-time verify. Empty string, wrong length, and correct-length-
+  // but-wrong-value candidates all return false without throwing.
+  async verifyAdminSecret(candidate: string): Promise<boolean> {
+    if (typeof candidate !== "string" || candidate.length === 0) return false;
+    const { rows } = await this.pool.query(
+      `SELECT admin_secret_ct FROM ${this.schema}.network_access WHERE id=1`
+    );
+    const sealedSecret = rows[0]?.admin_secret_ct as Buffer | undefined;
+    if (!sealedSecret) return false;
+    const known = open(sealedSecret, this.key.bytes);
+    const supplied = Buffer.from(candidate, "utf8");
+    if (known.length !== supplied.length) return false;
+    return timingSafeEqual(known, supplied);
+  }
+
+  // ─── Machine-API client credentials ────────────────────────────────────
+
+  async mintApiClient(name?: string): Promise<{ clientId: string; clientSecret: string }> {
+    const clientId = randomBytes(16).toString("hex");
+    const clientSecret = randomBytes(32).toString("base64url");
+    const ct = seal(Buffer.from(clientSecret, "utf8"), this.key.bytes);
+    await this.pool.query(
+      `INSERT INTO ${this.schema}.api_clients (client_id, client_secret_ct, name, created_at)
+       VALUES ($1, $2, $3, now())`,
+      [clientId, ct, name ?? null]
+    );
+    return { clientId, clientSecret };
+  }
+
+  // Unknown client_id and wrong-secret-for-a-known-client_id both return
+  // false — callers must not distinguish the two in their error response
+  // (OAuth2 §5.2 invalid_client shape).
+  async verifyApiClient(clientId: string, clientSecret: string): Promise<boolean> {
+    if (typeof clientId !== "string" || typeof clientSecret !== "string" || clientSecret.length === 0) return false;
+    const { rows } = await this.pool.query(
+      `SELECT client_secret_ct FROM ${this.schema}.api_clients WHERE client_id=$1 AND revoked_at IS NULL`,
+      [clientId]
+    );
+    const sealedSecret = rows[0]?.client_secret_ct as Buffer | undefined;
+    if (!sealedSecret) return false;
+    const known = open(sealedSecret, this.key.bytes);
+    const supplied = Buffer.from(clientSecret, "utf8");
+    if (known.length !== supplied.length) return false;
+    return timingSafeEqual(known, supplied);
+  }
+
+  async revokeApiClient(clientId: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `UPDATE ${this.schema}.api_clients SET revoked_at = now() WHERE client_id=$1 AND revoked_at IS NULL`,
+      [clientId]
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  async listApiClients(): Promise<ApiClientSummary[]> {
+    const { rows } = await this.pool.query(
+      `SELECT client_id, name, created_at, revoked_at FROM ${this.schema}.api_clients ORDER BY created_at`
+    );
+    return rows.map((r) => ({
+      clientId: r.client_id,
+      name: r.name,
+      createdAt: r.created_at,
+      revokedAt: r.revoked_at,
+    }));
   }
 
   async close(): Promise<void> { await this.pool.end(); }

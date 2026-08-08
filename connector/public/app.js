@@ -39,6 +39,85 @@ let selection = null;
 let lastManifest = null;
 let frameSeq = 0;
 
+// CONNECTOR-NETWORK-EXPOSURE ──────────────────────────────────────────────
+// A loopback caller never needs a session — the server-side gate lets them
+// straight through regardless of this token. A non-loopback caller needs
+// one minted via POST /internal/network-access/login; every fetch below
+// attaches it, and /events (which can't carry custom headers) gets it as a
+// query param instead. Stored in sessionStorage, not localStorage — a
+// closed tab requires re-login, matching a normal browser session.
+const SESSION_TOKEN_KEY = 'inspector.sessionToken';
+let sessionToken = sessionStorage.getItem(SESSION_TOKEN_KEY);
+
+const elLoginScreen = document.getElementById('login-screen');
+const elAppHeader = document.getElementById('app-header');
+const elLoginForm = document.getElementById('login-form');
+const elLoginError = document.getElementById('login-error');
+const elLoginSubmit = document.getElementById('login-submit');
+
+async function authFetch(input, init) {
+  const opts = { ...(init || {}) };
+  if (sessionToken) {
+    opts.headers = { ...(opts.headers || {}), authorization: `Bearer ${sessionToken}` };
+  }
+  return fetch(input, opts);
+}
+
+function showLoginScreen() {
+  elLoginScreen.hidden = false;
+  elAppHeader.hidden = true;
+  elMain.hidden = true;
+}
+
+function hideLoginScreen() {
+  elLoginScreen.hidden = true;
+  elAppHeader.hidden = false;
+  elMain.hidden = false;
+}
+
+// A loopback caller is authorized with no token at all (the gate never
+// checks for one); a non-loopback caller needs a currently-valid session.
+// Either way, a lightweight always-wired GET tells us which case we're in
+// without booting the SSE stream / manifest fetch first.
+async function checkAuthorized() {
+  try {
+    const res = await authFetch('/internal/network-access/status');
+    return res.status !== 401;
+  } catch {
+    return false;
+  }
+}
+
+elLoginForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  elLoginError.hidden = true;
+  elLoginSubmit.disabled = true;
+  try {
+    const secret = new FormData(elLoginForm).get('secret');
+    const resp = await fetch('/internal/network-access/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
+      body: JSON.stringify({ secret }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      elLoginError.textContent = body.error || `HTTP ${resp.status}`;
+      elLoginError.hidden = false;
+      return;
+    }
+    sessionToken = body.token;
+    sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken);
+    elLoginForm.reset();
+    hideLoginScreen();
+    boot();
+  } catch (err) {
+    elLoginError.textContent = String(err.message || err);
+    elLoginError.hidden = false;
+  } finally {
+    elLoginSubmit.disabled = false;
+  }
+});
+
 elShowHb.addEventListener('change', () => {
   showHeartbeats = elShowHb.checked;
   document.querySelectorAll('.frame-item.heartbeat').forEach((el) => {
@@ -103,7 +182,7 @@ async function runRescanLocal() {
   elRescanLocalStatus.textContent = 'scanning…';
   elRescanLocalStatus.className = 'muted';
   try {
-    const resp = await fetch('/mcp/rescan-local', {
+    const resp = await authFetch('/mcp/rescan-local', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
     });
@@ -147,7 +226,7 @@ elReconnect.addEventListener('click', async () => {
   elReconnect.disabled = true;
   elReconnect.textContent = RECONNECT_LABEL_PENDING;
   try {
-    await fetch('/reconnect', {
+    await authFetch('/reconnect', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
     });
@@ -561,7 +640,7 @@ async function runOnce({ simple, readers, serverName, tool, runBtn, status, resu
   status.className = 'run-status pending';
   runBtn.disabled = true;
   try {
-    const resp = await fetch('/tool/call', {
+    const resp = await authFetch('/tool/call', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
       body: JSON.stringify({ server: serverName, tool: tool.name, args }),
@@ -792,7 +871,7 @@ function buildMcpMessagesDetail(sel) {
 
   void (async () => {
     try {
-      const resp = await fetch(`/mcp/messages?mcp=${encodeURIComponent(sel.serverName)}`);
+      const resp = await authFetch(`/mcp/messages?mcp=${encodeURIComponent(sel.serverName)}`);
       const body = await resp.json().catch(() => ({}));
       const messages = (body.ok && Array.isArray(body.messages)) ? body.messages : [];
       list.replaceChildren();
@@ -940,7 +1019,7 @@ function buildMcpCredsView(name) {
   // Fetch envKeys async; populate form when ready.
   void (async () => {
     try {
-      const resp = await fetch(`/mcp/env-keys?mcp=${encodeURIComponent(name)}`);
+      const resp = await authFetch(`/mcp/env-keys?mcp=${encodeURIComponent(name)}`);
       const body = await resp.json().catch(() => ({}));
       const keys = (body.ok && Array.isArray(body.envKeys)) ? body.envKeys : [];
       if (keys.length === 0) {
@@ -991,7 +1070,7 @@ function buildMcpCredsView(name) {
     statusEl.textContent = 'applying…';
     statusEl.className = 'mcp-creds-status pending';
     try {
-      const resp = await fetch('/mcp/session-creds-apply', {
+      const resp = await authFetch('/mcp/session-creds-apply', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
         body: JSON.stringify({ mcp: name, env }),
@@ -1018,7 +1097,7 @@ function buildMcpCredsView(name) {
     statusEl.textContent = 'clearing…';
     statusEl.className = 'mcp-creds-status pending';
     try {
-      const resp = await fetch('/mcp/session-creds-clear', {
+      const resp = await authFetch('/mcp/session-creds-clear', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
         body: JSON.stringify({ mcp: name }),
@@ -1411,7 +1490,7 @@ async function invokeMcpAction(path, mcp, status) {
   status.textContent = 'working…';
   status.className = 'mcp-action-status pending';
   try {
-    const resp = await fetch(path, {
+    const resp = await authFetch(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
       body: JSON.stringify({ mcp }),
@@ -1558,7 +1637,11 @@ function renderWebhooks(list) {
 }
 
 function connectSse() {
-  const es = new EventSource('/events');
+  // EventSource can't set custom headers, so the session token — when a
+  // non-loopback caller has one — travels as a query param instead (the
+  // one route the server-side gate special-cases for this).
+  const url = sessionToken ? `/events?token=${encodeURIComponent(sessionToken)}` : '/events';
+  const es = new EventSource(url);
   es.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     switch (ev.kind) {
@@ -1770,7 +1853,7 @@ function buildTunnelCard(row) {
 
 async function fetchTunnelConfig() {
   try {
-    const resp = await fetch('/internal/tunnel/config');
+    const resp = await authFetch('/internal/tunnel/config');
     if (resp.status === 404) {
       tunnelState = { ...tunnelState, mode: 'env', rows: [], row: null };
       showTunnelView('env-mode');
@@ -1990,7 +2073,7 @@ async function handleForceReregister(row) {  // eslint-disable-line no-unused-va
   // there is no operator-visible bad state.
   setTunnelActionStatus('re-registering…', true);
   try {
-    const resp = await fetch('/internal/tunnel/force-reregister', {
+    const resp = await authFetch('/internal/tunnel/force-reregister', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
     });
@@ -2061,7 +2144,7 @@ elTunnelForm.addEventListener('submit', async (ev) => {
   elTunnelFormSubmit.textContent = editing ? 'Saving & reconnecting…' : 'Saving & connecting…';
 
   try {
-    const resp = await fetch('/internal/tunnel/creds', {
+    const resp = await authFetch('/internal/tunnel/creds', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
       body: JSON.stringify(payload),
@@ -2085,7 +2168,144 @@ elTunnelForm.addEventListener('submit', async (ev) => {
   }
 });
 
-// Boot ────────────────────────────────────────────────────────
-void fetchTunnelConfig();
+// CONNECTOR-NETWORK-EXPOSURE — Network Access panel ───────────────────────
+const elNetworkAccessLoading = document.getElementById('network-access-loading');
+const elNetworkAccessContent = document.getElementById('network-access-content');
+const elNetworkAccessState = document.getElementById('network-access-state');
+const elNetworkAccessBadge = document.getElementById('network-access-badge');
+const elNetworkAccessEnableBtn = document.getElementById('network-access-enable-btn');
+const elNetworkAccessRotateBtn = document.getElementById('network-access-rotate-btn');
+const elNetworkAccessReveal = document.getElementById('network-access-reveal');
+const elApiClientsList = document.getElementById('api-clients-list');
+const elApiClientForm = document.getElementById('api-client-form');
 
-connectSse();
+const csrfHeaders = { 'content-type': 'application/json', 'x-inspector-request': '1' };
+
+// Reveal-once display — same convention as the Webhooks panel's copy-able
+// URL: shown plainly in-page, never logged. There is no "show it again"
+// action; losing it means clicking Rotate / Add API client for a new one.
+function showRevealOnce(label, value) {
+  elNetworkAccessReveal.hidden = false;
+  elNetworkAccessReveal.innerHTML = '';
+  const strong = document.createElement('strong');
+  strong.textContent = `${label}: `;
+  const code = document.createElement('code');
+  code.textContent = value;
+  const note = document.createElement('div');
+  note.className = 'muted';
+  note.textContent = 'Shown once — copy it now, it will not be shown again.';
+  elNetworkAccessReveal.append(strong, code, note);
+}
+
+function renderNetworkAccessState(enabled) {
+  elNetworkAccessLoading.hidden = true;
+  elNetworkAccessContent.hidden = false;
+  elNetworkAccessState.textContent = enabled
+    ? 'Enabled — reachable from outside this host. Loopback access still always works.'
+    : 'Disabled — loopback-only (today\'s default).';
+  elNetworkAccessBadge.hidden = false;
+  elNetworkAccessBadge.textContent = enabled ? 'ENABLED' : 'LOOPBACK-ONLY';
+  elNetworkAccessEnableBtn.hidden = enabled;
+  elNetworkAccessRotateBtn.hidden = !enabled;
+}
+
+async function fetchNetworkAccessStatus() {
+  try {
+    const resp = await authFetch('/internal/network-access/status');
+    const body = await resp.json();
+    if (body.ok !== false) renderNetworkAccessState(body.enabled);
+  } catch { /* leave loading state — non-fatal, operator can retry via reload */ }
+}
+
+elNetworkAccessEnableBtn?.addEventListener('click', async () => {
+  elNetworkAccessEnableBtn.disabled = true;
+  try {
+    const resp = await authFetch('/internal/network-access/enable', { method: 'POST', headers: csrfHeaders, body: '{}' });
+    const body = await resp.json();
+    if (body.secret) showRevealOnce('Admin secret', body.secret);
+    await fetchNetworkAccessStatus();
+  } finally {
+    elNetworkAccessEnableBtn.disabled = false;
+  }
+});
+
+elNetworkAccessRotateBtn?.addEventListener('click', async () => {
+  elNetworkAccessRotateBtn.disabled = true;
+  try {
+    const resp = await authFetch('/internal/network-access/rotate', { method: 'POST', headers: csrfHeaders, body: '{}' });
+    const body = await resp.json();
+    if (body.secret) showRevealOnce('New admin secret', body.secret);
+  } finally {
+    elNetworkAccessRotateBtn.disabled = false;
+  }
+});
+
+function renderApiClients(clients) {
+  elApiClientsList.innerHTML = '';
+  if (!clients.length) {
+    const li = document.createElement('li');
+    li.className = 'empty-msg';
+    li.textContent = 'No API clients yet.';
+    elApiClientsList.appendChild(li);
+    return;
+  }
+  for (const c of clients) {
+    const li = document.createElement('li');
+    li.className = c.revokedAt ? 'api-client-row revoked' : 'api-client-row';
+    const label = document.createElement('span');
+    label.textContent = `${c.name || '(unnamed)'} — ${c.clientId}${c.revokedAt ? ' (revoked)' : ''}`;
+    li.appendChild(label);
+    if (!c.revokedAt) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = 'Remove';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        await authFetch('/internal/network-access/clients/revoke', {
+          method: 'POST', headers: csrfHeaders, body: JSON.stringify({ clientId: c.clientId }),
+        });
+        await fetchApiClients();
+      });
+      li.appendChild(btn);
+    }
+    elApiClientsList.appendChild(li);
+  }
+}
+
+async function fetchApiClients() {
+  try {
+    const resp = await authFetch('/internal/network-access/clients');
+    const body = await resp.json();
+    if (body.ok) renderApiClients(body.clients);
+  } catch { /* leave prior list rendered */ }
+}
+
+elApiClientForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = new FormData(elApiClientForm).get('name');
+  const resp = await authFetch('/internal/network-access/clients', {
+    method: 'POST', headers: csrfHeaders, body: JSON.stringify({ name: name || undefined }),
+  });
+  const body = await resp.json();
+  if (body.ok) {
+    showRevealOnce(`Client secret for ${body.clientId}`, body.clientSecret);
+    elApiClientForm.reset();
+    await fetchApiClients();
+  }
+});
+
+// Boot ────────────────────────────────────────────────────────
+async function boot() {
+  const authorized = await checkAuthorized();
+  if (!authorized) {
+    showLoginScreen();
+    return;
+  }
+  hideLoginScreen();
+  void fetchTunnelConfig();
+  void fetchNetworkAccessStatus();
+  void fetchApiClients();
+  connectSse();
+}
+
+boot();

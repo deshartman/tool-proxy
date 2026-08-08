@@ -29,6 +29,26 @@ edit them out:
 
 Pinned by [`connector/tests/compose/compose-lint.test.ts`](../../connector/tests/compose/compose-lint.test.ts).
 
+## Network access (opt-in, off by default)
+
+The shipped `127.0.0.1:9090:9090` binding above is unchanged by this
+feature and stays the default — don't edit it in this repo's copy. If you
+want the inspector reachable from elsewhere on your host's network, change
+the port mapping in **your own** compose override (not this file) to
+`9090:9090` (all interfaces) or a specific host IP, e.g.:
+
+```yaml
+services:
+  connector:
+    ports:
+      - "9090:9090"   # was 127.0.0.1:9090:9090
+```
+
+That alone doesn't expose anything unauthenticated — every non-loopback
+request still needs a valid admin session or bearer token once you click
+"Enable network access" in the inspector (or it was already enabled from a
+prior boot). See `docs/NETWORK-ACCESS.md`.
+
 ## See also
 
 - Umbrella: [`deploy/README.md`](../README.md).

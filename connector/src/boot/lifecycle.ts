@@ -23,7 +23,10 @@ import { TunnelClient } from "../tunnel/client.js";
 import { formatHandshakeFailure } from "../tunnel/format-log.js";
 import { Dispatcher } from "../dispatcher.js";
 import type { ToolManifest } from "../tunnel/frames.js";
-import { Inspector, startInspector } from "../inspector/server.js";
+import { Inspector, startInspector, rebindInspector } from "../inspector/server.js";
+import { createNetworkAccessRoutes } from "../inspector/network-access-routes.js";
+import { handleOauthToken } from "../inspector/oauth-token-route.js";
+import { deriveJwtSigningKey } from "../auth/jwt.js";
 import { createLogger } from "../logger.js";
 import { WebhookRegistry } from "../tunnel/webhook-registry.js";
 import { ReconnectController } from "../tunnel/reconnect.js";
@@ -141,7 +144,25 @@ async function bootFromDb(): Promise<void> {
 
   if (inspector) {
     inspector.onReconnect = () => { void reconnect("inspector requested", { manual: true }); };
-    startInspector(inspectorPort, inspector);
+    // CONNECTOR-NETWORK-EXPOSURE — if a prior boot already had network
+    // access enabled, bind non-loopback directly on this boot too (step 5
+    // of the build checklist: the loopback-first-then-enable sequence is
+    // one-time setup, not something repeated on every restart).
+    const networkAccessState = await store.getNetworkAccessState();
+    const httpServer = startInspector(inspectorPort, inspector, { networkAccessEnabled: networkAccessState.enabled });
+    inspector.wireNetworkAccessRoutes(createNetworkAccessRoutes({
+      configStore: store,
+      sessions: inspector.sessions,
+      rebindNonLoopback: () => rebindInspector(httpServer, inspectorPort, log),
+    }));
+    // Machine API — self-issued client_credentials grant. Signing key is
+    // derived from the master key (no separate secret to mint/lose); 1h
+    // expiry matches the tunnel's own OAuth2 JWT convention.
+    inspector.wireOauthToken((req, res) => handleOauthToken(req, res, {
+      configStore: store,
+      signingKey: deriveJwtSigningKey(masterKey.bytes),
+      expiresInSec: 3600,
+    }));
 
     // Wire tunnel routes for DB mode — allows inspector UI to configure tunnel
     inspector.wireTunnelRoutes(createTunnelRoutes({

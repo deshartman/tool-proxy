@@ -88,15 +88,45 @@ describe("helm chart — filesystem invariants", () => {
     expect(deployment).not.toMatch(/replicas:\s*\{\{/);
   });
 
-  it("does NOT define a Service for the inspector port", () => {
-    // Load-bearing per CLAUDE.md's inspector loopback trust boundary.
-    // Any Service targeting port 9090 would let the webhook URLs leak.
-    const templates = readdirSync(join(HELM_DIR, "templates"));
-    expect(templates).not.toContain("service.yaml");
+  it("does NOT render a Service for the inspector port by default", () => {
+    // CONNECTOR-NETWORK-EXPOSURE added templates/service.yaml, gated
+    // behind .Values.networkAccess.enabled (default false) — the
+    // inspector now has a real authentication layer for non-loopback
+    // callers, so a Service targeting port 9090 is no longer inherently
+    // unsafe once an operator has deliberately opted in on BOTH sides
+    // (this flag AND clicking "Enable network access" in the inspector).
+    // The invariant that still matters is "off by default", not "can
+    // never exist" — see architectural-plans/CONNECTOR-NETWORK-EXPOSURE.md.
+    const values = readFileSync(join(HELM_DIR, "values.yaml"), "utf8");
+    expect(values).toMatch(/networkAccess:\s*\n\s*enabled:\s*false/);
+
+    const serviceTemplate = readFileSync(join(HELM_DIR, "templates/service.yaml"), "utf8");
+    const ifIndex = serviceTemplate.indexOf("{{- if .Values.networkAccess.enabled }}");
+    const kindIndex = serviceTemplate.indexOf("kind: Service");
+    expect(ifIndex).toBeGreaterThanOrEqual(0);
+    expect(kindIndex).toBeGreaterThan(ifIndex);
+
+    // Every OTHER template must still never declare a Service outright.
+    const templates = readdirSync(join(HELM_DIR, "templates")).filter((t) => t !== "service.yaml");
     for (const tpl of templates) {
       const content = readFileSync(join(HELM_DIR, "templates", tpl), "utf8");
       expect(content, `${tpl} must not declare a Service`).not.toMatch(/^kind:\s*Service\b/m);
     }
+  });
+
+  const helmServiceTest = toolAvailable("helm") ? it : it.skip;
+  helmServiceTest("`helm template` renders no Service by default, and one when networkAccess.enabled=true", () => {
+    const baseArgs = [
+      "template", "release-name", HELM_DIR,
+      "--set", "connector.name=render-test",
+      "--set", "connector.controllerUrl=https://ctrl.example.com",
+      "--set", "secrets.tunnelAuthToken=ts_render",
+    ];
+    const withoutFlag = execFileSync("helm", baseArgs, { encoding: "utf8" });
+    expect(withoutFlag).not.toMatch(/^kind:\s*Service\b/m);
+
+    const withFlag = execFileSync("helm", [...baseArgs, "--set", "networkAccess.enabled=true"], { encoding: "utf8" });
+    expect(withFlag).toMatch(/^kind:\s*Service\b/m);
   });
 
   it("requires connector.name and connector.controllerUrl to be set", () => {
