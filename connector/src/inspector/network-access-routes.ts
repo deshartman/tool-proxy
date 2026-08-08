@@ -93,8 +93,9 @@ async function handleListClients(_req: IncomingMessage, res: ServerResponse, dep
   }));
 }
 
-// POST /internal/network-access/clients/revoke — "Remove API client".
-// Body: { clientId }
+// POST /internal/network-access/clients/revoke — "Revoke" (soft — blocks
+// future /oauth/token attempts, row stays visible with a revoked-at
+// timestamp). Body: { clientId }
 async function handleRevokeClient(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
   if (!guardCsrf(req, res)) return;
   setJsonHeaders(res);
@@ -111,12 +112,33 @@ async function handleRevokeClient(req: IncomingMessage, res: ServerResponse, dep
   res.end(JSON.stringify({ ok: true }));
 }
 
+// POST /internal/network-access/clients/delete — "Delete" (hard — removes
+// the row entirely). Only reachable in the UI after Revoke, and enforced
+// server-side too: ConfigStore.deleteApiClient refuses a still-active
+// client_id. Body: { clientId }
+async function handleDeleteClient(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
+  if (!guardCsrf(req, res)) return;
+  setJsonHeaders(res);
+  const body = await readBody(req, res);
+  if (!body) return;
+  const clientId = typeof body.clientId === "string" ? body.clientId : "";
+  const deleted = clientId ? await deps.configStore.deleteApiClient(clientId) : false;
+  if (!deleted) {
+    res.statusCode = 404;
+    res.end(JSON.stringify({ ok: false, error: "unknown client_id, or client is not yet revoked" }));
+    return;
+  }
+  res.statusCode = 200;
+  res.end(JSON.stringify({ ok: true }));
+}
+
 export function createNetworkAccessRoutes(deps: NetworkAccessRoutesDeps) {
   return {
     handleStatus: (req: IncomingMessage, res: ServerResponse) => handleStatus(req, res, deps),
     handleAddClient: (req: IncomingMessage, res: ServerResponse) => handleAddClient(req, res, deps),
     handleListClients: (req: IncomingMessage, res: ServerResponse) => handleListClients(req, res, deps),
     handleRevokeClient: (req: IncomingMessage, res: ServerResponse) => handleRevokeClient(req, res, deps),
+    handleDeleteClient: (req: IncomingMessage, res: ServerResponse) => handleDeleteClient(req, res, deps),
   };
 }
 

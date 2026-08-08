@@ -109,5 +109,32 @@ describe("ConfigStore — network access state + API clients", () => {
       expect(await store!.revokeApiClient(clientId)).toBe(true);
       expect(await store!.revokeApiClient(clientId)).toBe(false);
     });
+
+    describe("deleteApiClient()", () => {
+      it("refuses to delete a client that hasn't been revoked yet", async () => {
+        const { clientId } = await store!.mintApiClient("still-active");
+        expect(await store!.deleteApiClient(clientId)).toBe(false);
+        // Row must still exist — the refusal didn't silently no-op-delete it.
+        expect(await store!.listApiClients()).toHaveLength(1);
+      });
+
+      it("deletes a revoked client, removing the row entirely", async () => {
+        const { clientId } = await store!.mintApiClient("to-delete");
+        await store!.revokeApiClient(clientId);
+        expect(await store!.deleteApiClient(clientId)).toBe(true);
+        expect(await store!.listApiClients()).toHaveLength(0);
+      });
+
+      it("returns false for an unknown client_id", async () => {
+        expect(await store!.deleteApiClient("nonexistent")).toBe(false);
+      });
+
+      it("returns false on a second delete of the same client_id", async () => {
+        const { clientId } = await store!.mintApiClient();
+        await store!.revokeApiClient(clientId);
+        expect(await store!.deleteApiClient(clientId)).toBe(true);
+        expect(await store!.deleteApiClient(clientId)).toBe(false);
+      });
+    });
   });
 });

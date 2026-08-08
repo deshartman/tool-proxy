@@ -260,6 +260,17 @@ export class ConfigStore {
     return (rowCount ?? 0) > 0;
   }
 
+  // Hard-deletes the row. Only ever allowed for an ALREADY-revoked client
+  // — enforced here, not just in the UI, so a caller can't skip straight
+  // to deleting a still-active credential without revoking it first.
+  async deleteApiClient(clientId: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM ${this.schema}.api_clients WHERE client_id=$1 AND revoked_at IS NOT NULL`,
+      [clientId]
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   async listApiClients(): Promise<ApiClientSummary[]> {
     const { rows } = await this.pool.query(
       `SELECT client_id, name, created_at, revoked_at FROM ${this.schema}.api_clients ORDER BY created_at`

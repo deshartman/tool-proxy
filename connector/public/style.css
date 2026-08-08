@@ -1005,7 +1005,10 @@ h2 {
   border-radius: 4px;
   font-size: 0.82rem;
 }
-.api-client-row.revoked { opacity: 0.5; }
+/* Dim the credential fields on a revoked row, but never the Delete
+   button — it must stay fully legible and obviously clickable. */
+.api-client-row.revoked .api-client-label,
+.api-client-row.revoked .api-client-field { opacity: 0.5; }
 .api-client-row button { font-size: 0.75rem; padding: 0.2rem 0.5rem; }
 .api-client-label { font-weight: 600; }
 .api-client-field { color: var(--muted); white-space: nowrap; }

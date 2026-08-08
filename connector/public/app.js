@@ -2131,7 +2131,7 @@ function renderNetworkAccessState(enabled) {
   elNetworkAccessLoading.hidden = true;
   elNetworkAccessContent.hidden = false;
   elNetworkAccessState.textContent = enabled
-    ? 'At least one API client exists — POST /oauth/token is reachable from outside this host. This dashboard stays loopback-only regardless.'
+    ? ''
     : 'No API clients yet — loopback-only (today\'s default). Adding one makes /oauth/token reachable from outside this host.';
   elNetworkAccessBadge.hidden = false;
   elNetworkAccessBadge.textContent = enabled ? 'API ACCESS ENABLED' : 'LOOPBACK-ONLY';
@@ -2166,30 +2166,53 @@ async function fetchApiClientsList() {
 
 elNetworkAccessClientsLink?.addEventListener('click', () => {
   setSelection({ kind: 'apiClients', key: 'apiClients' });
+  // Always re-fetch on open rather than trusting whatever the boot-time
+  // fetch last landed — closes a race where clicking before that first
+  // fetch resolves would otherwise render a stale/empty list.
+  void fetchApiClientsList();
 });
 
 elApiClientForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const name = new FormData(elApiClientForm).get('name');
-  const resp = await fetch('/internal/network-access/clients', {
-    method: 'POST', headers: csrfHeaders, body: JSON.stringify({ name: name || undefined }),
-  });
-  const body = await resp.json();
-  if (body.ok) {
+  const submitBtn = elApiClientForm.querySelector('button[type="submit"]');
+  const originalLabel = submitBtn.textContent;
+  submitBtn.disabled = true;
+  try {
+    const name = new FormData(elApiClientForm).get('name');
+    const resp = await fetch('/internal/network-access/clients', {
+      method: 'POST', headers: csrfHeaders, body: JSON.stringify({ name: name || undefined }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.ok === false) throw new Error(body.error || `HTTP ${resp.status}`);
     justCreatedApiClient = { clientId: body.clientId, clientSecret: body.clientSecret };
     elApiClientForm.reset();
     await fetchApiClientsList();
     await fetchNetworkAccessStatus(); // badge flips to ENABLED on the first add
     setSelection({ kind: 'apiClients', key: 'apiClients' }); // new row appears in the right pane
+  } catch (err) {
+    submitBtn.textContent = `Failed: ${err.message}`;
+    setTimeout(() => { submitBtn.textContent = originalLabel; }, 3000);
+  } finally {
+    submitBtn.disabled = false;
   }
 });
 
-// One flat row per client: label, Client ID + copy, Client Secret + copy,
-// Remove. Both values are always displayed redacted; Copy always copies
-// the real value. The secret is only ever known client-side for the row
-// you just created THIS page session (justCreatedApiClient) — the server
-// never returns it again after the initial mint, so older rows have no
-// working secret-copy button, just a placeholder.
+// Client ID is not a secret (it's the OAuth2 "username" half) — show
+// enough of it to recognize a row and confirm a paste, mask the middle.
+// Client Secret stays fully redacted always; it's the actual credential.
+function partialRedact(value) {
+  if (!value || value.length <= 12) return REDACTED;
+  return `${value.slice(0, 6)}${REDACTED}${value.slice(-4)}`;
+}
+
+// One flat row per client: label, Client ID (partially shown) + copy,
+// Client Secret (fully redacted) + copy, Revoke/Delete. Copy always
+// copies the real underlying value, never the masked text on screen.
+// The secret is only ever known client-side for the row you just created
+// THIS page session (justCreatedApiClient) — the server never returns it
+// again after the initial mint, so older rows (including ones created in
+// an earlier session, before this page load) have no working secret-copy
+// button, just an explanatory placeholder.
 function buildApiClientRow(c) {
   const li = document.createElement('li');
   li.className = c.revokedAt ? 'api-client-row revoked' : 'api-client-row';
@@ -2201,37 +2224,58 @@ function buildApiClientRow(c) {
 
   const idField = document.createElement('span');
   idField.className = 'api-client-field';
-  idField.append('Client ID: ', Object.assign(document.createElement('code'), { textContent: REDACTED }));
+  idField.append('Client ID: ', Object.assign(document.createElement('code'), { textContent: partialRedact(c.clientId) }));
   li.appendChild(idField);
   li.appendChild(makeCopyButton(c.clientId, 'copy'));
 
   const secretField = document.createElement('span');
   secretField.className = 'api-client-field';
   const knownSecret = justCreatedApiClient?.clientId === c.clientId ? justCreatedApiClient.clientSecret : null;
-  secretField.append('Client Secret: ', Object.assign(document.createElement('code'), {
-    textContent: knownSecret ? REDACTED : '(unavailable — shown only once, at creation)',
-  }));
+  secretField.append('Client Secret: ', Object.assign(document.createElement('code'), { textContent: REDACTED }));
   li.appendChild(secretField);
-  if (knownSecret) li.appendChild(makeCopyButton(knownSecret, 'copy'));
+  // "Copy Now" (not just "copy") on a freshly-created row — this is the
+  // only moment the real secret is ever available; there's no button at
+  // all on older rows, since the server never returns it again.
+  if (knownSecret) li.appendChild(makeCopyButton(knownSecret, 'Copy Now'));
 
-  if (c.revokedAt) {
-    const revokedNote = document.createElement('span');
-    revokedNote.className = 'muted';
-    revokedNote.textContent = '(revoked)';
-    li.appendChild(revokedNote);
-  } else {
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.textContent = 'Remove';
-    removeBtn.addEventListener('click', async () => {
-      removeBtn.disabled = true;
-      await fetch('/internal/network-access/clients/revoke', {
+  // Runs a state-changing action and surfaces failure ON THE BUTTON
+  // itself (briefly) rather than doing nothing when the request 404s/
+  // 500s — e.g. a stale connector process that hasn't picked up a route
+  // added after it started. Silent failure here is exactly what made an
+  // earlier "Delete doesn't work" report hard to diagnose.
+  async function runAction(btn, path, onSuccess) {
+    btn.disabled = true;
+    const original = btn.textContent;
+    try {
+      const res = await fetch(path, {
         method: 'POST', headers: csrfHeaders, body: JSON.stringify({ clientId: c.clientId }),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await onSuccess();
+    } catch (err) {
+      btn.textContent = `Failed: ${err.message}`;
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = original; }, 3000);
+    }
+  }
+
+  if (c.revokedAt) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.addEventListener('click', () => runAction(deleteBtn, '/internal/network-access/clients/delete', async () => {
+      await fetchApiClientsList();
+    }));
+    li.appendChild(deleteBtn);
+  } else {
+    const revokeBtn = document.createElement('button');
+    revokeBtn.type = 'button';
+    revokeBtn.textContent = 'Revoke';
+    revokeBtn.addEventListener('click', () => runAction(revokeBtn, '/internal/network-access/clients/revoke', async () => {
       if (justCreatedApiClient?.clientId === c.clientId) justCreatedApiClient = null;
       await fetchApiClientsList();
-    });
-    li.appendChild(removeBtn);
+    }));
+    li.appendChild(revokeBtn);
   }
   return li;
 }

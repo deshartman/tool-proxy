@@ -978,6 +978,10 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
       if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleRevokeClient(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
+    if (path === "/internal/network-access/clients/delete" && req.method === "POST") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleDeleteClient(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
     if (path === "/oauth/token" && req.method === "POST") {
       if (inspector.oauthTokenHandler) { void inspector.oauthTokenHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;

@@ -97,9 +97,10 @@
           <div id="network-access-content" hidden>
             <p id="network-access-state" class="muted"></p>
 
-            <h3 class="api-clients-title">API clients <span id="api-clients-count" class="muted"></span></h3>
-            <p class="network-access-subhead">Credentials for scripts/automations calling POST /oauth/token — not for logging into this UI (there's no login; this dashboard is loopback-only).</p>
-            <button id="network-access-clients-link" type="button" class="tunnel-name-btn" title="Click to view API clients in the right pane">View API clients →</button>
+            <button id="network-access-clients-link" type="button" class="tunnel-name-btn api-clients-title" title="Click to view API clients in the right pane">
+              API clients <span id="api-clients-count" class="muted"></span>
+            </button>
+            <p class="network-access-subhead">Credentials for scripts/automations calling POST /oauth/token</p>
             <form id="api-client-form" class="tunnel-field" autocomplete="off">
               <input type="text" name="name" placeholder="Client label (optional)">
               <button type="submit">Add API client</button>

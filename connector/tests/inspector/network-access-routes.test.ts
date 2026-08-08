@@ -74,6 +74,14 @@ describe("POST /internal/network-access/clients — auto-enable on first add", (
         void routes.handleStatus(req, res);
         return;
       }
+      if (url.pathname === "/internal/network-access/clients/revoke" && req.method === "POST") {
+        void routes.handleRevokeClient(req, res);
+        return;
+      }
+      if (url.pathname === "/internal/network-access/clients/delete" && req.method === "POST") {
+        void routes.handleDeleteClient(req, res);
+        return;
+      }
       res.statusCode = 404;
       res.end();
     });
@@ -86,6 +94,22 @@ describe("POST /internal/network-access/clients — auto-enable on first add", (
       method: "POST",
       headers: CSRF_HEADERS,
       body: JSON.stringify({ name }),
+    });
+  }
+
+  async function revokeClient(clientId: string): Promise<Response> {
+    return fetch(`http://127.0.0.1:${port}/internal/network-access/clients/revoke`, {
+      method: "POST",
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ clientId }),
+    });
+  }
+
+  async function deleteClient(clientId: string): Promise<Response> {
+    return fetch(`http://127.0.0.1:${port}/internal/network-access/clients/delete`, {
+      method: "POST",
+      headers: CSRF_HEADERS,
+      body: JSON.stringify({ clientId }),
     });
   }
 
@@ -137,5 +161,36 @@ describe("POST /internal/network-access/clients — auto-enable on first add", (
     await store.revokeApiClient(clientId);
 
     expect((await getStatus()).enabled).toBe(true);
+  });
+
+  describe("Revoke then Delete (two-step row removal)", () => {
+    it("Delete is refused via the route until the client has been Revoked first", async () => {
+      const res = await addClient("still-active");
+      const { clientId } = await res.json();
+
+      const deleteRes = await deleteClient(clientId);
+      expect(deleteRes.status).toBe(404);
+
+      // Row survives the refused delete.
+      expect(await store.listApiClients()).toHaveLength(1);
+    });
+
+    it("Revoke then Delete removes the row entirely", async () => {
+      const res = await addClient("to-remove");
+      const { clientId } = await res.json();
+
+      const revokeRes = await revokeClient(clientId);
+      expect(revokeRes.status).toBe(200);
+
+      const deleteRes = await deleteClient(clientId);
+      expect(deleteRes.status).toBe(200);
+
+      expect(await store.listApiClients()).toHaveLength(0);
+    });
+
+    it("Delete on an unknown client_id → 404", async () => {
+      const res = await deleteClient("nonexistent");
+      expect(res.status).toBe(404);
+    });
   });
 });
