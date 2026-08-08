@@ -29,6 +29,28 @@ edit them out:
 
 Pinned by [`connector/tests/compose/compose-lint.test.ts`](../../connector/tests/compose/compose-lint.test.ts).
 
+## Network access (opt-in, off by default)
+
+The shipped `127.0.0.1:9090:9090` binding above is unchanged by this
+feature and stays the default — don't edit it in this repo's copy. If you
+want the inspector reachable from elsewhere on your host's network, change
+the port mapping in **your own** compose override (not this file) to
+`9090:9090` (all interfaces) or a specific host IP, e.g.:
+
+```yaml
+services:
+  connector:
+    ports:
+      - "9090:9090"   # was 127.0.0.1:9090:9090
+```
+
+That alone doesn't expose anything unauthenticated: only `POST /oauth/token`
+is ever reachable non-loopback, gated by a machine caller's own
+`client_id`/`client_secret`, and only once an operator has added at least
+one API client from the inspector's loopback session (or one already
+exists from a prior boot) — the dashboard itself never becomes reachable
+this way. See `docs/NETWORK-ACCESS.md`.
+
 ## See also
 
 - Umbrella: [`deploy/README.md`](../README.md).

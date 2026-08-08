@@ -990,3 +990,29 @@ h2 {
   cursor: pointer;
 }
 .tunnel-form-actions button:hover { border-color: var(--accent); }
+
+.network-access-subhead { font-size: 0.78rem; color: var(--muted); margin: 0.75rem 0 0.4rem; line-height: 1.4; }
+
+.api-clients-title { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 1rem 0 0.4rem; }
+#api-clients-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.api-client-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+/* Dim the credential fields on a revoked row, but never the Delete
+   button — it must stay fully legible and obviously clickable. */
+.api-client-row.revoked .api-client-label,
+.api-client-row.revoked .api-client-field { opacity: 0.5; }
+.api-client-row button { font-size: 0.75rem; padding: 0.2rem 0.5rem; }
+.api-client-label { font-weight: 600; }
+.api-client-field { color: var(--muted); white-space: nowrap; }
+.api-client-field code { color: var(--text); margin-left: 0.25rem; }
+.api-client-row > *:last-child { margin-left: auto; }
+#api-client-form { display: flex; flex-direction: row; gap: 0.4rem; margin-top: 0.6rem; }
+#api-client-form input { flex: 1; }

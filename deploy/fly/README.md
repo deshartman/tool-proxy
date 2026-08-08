@@ -129,6 +129,9 @@ open http://localhost:9090/
 
 `fly proxy` opens a WireGuard tunnel from your laptop to the Machine's loopback. The auth surface is your flyctl session — only operators with access to the Fly org can open the tunnel.
 
+This is a different, older mechanism than the inspector's machine-API
+network access (see `docs/NETWORK-ACCESS.md`) — `INSPECTOR_BIND_ADDR = "::"` in this app's `[env]` exists solely so `fly proxy` can reach the mesh IP; it's not the same as opting into customer-network reachability, and `fly ips list` staying empty means this Fly deployment was never meant to be reachable any other way. Don't also add an API client for a Fly deployment unless you specifically want a machine caller (`/oauth/token`) reaching this Machine over its private `.internal` DNS from another app in the same org — the dashboard itself stays loopback-only either way, and `fly proxy`'s flyctl-session auth already covers reaching it.
+
 ## Configure the tunnel
 
 On first boot the connector's Postgres is empty and the inspector shows a "Configure Tunnel" modal. Fill in:

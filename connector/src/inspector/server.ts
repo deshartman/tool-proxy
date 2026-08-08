@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,8 @@ import type { McpMessageTap } from "../servers/message-tap.js";
 import { createLogger } from "../logger.js";
 import { envString } from "../env.js";
 import { BodyTooLargeError, readJsonBody } from "./read-body.js";
+import { isLoopbackAddr } from "./network-access.js";
+import type { NetworkAccessRoutes } from "./network-access-routes.js";
 
 const log = createLogger("inspector");
 
@@ -184,6 +186,24 @@ export class Inspector {
   // the routes return 404 (env mode).
   // Accessed by startInspector to dispatch tunnel routes.
   tunnelRoutes?: TunnelRouteHandlers;
+
+  // CONNECTOR-NETWORK-EXPOSURE — API-client management routes (add/list/
+  // revoke). Operator actions, reached from the same loopback-only trust
+  // as everything else in this class — there is no admin session concept.
+  networkAccessRoutes?: NetworkAccessRoutes;
+
+  wireNetworkAccessRoutes(routes: NetworkAccessRoutes): void {
+    this.networkAccessRoutes = routes;
+  }
+
+  // CONNECTOR-NETWORK-EXPOSURE — POST /oauth/token handler. Optional so
+  // env/test boot paths that don't need the machine API can leave it
+  // unwired (route falls through to 404, same convention as tunnelRoutes).
+  oauthTokenHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+
+  wireOauthToken(handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>): void {
+    this.oauthTokenHandler = handler;
+  }
 
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
   private readonly frames: FrameTap[] = []
@@ -819,10 +839,42 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
   req.on("error", cleanup);
 }
 
-export function startInspector(port: number, inspector: Inspector): void {
+// CONNECTOR-NETWORK-EXPOSURE — routes reachable from a non-loopback
+// caller. There is no admin login: the operator UI (dashboard, tool
+// calls, tunnel config, API-client management, everything else in this
+// dispatch table) is loopback-only, unconditionally, forever. The ONLY
+// thing a non-loopback caller can ever reach is the machine API —
+// /oauth/token today (self-authenticated via client_id/client_secret in
+// the body), and any future JWT-protected route (e.g. the outbound-calls
+// route once it lands — see CLAUDE.md "Inspector UI notes"), which does
+// its own bearer check inline, mirroring how /oauth/token and
+// authorizeWebhookMcp() work today.
+const NON_LOOPBACK_ALLOWED_PATHS = new Set([
+  "/oauth/token",
+]);
+
+// One check point for the whole dispatch table. Loopback callers pass
+// through unchanged — the permanent, never-gated path (CLAUDE.md
+// "Inspector port is localhost-only"). A non-loopback caller on any path
+// outside NON_LOOPBACK_ALLOWED_PATHS gets 403, full stop — no login flow,
+// no session, nothing to opt into for the operator UI.
+function isAuthorizedRequest(req: IncomingMessage, path: string): boolean {
+  if (isLoopbackAddr(req.socket.remoteAddress)) return true;
+  return NON_LOOPBACK_ALLOWED_PATHS.has(path);
+}
+
+export function startInspector(port: number, inspector: Inspector, opts?: { networkAccessEnabled?: boolean }): Server {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
+
+    if (!isAuthorizedRequest(req, path)) {
+      res.statusCode = 403;
+      res.setHeader("content-type", "application/json");
+      res.end('{"ok":false,"error":"forbidden: loopback only"}');
+      return;
+    }
+
     if (path === "/events") return handleEvents(req, res, inspector);
     if (path === "/reconnect" && req.method === "POST") {
       if (!guardCsrf(req, res)) return;
@@ -906,6 +958,35 @@ export function startInspector(port: number, inspector: Inspector): void {
       res.statusCode = 404; res.end(); return;
     }
 
+    // CONNECTOR-NETWORK-EXPOSURE — API-client management routes. Always
+    // wired at boot (unlike tunnelRoutes, which is DB-mode-only) since the
+    // api_clients table lives in the same always-present ConfigStore.
+    // Loopback-only per the gate above — these are operator actions.
+    if (path === "/internal/network-access/status" && req.method === "GET") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleStatus(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/network-access/clients" && req.method === "POST") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleAddClient(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/network-access/clients" && req.method === "GET") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleListClients(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/network-access/clients/revoke" && req.method === "POST") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleRevokeClient(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/network-access/clients/delete" && req.method === "POST") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleDeleteClient(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/oauth/token" && req.method === "POST") {
+      if (inspector.oauthTokenHandler) { void inspector.oauthTokenHandler(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+
     if (path === "/" || path === "/index.html") { void serveStatic(res, "index.html"); return; }
     if (path === "/app.js" || path === "/style.css") { void serveStatic(res, path.slice(1)); return; }
     res.statusCode = 404;
@@ -968,9 +1049,22 @@ export function startInspector(port: number, inspector: Inspector): void {
   // the copy-able bcrypt-protected webhook URLs to the internet. Fly.io
   // deployments set both vars in fly.toml — the opt-in makes the widening
   // explicit and greppable.
-  const bindAddr = envString("INSPECTOR_BIND_ADDR", "127.0.0.1");
+  const envBindAddr = envString("INSPECTOR_BIND_ADDR", "127.0.0.1");
   const loopbackAddrs = new Set(["127.0.0.1", "::1", "localhost"]);
-  if (!loopbackAddrs.has(bindAddr)) {
+  // CONNECTOR-NETWORK-EXPOSURE — a separate, orthogonal mechanism from the
+  // Fly-mesh escape hatch above: if the operator hasn't touched
+  // INSPECTOR_BIND_ADDR (still at its loopback default) AND the DB says
+  // network access was already enabled on a prior boot, bind non-loopback
+  // directly — no INSPECTOR_ALLOW_NONLOOPBACK needed, because that env var
+  // guards a DIFFERENT, unattended widening path (a typo'd env var); this
+  // widening is the direct result of an operator action from a prior boot
+  // (adding the first API client) that this same boot is now honoring.
+  // An explicit INSPECTOR_BIND_ADDR override still takes precedence and
+  // goes through the existing opt-in check unchanged.
+  const bindAddr = (envBindAddr === "127.0.0.1" && opts?.networkAccessEnabled)
+    ? NETWORK_ACCESS_BIND_ADDR
+    : envBindAddr;
+  if (!loopbackAddrs.has(bindAddr) && bindAddr !== NETWORK_ACCESS_BIND_ADDR) {
     if (envString("INSPECTOR_ALLOW_NONLOOPBACK", "") !== "1") {
       throw new Error(
         `INSPECTOR_BIND_ADDR="${bindAddr}" is non-loopback — refusing to bind. ` +
@@ -984,6 +1078,12 @@ export function startInspector(port: number, inspector: Inspector): void {
       `inspector bind widened beyond loopback (INSPECTOR_ALLOW_NONLOOPBACK=1 set) — ensure the host has no public IP allocated`
     );
   }
+  if (bindAddr === NETWORK_ACCESS_BIND_ADDR) {
+    log.warn(
+      { bindAddr, port },
+      `inspector bind widened beyond loopback (an API client exists) — the operator UI stays loopback-only; only /oauth/token (and future JWT-protected machine routes) is reachable non-loopback`
+    );
+  }
   server.listen(port, bindAddr, () => {
     const snap = inspector.snapshot();
     const controllerUrl = snap.kind === "snapshot" ? snap.controllerUrl : "?";
@@ -992,4 +1092,37 @@ export function startInspector(port: number, inspector: Inspector): void {
       `listening`
     );
   });
+  return server;
+}
+
+// CONNECTOR-NETWORK-EXPOSURE — the address adding the first API client
+// rebinds to. Not operator-configurable (no such field exists in the
+// Postgres table): "reachable from the rest of the customer's network"
+// doesn't need a specific interface, and 0.0.0.0 is the standard choice
+// for a container whose actual exposure is decided at the infra layer
+// (K8s Service, security group, port mapping — see CLAUDE.md "Deploy
+// target sweep"). Widening this bind only ever exposes /oauth/token (and
+// future JWT-protected machine routes) — the gate above keeps every
+// operator-UI route loopback-only regardless of the bind address.
+const NETWORK_ACCESS_BIND_ADDR = "0.0.0.0";
+
+// Live-rebinds an already-listening inspector server from its current
+// address to NETWORK_ACCESS_BIND_ADDR, in-process — no restart, and the
+// SAME Server object (so every route handler wired via startInspector's
+// createServer callback keeps working unchanged). closeAllConnections()
+// force-drops any lingering keep-alive/SSE sockets from the old bind so
+// close()'s callback (and therefore the re-listen) fires promptly instead
+// of waiting for those connections to end on their own; EventSource clients
+// auto-reconnect afterward.
+export function rebindInspector(server: Server, port: number, log: ReturnType<typeof createLogger>): void {
+  const alreadyOpen = server.address();
+  if (typeof alreadyOpen === "object" && alreadyOpen?.address === NETWORK_ACCESS_BIND_ADDR) {
+    return; // already bound wide — adding a second/third API client is a no-op here
+  }
+  server.close(() => {
+    server.listen(port, NETWORK_ACCESS_BIND_ADDR, () => {
+      log.info({ port, bindAddr: NETWORK_ACCESS_BIND_ADDR }, `inspector live-rebound for network access`);
+    });
+  });
+  server.closeAllConnections();
 }

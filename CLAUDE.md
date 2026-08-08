@@ -197,7 +197,11 @@ Tests live at `connector/tests/**/*.test.ts` mirroring `src/` (peer-tests layout
 
 ## Inspector UI notes
 
-The inspector lives inside the connector process at `INSPECTOR_PORT` (default 9090) and **binds to `127.0.0.1` only** (enforced in [connector/src/inspector/server.ts](connector/src/inspector/server.ts)'s `server.listen(port, "127.0.0.1", …)`). It is part of the customer side; it does **not** proxy or impersonate the controller. Reach it from outside the container via port-forward / exec — never via an LB. Don't relax the bind to `0.0.0.0`: the Webhooks panel exposes the bcrypt-protected URL by design.
+The inspector lives inside the connector process at `INSPECTOR_PORT` (default 9090). It is part of the customer side; it does **not** proxy or impersonate the controller. **There is no admin login or session concept.** The operator dashboard (and every route except the one below) is loopback-only, unconditionally, forever — `127.0.0.1` / `::1` requests bypass the gate; every other route rejects a non-loopback caller outright, with no header, token, or opt-in that changes that.
+
+The one exception is the machine API: `POST /oauth/token` (OAuth2 `client_credentials`, self-issued or federated) becomes reachable non-loopback once an operator has added at least one API client from that same trusted loopback session — the first client added flips `network_access.enabled` and live-rebinds the listener (no restart); every client after that is just another credential. Full flow in [docs/INSPECTOR.md](docs/INSPECTOR.md#network-access) and [docs/NETWORK-ACCESS.md](docs/NETWORK-ACCESS.md).
+
+Don't relax the bind to `0.0.0.0` any other way (env var, code change): the Webhooks panel exposes the bcrypt-protected URL by design, and only the machine-API rebind above pairs that widening with a real credential check — and even then, only for `/oauth/token`, never the dashboard. **Never bridge `INSPECTOR_PORT` to a public load balancer.**
 
 **Two auth layers guard the inspector routes despite the loopback bind:**
 

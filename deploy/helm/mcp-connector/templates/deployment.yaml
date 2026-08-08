@@ -48,6 +48,9 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "mcp-connector.fullname" . }}-auth
+          ports:
+            - name: inspector
+              containerPort: 9090
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
