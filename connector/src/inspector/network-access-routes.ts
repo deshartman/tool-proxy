@@ -1,21 +1,22 @@
-// CONNECTOR-NETWORK-EXPOSURE — inspector routes for the admin login flow
-// and the machine-API "Add API client" action. Mirrors tunnel-routes.ts's
-// shape: a deps object threaded in from boot/lifecycle.ts, one exported
-// factory returning bound handlers, guardCsrf on every state-changing POST.
+// CONNECTOR-NETWORK-EXPOSURE — inspector routes for machine-API client
+// management. Mirrors tunnel-routes.ts's shape: a deps object threaded in
+// from boot/lifecycle.ts, one exported factory returning bound handlers,
+// guardCsrf on every state-changing POST. All of these routes are
+// operator actions reached from the SAME trusted loopback session as
+// Configure Tunnel — there is no separate admin login. Adding the first
+// API client is what turns on non-loopback reachability for the machine
+// API (POST /oauth/token) — see handleAddClient below.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { guardCsrf } from "./server.js";
 import { BodyTooLargeError, readJsonBody } from "./read-body.js";
 import type { ConfigStore } from "../config-store/index.js";
-import type { AdminSessionStore } from "./network-access.js";
 
 interface NetworkAccessRoutesDeps {
   configStore: ConfigStore;
-  sessions: AdminSessionStore;
-  // Live-rebinds the inspector's HTTP listener from loopback to the
-  // configured non-loopback bind address, in-process. Called once, from
-  // the "enable" handler; a no-op if the listener is already non-loopback
-  // (re-clicking "Enable network access" after it's already on).
+  // Live-rebinds the inspector's HTTP listener from loopback to reachable-
+  // from-elsewhere, in-process. Called once, the first time an API client
+  // is added; a no-op if the listener is already non-loopback.
   rebindNonLoopback: () => void;
 }
 
@@ -44,59 +45,6 @@ async function readBody(req: IncomingMessage, res: ServerResponse): Promise<Reco
   }
 }
 
-// POST /internal/network-access/login — body: { secret }
-// No prior session required (that would be circular) — this route mints
-// the session. Reachable from non-loopback ONLY once network access is
-// already enabled (otherwise the bind is loopback-only and nothing off-box
-// can reach this route at all).
-async function handleLogin(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
-  if (!guardCsrf(req, res)) return;
-  setJsonHeaders(res);
-  const body = await readBody(req, res);
-  if (!body) return;
-  const secret = typeof body.secret === "string" ? body.secret : "";
-  const valid = await deps.configStore.verifyAdminSecret(secret);
-  if (!valid) {
-    res.statusCode = 401;
-    res.end(JSON.stringify({ ok: false, error: "invalid secret" }));
-    return;
-  }
-  const token = deps.sessions.mint();
-  res.statusCode = 200;
-  res.end(JSON.stringify({ ok: true, token }));
-}
-
-// POST /internal/network-access/enable — the one-click atomic action from
-// the plan: mint-if-absent, persist enabled=true, reveal the plaintext once
-// (only when freshly minted this call), then live-rebind the listener.
-async function handleEnable(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
-  if (!guardCsrf(req, res)) return;
-  setJsonHeaders(res);
-  const before = await deps.configStore.getNetworkAccessState();
-  const { plaintext } = await deps.configStore.mintAdminSecret();
-  await deps.configStore.setNetworkAccessEnabled(true);
-  res.statusCode = 200;
-  // Rebind AFTER the response has actually been flushed to the client —
-  // rebindNonLoopback() force-closes existing connections
-  // (closeAllConnections()) to make the close()+relisten prompt, and the
-  // socket carrying THIS very response is one of them. Doing it before
-  // res.end() finishes writing raced the client into ERR_EMPTY_RESPONSE
-  // (caught live via the inspector UI's own "Enable network access" click).
-  res.on("finish", () => deps.rebindNonLoopback());
-  res.end(JSON.stringify({ ok: true, secret: plaintext, alreadyEnabled: before.enabled }));
-}
-
-// POST /internal/network-access/rotate — always mints a new secret and
-// shows it once. Does not touch already-issued sessions (rotating the
-// login credential doesn't need to log out sessions already established).
-async function handleRotate(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
-  if (!guardCsrf(req, res)) return;
-  setJsonHeaders(res);
-  const secret = await deps.configStore.rotateAdminSecret();
-  res.statusCode = 200;
-  res.end(JSON.stringify({ ok: true, secret }));
-}
-
 // GET /internal/network-access/status
 async function handleStatus(_req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
   setJsonHeaders(res);
@@ -106,6 +54,10 @@ async function handleStatus(_req: IncomingMessage, res: ServerResponse, deps: Ne
 }
 
 // POST /internal/network-access/clients — "Add API client". Body: { name? }
+// The FIRST client ever added flips network_access.enabled on and live-
+// rebinds the listener non-loopback — no separate "Enable" step. Every
+// subsequent add is a no-op on that front (setNetworkAccessEnabled(true)
+// and rebindNonLoopback() are both idempotent).
 async function handleAddClient(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
   if (!guardCsrf(req, res)) return;
   setJsonHeaders(res);
@@ -113,7 +65,15 @@ async function handleAddClient(req: IncomingMessage, res: ServerResponse, deps: 
   if (!body) return;
   const name = typeof body.name === "string" && body.name ? body.name : undefined;
   const { clientId, clientSecret } = await deps.configStore.mintApiClient(name);
+  const wasEnabled = (await deps.configStore.getNetworkAccessState()).enabled;
+  if (!wasEnabled) await deps.configStore.setNetworkAccessEnabled(true);
   res.statusCode = 200;
+  // Rebind AFTER the response has actually been flushed — rebindNonLoopback()
+  // force-closes existing connections to make the close()+relisten prompt,
+  // and the socket carrying THIS response is one of them. Doing it before
+  // res.end() finishes writing raced the client into ERR_EMPTY_RESPONSE
+  // (caught live via the inspector UI's own "Add API client" click).
+  if (!wasEnabled) res.on("finish", () => deps.rebindNonLoopback());
   res.end(JSON.stringify({ ok: true, clientId, clientSecret }));
 }
 
@@ -153,9 +113,6 @@ async function handleRevokeClient(req: IncomingMessage, res: ServerResponse, dep
 
 export function createNetworkAccessRoutes(deps: NetworkAccessRoutesDeps) {
   return {
-    handleLogin: (req: IncomingMessage, res: ServerResponse) => handleLogin(req, res, deps),
-    handleEnable: (req: IncomingMessage, res: ServerResponse) => handleEnable(req, res, deps),
-    handleRotate: (req: IncomingMessage, res: ServerResponse) => handleRotate(req, res, deps),
     handleStatus: (req: IncomingMessage, res: ServerResponse) => handleStatus(req, res, deps),
     handleAddClient: (req: IncomingMessage, res: ServerResponse) => handleAddClient(req, res, deps),
     handleListClients: (req: IncomingMessage, res: ServerResponse) => handleListClients(req, res, deps),

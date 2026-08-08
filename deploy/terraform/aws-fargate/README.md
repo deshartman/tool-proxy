@@ -74,8 +74,9 @@ resource "aws_security_group_rule" "connector_inspector" {
 }
 ```
 
-That alone doesn't expose anything unauthenticated — every non-loopback
-request still needs a valid admin session or bearer token; you still have
-to click "Enable network access" in the inspector (or it needs to already
-be enabled from a prior boot) before the app itself will bind wider than
-127.0.0.1. See `docs/NETWORK-ACCESS.md`.
+That alone doesn't expose anything unauthenticated: only `POST /oauth/token`
+is ever reachable non-loopback, gated by a machine caller's own
+`client_id`/`client_secret`, and only once an operator has added at least
+one API client from the inspector's loopback session (or one already
+exists from a prior boot) — the dashboard itself never becomes reachable
+this way, under any configuration. See `docs/NETWORK-ACCESS.md`.

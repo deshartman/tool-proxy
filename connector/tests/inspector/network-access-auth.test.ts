@@ -3,12 +3,12 @@ import type { Server, Socket } from "node:net";
 import { Inspector, startInspector } from "../../src/inspector/server.js";
 
 // CONNECTOR-NETWORK-EXPOSURE — the request-dispatch gate in server.ts must:
-//   - always pass loopback callers through unchanged (today's behavior,
-//     forever, regardless of network-access state)
-//   - 401 any non-loopback caller on a non-public path without a valid
-//     admin session
-//   - 401 a non-loopback caller presenting a garbage or wrong-length bearer
-//   - let a non-loopback caller with the EXACT correct bearer through
+//   - always pass loopback callers through unchanged, for every route
+//     (today's behavior, forever, regardless of network-access state —
+//     there is no admin login, this dashboard is loopback-only period)
+//   - let a non-loopback caller reach ONLY /oauth/token
+//   - 403 a non-loopback caller on every other path, unconditionally —
+//     no header, no token, no opt-in changes that
 //
 // This exercises the real production gate (startInspector/Inspector), not
 // a reimplementation of it — mirrors bind-addr-guard.test.ts's preference
@@ -43,12 +43,22 @@ describe("Network-access request gate (CONNECTOR-NETWORK-EXPOSURE)", () => {
       port = (httpServer.address() as { port: number }).port;
     });
 
-    it("reaches the route handler with no Authorization header at all", async () => {
-      const res = await fetch(`http://127.0.0.1:${port}/internal/network-access/status`);
+    it("reaches the route handler for the dashboard and internal routes with no header at all", async () => {
+      const dashboard = await fetch(`http://127.0.0.1:${port}/`);
+      expect(dashboard.status).toBe(200);
+
+      const status = await fetch(`http://127.0.0.1:${port}/internal/network-access/status`);
       // 404 (no networkAccessRoutes wired in this test) proves the request
-      // reached the route dispatch — a 401 from the gate would short-circuit
+      // reached the route dispatch — a 403 from the gate would short-circuit
       // before ever getting there.
-      expect(res.status).toBe(404);
+      expect(status.status).toBe(404);
+    });
+
+    it("/events connects with no token/header at all", async () => {
+      const ac = new AbortController();
+      const res = await fetch(`http://127.0.0.1:${port}/events`, { signal: ac.signal });
+      expect(res.status).toBe(200);
+      ac.abort();
     });
   });
 
@@ -61,53 +71,38 @@ describe("Network-access request gate (CONNECTOR-NETWORK-EXPOSURE)", () => {
       port = (httpServer.address() as { port: number }).port;
     });
 
-    it("no Authorization header → 401, never reaches the route handler", async () => {
-      const res = await fetch(`http://127.0.0.1:${port}/internal/network-access/status`);
-      expect(res.status).toBe(401);
-      const body = await res.json();
-      expect(body.ok).toBe(false);
-    });
-
-    it("garbage bearer → 401", async () => {
-      const res = await fetch(`http://127.0.0.1:${port}/internal/network-access/status`, {
-        headers: { authorization: "Bearer not-a-real-token" },
-      });
-      expect(res.status).toBe(401);
-    });
-
-    it("wrong-length bearer → 401", async () => {
-      const res = await fetch(`http://127.0.0.1:${port}/internal/network-access/status`, {
-        headers: { authorization: "Bearer short" },
-      });
-      expect(res.status).toBe(401);
-    });
-
-    it("exact correct bearer → reaches the route handler", async () => {
-      const token = inspector.sessions.mint();
-      const res = await fetch(`http://127.0.0.1:${port}/internal/network-access/status`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
-      // 404 (no networkAccessRoutes wired) proves the gate let it through —
-      // a 401 would mean the session check itself failed.
-      expect(res.status).toBe(404);
-    });
-
-    it("public paths (static assets) never require a session", async () => {
+    it("the dashboard is unreachable — 403, no exceptions, no login flow", async () => {
       const res = await fetch(`http://127.0.0.1:${port}/`);
-      expect(res.status).not.toBe(401);
+      expect(res.status).toBe(403);
     });
 
-    it("/events with the token as a query param (EventSource can't set headers)", async () => {
-      const token = inspector.sessions.mint();
-      const ac = new AbortController();
-      const res = await fetch(`http://127.0.0.1:${port}/events?token=${token}`, { signal: ac.signal });
-      expect(res.status).toBe(200);
-      ac.abort();
+    it("static assets are unreachable — 403", async () => {
+      const res = await fetch(`http://127.0.0.1:${port}/app.js`);
+      expect(res.status).toBe(403);
     });
 
-    it("/events with no token → 401", async () => {
+    it("/events is unreachable — 403", async () => {
       const res = await fetch(`http://127.0.0.1:${port}/events`);
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
+    });
+
+    it("API-client management is unreachable — 403 (operator-only, loopback-gated)", async () => {
+      const res = await fetch(`http://127.0.0.1:${port}/internal/network-access/status`);
+      expect(res.status).toBe(403);
+    });
+
+    it("even a well-formed bearer header doesn't help — there is no session concept anymore", async () => {
+      const res = await fetch(`http://127.0.0.1:${port}/internal/network-access/status`, {
+        headers: { authorization: "Bearer anything-at-all" },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("/oauth/token is the one path that reaches the route dispatch", async () => {
+      const res = await fetch(`http://127.0.0.1:${port}/oauth/token`, { method: "POST" });
+      // 404 (no oauthTokenHandler wired in this test) proves the gate let it
+      // through — a 403 would mean the allowlist check itself failed.
+      expect(res.status).toBe(404);
     });
   });
 });

@@ -3,10 +3,15 @@ import os from "node:os";
 import { Inspector, startInspector, rebindInspector } from "../../src/inspector/server.js";
 import { createLogger } from "../../src/logger.js";
 
-// CONNECTOR-NETWORK-EXPOSURE — "Enable network access" must live-rebind the
-// SAME http.Server instance from loopback-only to reachable-from-elsewhere,
-// with no process restart and no server recreation, while loopback access
-// keeps working throughout (the permanent recovery path never regresses).
+// CONNECTOR-NETWORK-EXPOSURE — adding the first API client must live-rebind
+// the SAME http.Server instance from loopback-only to reachable-from-
+// elsewhere, with no process restart and no server recreation, while
+// loopback access keeps working throughout (the permanent path never
+// regresses). Post-rebind, the socket itself accepts connections from the
+// external interface — but the gate still 403s everything except
+// /oauth/token, so this test hits that path, not "/", to confirm real
+// reachability at the TCP level (a 404 here means the request cleared the
+// gate; the dashboard route itself would 403 from that same address).
 //
 // A genuine non-loopback client is simulated by connecting via the host's
 // own real network interface address rather than 127.0.0.1 — before the
@@ -34,19 +39,21 @@ describe.skipIf(!externalAddr)("Live network-access rebind (CONNECTOR-NETWORK-EX
 
     // Before "enable": bound to 127.0.0.1 only.
     await expect(
-      fetch(`http://${externalAddr}:${port}/`, { signal: AbortSignal.timeout(1500) })
+      fetch(`http://${externalAddr}:${port}/oauth/token`, { method: "POST", signal: AbortSignal.timeout(1500) })
     ).rejects.toThrow();
     const beforeLoopback = await fetch(`http://127.0.0.1:${port}/`);
     expect(beforeLoopback.status).toBe(200);
 
-    // "Enable network access" — live rebind. Same Server object throughout;
-    // no restart, no re-registering routes.
+    // Adding the first API client — live rebind. Same Server object
+    // throughout; no restart, no re-registering routes.
     rebindInspector(httpServer, port, log);
     await new Promise<void>((resolve) => httpServer.once("listening", () => resolve()));
 
-    // After: reachable via the external interface AND still via loopback.
-    const afterExternal = await fetch(`http://${externalAddr}:${port}/`);
-    expect(afterExternal.status).toBe(200);
+    // After: /oauth/token reachable via the external interface (404 here
+    // means no handler wired in this test, not a gate rejection) AND the
+    // dashboard still reachable via loopback.
+    const afterExternal = await fetch(`http://${externalAddr}:${port}/oauth/token`, { method: "POST" });
+    expect(afterExternal.status).toBe(404);
     const afterLoopback = await fetch(`http://127.0.0.1:${port}/`);
     expect(afterLoopback.status).toBe(200);
 

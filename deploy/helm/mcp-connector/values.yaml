@@ -61,12 +61,13 @@ secrets:
 #
 # CONNECTOR-NETWORK-EXPOSURE — set networkAccess.enabled: true to render a
 # Service for the inspector port when you want it reachable from elsewhere
-# in the cluster (e.g. a machine caller hitting the /oauth/token +
-# outbound-calls API). This alone does NOT expose anything unauthenticated
-# — every non-loopback request still needs a valid admin session or bearer
-# token (see docs/NETWORK-ACCESS.md). Enabling this Service without also
-# clicking "Enable network access" in the inspector is a no-op: the app
-# still 401s everything until that admin action has run.
+# in the cluster (e.g. a machine caller hitting the /oauth/token API). This
+# alone does NOT expose anything unauthenticated: only /oauth/token is
+# ever reachable non-loopback, gated by a machine caller's own client_id/
+# client_secret (see docs/NETWORK-ACCESS.md). The dashboard itself never
+# becomes reachable this way, under any configuration. Enabling this
+# Service without also adding an API client from the inspector's loopback
+# session is a no-op: the app still 403s /oauth/token until one exists.
 networkAccess:
   enabled: false
   # ClusterIP keeps this inside the cluster network by default; switch to

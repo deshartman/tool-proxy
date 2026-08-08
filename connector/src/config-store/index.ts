@@ -38,7 +38,6 @@ export interface ControllerInput {
 
 export interface NetworkAccessState {
   enabled: boolean;
-  hasSecret: boolean;
 }
 
 export interface ApiClientSummary {
@@ -199,49 +198,20 @@ export class ConfigStore {
     return (rowCount ?? 0) > 0;
   }
 
-  // ─── Network access (admin secret) ─────────────────────────────────────
+  // ─── Network access ─────────────────────────────────────────────────────
+  // Gates ONLY the machine API being reachable non-loopback. There is no
+  // admin secret / session concept — the operator UI stays loopback-only
+  // unconditionally, forever (see CLAUDE.md "Inspector UI notes").
 
   async getNetworkAccessState(): Promise<NetworkAccessState> {
     const { rows } = await this.pool.query(
-      `SELECT admin_secret_ct, enabled FROM ${this.schema}.network_access WHERE id=1`
+      `SELECT enabled FROM ${this.schema}.network_access WHERE id=1`
     );
-    if (rows.length === 0) return { enabled: false, hasSecret: false };
-    return { enabled: rows[0].enabled, hasSecret: rows[0].admin_secret_ct !== null };
+    return { enabled: rows[0]?.enabled ?? false };
   }
 
-  // Generates + seals + persists a fresh admin secret the FIRST time it's
-  // called. A second call while a secret already exists is a no-op — it
-  // never regenerates and never re-exposes the existing plaintext (that's
-  // what rotateAdminSecret() is for). Returns the plaintext only when a
-  // fresh secret was actually minted this call.
-  async mintAdminSecret(): Promise<{ plaintext: string | undefined }> {
-    const existing = await this.getNetworkAccessState();
-    if (existing.hasSecret) return { plaintext: undefined };
-    const plaintext = randomBytes(32).toString("base64url");
-    const ct = seal(Buffer.from(plaintext, "utf8"), this.key.bytes);
-    await this.pool.query(
-      `INSERT INTO ${this.schema}.network_access (id, admin_secret_ct, updated_at)
-       VALUES (1, $1, now())
-       ON CONFLICT (id) DO UPDATE SET admin_secret_ct = EXCLUDED.admin_secret_ct, updated_at = now()`,
-      [ct]
-    );
-    return { plaintext };
-  }
-
-  // Always regenerates, regardless of whether a secret already exists.
-  // The old plaintext stops verifying immediately (overwritten in place).
-  async rotateAdminSecret(): Promise<string> {
-    const plaintext = randomBytes(32).toString("base64url");
-    const ct = seal(Buffer.from(plaintext, "utf8"), this.key.bytes);
-    await this.pool.query(
-      `INSERT INTO ${this.schema}.network_access (id, admin_secret_ct, updated_at)
-       VALUES (1, $1, now())
-       ON CONFLICT (id) DO UPDATE SET admin_secret_ct = EXCLUDED.admin_secret_ct, updated_at = now()`,
-      [ct]
-    );
-    return plaintext;
-  }
-
+  // Called once, the first time an operator adds an API client — never
+  // reverts automatically, even if every client is later removed.
   async setNetworkAccessEnabled(enabled: boolean): Promise<void> {
     await this.pool.query(
       `INSERT INTO ${this.schema}.network_access (id, enabled, updated_at)
@@ -249,21 +219,6 @@ export class ConfigStore {
        ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
       [enabled]
     );
-  }
-
-  // Constant-time verify. Empty string, wrong length, and correct-length-
-  // but-wrong-value candidates all return false without throwing.
-  async verifyAdminSecret(candidate: string): Promise<boolean> {
-    if (typeof candidate !== "string" || candidate.length === 0) return false;
-    const { rows } = await this.pool.query(
-      `SELECT admin_secret_ct FROM ${this.schema}.network_access WHERE id=1`
-    );
-    const sealedSecret = rows[0]?.admin_secret_ct as Buffer | undefined;
-    if (!sealedSecret) return false;
-    const known = open(sealedSecret, this.key.bytes);
-    const supplied = Buffer.from(candidate, "utf8");
-    if (known.length !== supplied.length) return false;
-    return timingSafeEqual(known, supplied);
   }
 
   // ─── Machine-API client credentials ────────────────────────────────────

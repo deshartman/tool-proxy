@@ -99,12 +99,14 @@ az containerapp ingress enable \
   --type internal --target-port 9090 --transport auto
 ```
 
-That alone doesn't expose anything unauthenticated — every non-loopback
-request still needs a valid admin session or bearer token once you click
-"Enable network access" in the inspector (or it was already enabled from a
-prior boot). Until that admin action has run, internal callers just get
-401s. See `docs/NETWORK-ACCESS.md`. Still never use `--type external` for
-this port — that's public internet, which this feature is not for.
+That alone doesn't expose anything unauthenticated — only `POST /oauth/token`
+is ever reachable non-loopback, gated by a machine caller's own
+`client_id`/`client_secret`. Until an operator has added at least one API
+client from the inspector's loopback session (or one already exists from
+a prior boot), internal callers just get 403s. The dashboard itself never
+answers non-loopback requests, under any configuration. See
+`docs/NETWORK-ACCESS.md`. Still never use `--type external` for this port
+— that's public internet, which this feature is not for.
 
 ## Reconnect — orchestrator vs. built-in
 

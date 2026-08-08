@@ -27,11 +27,12 @@ Set these only when the default doesn't match your infrastructure.
 
 These two remain reserved for the Fly.io WireGuard-mesh case only (see
 CLAUDE.md / [`docs/INSPECTOR.md`](INSPECTOR.md)) — they're unrelated to
-"Enable network access" (see [`docs/NETWORK-ACCESS.md`](NETWORK-ACCESS.md)).
-No new env vars back that feature: enabling network access, minting the
-admin secret, and onboarding machine-API clients are all DB/UI-driven at
-runtime, not env-var/restart-driven — a deliberate choice so rotation and
-onboarding never require a redeploy.
+the machine API's network access (see
+[`docs/NETWORK-ACCESS.md`](NETWORK-ACCESS.md)). No new env vars back that
+feature: onboarding machine-API clients is entirely DB/UI-driven at
+runtime, not env-var/restart-driven — a deliberate choice so onboarding
+never requires a redeploy. There is no admin login or session concept at
+all; the operator dashboard stays loopback-only unconditionally.
 | `MCP_BUNDLED_DIR` | `/app/bundled-mcps` | Where the connector's boot scanner discovers Twilio-shipped MCPs. Baked at image-build time; override only when extending the image via volume mount rather than derived-image `COPY`. |
 | `MCP_DROPIN_DIR` | `/var/lib/mcp-connector/customer-mcps` | Where the connector discovers customer-authored Type 1 drop-ins. The derived-image + volume-mount delivery paths both land content here. |
 | `MCP_BASE_PORT` | `7100` | Starting port for the auto-assignment probe for Type 1 drop-in child processes. Bump to avoid collision with anything else in the container's network namespace. |

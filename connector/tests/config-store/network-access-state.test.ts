@@ -4,8 +4,13 @@ import { initSodium } from "../../src/config-store/seal.js";
 import { randomBytes, createHash } from "node:crypto";
 import pg from "pg";
 
-describe("ConfigStore — admin secret + API clients (CONNECTOR-NETWORK-EXPOSURE)", () => {
-  const TEST_SCHEMA = "test_mcp_connector_admin_" + Date.now();
+// CONNECTOR-NETWORK-EXPOSURE — network_access.enabled gates ONLY the
+// machine API (POST /oauth/token) being reachable non-loopback. There is
+// no admin secret / session concept — the operator UI stays loopback-only
+// unconditionally, forever.
+
+describe("ConfigStore — network access state + API clients", () => {
+  const TEST_SCHEMA = "test_mcp_connector_netaccess_" + Date.now();
   let store: ConfigStore | undefined;
   let pool: pg.Pool;
   let masterKey: { bytes: Buffer; fingerprint: string };
@@ -61,87 +66,14 @@ describe("ConfigStore — admin secret + API clients (CONNECTOR-NETWORK-EXPOSURE
   });
 
   describe("getNetworkAccessState()", () => {
-    it("returns disabled/no-secret before anything is minted", async () => {
+    it("returns disabled before anything is enabled", async () => {
       const state = await store!.getNetworkAccessState();
-      expect(state).toEqual({ enabled: false, hasSecret: false });
-    });
-  });
-
-  describe("mintAdminSecret()", () => {
-    it("generates a fresh secret when none exists", async () => {
-      const { plaintext } = await store!.mintAdminSecret();
-      expect(plaintext).toBeDefined();
-      expect(plaintext!.length).toBeGreaterThan(20);
-      const state = await store!.getNetworkAccessState();
-      expect(state.hasSecret).toBe(true);
-    });
-
-    it("seals the secret at rest", async () => {
-      const { plaintext } = await store!.mintAdminSecret();
-      const { rows } = await pool.query(`SELECT admin_secret_ct FROM ${TEST_SCHEMA}.network_access WHERE id=1`);
-      const stored = rows[0].admin_secret_ct as Buffer;
-      expect(stored).toBeInstanceOf(Buffer);
-      expect(stored.toString("utf8")).not.toBe(plaintext);
-    });
-
-    it("second call is a no-op — never re-exposes the plaintext", async () => {
-      const first = await store!.mintAdminSecret();
-      expect(first.plaintext).toBeDefined();
-
-      const second = await store!.mintAdminSecret();
-      expect(second.plaintext).toBeUndefined();
-
-      // The original secret still verifies — proving it wasn't replaced.
-      const stillValid = await store!.verifyAdminSecret(first.plaintext!);
-      expect(stillValid).toBe(true);
-    });
-  });
-
-  describe("rotateAdminSecret()", () => {
-    it("replaces the sealed value; the old plaintext no longer verifies", async () => {
-      const { plaintext: original } = await store!.mintAdminSecret();
-      const rotated = await store!.rotateAdminSecret();
-
-      expect(rotated).not.toBe(original);
-      expect(await store!.verifyAdminSecret(original!)).toBe(false);
-      expect(await store!.verifyAdminSecret(rotated)).toBe(true);
-    });
-
-    it("works even when no secret was ever minted", async () => {
-      const rotated = await store!.rotateAdminSecret();
-      expect(await store!.verifyAdminSecret(rotated)).toBe(true);
-    });
-  });
-
-  describe("verifyAdminSecret()", () => {
-    it("returns false when no secret has been minted", async () => {
-      expect(await store!.verifyAdminSecret("anything")).toBe(false);
-    });
-
-    it("returns false for an empty string, without throwing", async () => {
-      await store!.mintAdminSecret();
-      await expect(store!.verifyAdminSecret("")).resolves.toBe(false);
-    });
-
-    it("returns false for a wrong-length candidate, without throwing", async () => {
-      await store!.mintAdminSecret();
-      await expect(store!.verifyAdminSecret("short")).resolves.toBe(false);
-    });
-
-    it("returns false for a correct-length-but-wrong-value candidate, without throwing", async () => {
-      const { plaintext } = await store!.mintAdminSecret();
-      const wrongSameLength = "x".repeat(plaintext!.length);
-      await expect(store!.verifyAdminSecret(wrongSameLength)).resolves.toBe(false);
-    });
-
-    it("returns true for the exact current plaintext", async () => {
-      const { plaintext } = await store!.mintAdminSecret();
-      expect(await store!.verifyAdminSecret(plaintext!)).toBe(true);
+      expect(state).toEqual({ enabled: false });
     });
   });
 
   describe("setNetworkAccessEnabled()", () => {
-    it("persists the enabled flag independently of the secret", async () => {
+    it("persists the enabled flag", async () => {
       await store!.setNetworkAccessEnabled(true);
       expect((await store!.getNetworkAccessState()).enabled).toBe(true);
       await store!.setNetworkAccessEnabled(false);

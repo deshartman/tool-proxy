@@ -44,10 +44,12 @@ services:
       - "9090:9090"   # was 127.0.0.1:9090:9090
 ```
 
-That alone doesn't expose anything unauthenticated — every non-loopback
-request still needs a valid admin session or bearer token once you click
-"Enable network access" in the inspector (or it was already enabled from a
-prior boot). See `docs/NETWORK-ACCESS.md`.
+That alone doesn't expose anything unauthenticated: only `POST /oauth/token`
+is ever reachable non-loopback, gated by a machine caller's own
+`client_id`/`client_secret`, and only once an operator has added at least
+one API client from the inspector's loopback session (or one already
+exists from a prior boot) — the dashboard itself never becomes reachable
+this way. See `docs/NETWORK-ACCESS.md`.
 
 ## See also
 

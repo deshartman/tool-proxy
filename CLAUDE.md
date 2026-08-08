@@ -197,12 +197,11 @@ Tests live at `connector/tests/**/*.test.ts` mirroring `src/` (peer-tests layout
 
 ## Inspector UI notes
 
-The inspector lives inside the connector process at `INSPECTOR_PORT` (default 9090). It is part of the customer side; it does **not** proxy or impersonate the controller. Two tiers of access, permanently distinct:
+The inspector lives inside the connector process at `INSPECTOR_PORT` (default 9090). It is part of the customer side; it does **not** proxy or impersonate the controller. **There is no admin login or session concept.** The operator dashboard (and every route except the one below) is loopback-only, unconditionally, forever — `127.0.0.1` / `::1` requests bypass the gate; every other route rejects a non-loopback caller outright, with no header, token, or opt-in that changes that.
 
-- **Loopback — always trusted, unconditionally, forever.** `127.0.0.1` / `::1` requests bypass every auth check, regardless of whether network access (below) is enabled. This is the permanent fallback: reach it from outside the container via port-forward / exec, and it never stops working even if every credential this feature adds is lost.
-- **Network access — explicit, off-by-default, auditable opt-in.** An admin clicks "Enable network access" from a trusted loopback session; the connector mints + seals an admin secret, live-rebinds its listener non-loopback (no restart), and from then on every non-loopback request needs a valid admin session (operator UI) or OAuth2 bearer (machine API — `POST /oauth/token`, `client_credentials` grant, self-issued or federated). Full flow in [docs/INSPECTOR.md](docs/INSPECTOR.md#network-access) and [docs/NETWORK-ACCESS.md](docs/NETWORK-ACCESS.md).
+The one exception is the machine API: `POST /oauth/token` (OAuth2 `client_credentials`, self-issued or federated) becomes reachable non-loopback once an operator has added at least one API client from that same trusted loopback session — the first client added flips `network_access.enabled` and live-rebinds the listener (no restart); every client after that is just another credential. Full flow in [docs/INSPECTOR.md](docs/INSPECTOR.md#network-access) and [docs/NETWORK-ACCESS.md](docs/NETWORK-ACCESS.md).
 
-Don't relax the bind to `0.0.0.0` any other way (env var, code change): the Webhooks panel exposes the bcrypt-protected URL by design, and only the network-access opt-in above pairs that widening with the real authentication layer to match. **Never bridge `INSPECTOR_PORT` to a public load balancer** — that statement is now describing one of two paths (the loopback-only default, and the still-private-network-only opt-in), not the only path; it is never a statement about exposing this port to the public internet.
+Don't relax the bind to `0.0.0.0` any other way (env var, code change): the Webhooks panel exposes the bcrypt-protected URL by design, and only the machine-API rebind above pairs that widening with a real credential check — and even then, only for `/oauth/token`, never the dashboard. **Never bridge `INSPECTOR_PORT` to a public load balancer.**
 
 **Two auth layers guard the inspector routes despite the loopback bind:**
 

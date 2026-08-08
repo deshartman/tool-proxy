@@ -90,13 +90,14 @@ describe("helm chart — filesystem invariants", () => {
 
   it("does NOT render a Service for the inspector port by default", () => {
     // CONNECTOR-NETWORK-EXPOSURE added templates/service.yaml, gated
-    // behind .Values.networkAccess.enabled (default false) — the
-    // inspector now has a real authentication layer for non-loopback
-    // callers, so a Service targeting port 9090 is no longer inherently
-    // unsafe once an operator has deliberately opted in on BOTH sides
-    // (this flag AND clicking "Enable network access" in the inspector).
-    // The invariant that still matters is "off by default", not "can
-    // never exist" — see architectural-plans/CONNECTOR-NETWORK-EXPOSURE.md.
+    // behind .Values.networkAccess.enabled (default false). A Service
+    // targeting port 9090 is no longer inherently unsafe: only
+    // POST /oauth/token ever answers a non-loopback request (gated by a
+    // machine caller's own client_id/client_secret), and only once an
+    // operator has added at least one API client from the inspector's
+    // loopback session — the dashboard itself never becomes reachable
+    // this way. The invariant that still matters is "off by default",
+    // not "can never exist" — see architectural-plans/CONNECTOR-NETWORK-EXPOSURE.md.
     const values = readFileSync(join(HELM_DIR, "values.yaml"), "utf8");
     expect(values).toMatch(/networkAccess:\s*\n\s*enabled:\s*false/);
 

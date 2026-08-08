@@ -144,15 +144,14 @@ async function bootFromDb(): Promise<void> {
 
   if (inspector) {
     inspector.onReconnect = () => { void reconnect("inspector requested", { manual: true }); };
-    // CONNECTOR-NETWORK-EXPOSURE — if a prior boot already had network
-    // access enabled, bind non-loopback directly on this boot too (step 5
-    // of the build checklist: the loopback-first-then-enable sequence is
-    // one-time setup, not something repeated on every restart).
+    // CONNECTOR-NETWORK-EXPOSURE — if a prior boot already had an API
+    // client added, bind non-loopback directly on this boot too (the
+    // loopback-first-then-add-a-client sequence is one-time, not
+    // something repeated on every restart).
     const networkAccessState = await store.getNetworkAccessState();
     const httpServer = startInspector(inspectorPort, inspector, { networkAccessEnabled: networkAccessState.enabled });
     inspector.wireNetworkAccessRoutes(createNetworkAccessRoutes({
       configStore: store,
-      sessions: inspector.sessions,
       rebindNonLoopback: () => rebindInspector(httpServer, inspectorPort, log),
     }));
     // Machine API — self-issued client_credentials grant. Signing key is

@@ -6,29 +6,6 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- CONNECTOR-NETWORK-EXPOSURE — login screen. Shown instead of the
-       dashboard when a non-loopback caller has no valid admin session yet
-       (loopback callers never see this — the gate lets them straight
-       through). Plain paste-the-secret-once form; on success the returned
-       session token is stored in sessionStorage and every subsequent
-       fetch/SSE call attaches it. -->
-  <div id="login-screen" class="login-screen" hidden>
-    <div class="login-panel">
-      <h1>MCP Connector</h1>
-      <p class="muted">This connector is reachable over the network. Enter the admin secret to continue.</p>
-      <form id="login-form" autocomplete="off">
-        <label class="tunnel-field">
-          <span>Admin secret</span>
-          <input type="password" name="secret" autocomplete="current-password" required>
-        </label>
-        <div id="login-error" class="tunnel-form-error" hidden></div>
-        <div class="tunnel-form-actions">
-          <button type="submit" id="login-submit" class="tunnel-primary-btn">Log in</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
   <header id="app-header">
     <div class="header-meta">
       <h1>MCP Connector Inspector</h1>
@@ -102,11 +79,13 @@
         </div>
       </section>
 
-      <!-- CONNECTOR-NETWORK-EXPOSURE — always loopback-reachable, whether or
-           not network access is currently enabled. "Enable network access"
-           / "Rotate secret" reveal the plaintext once, in-page, never in a
-           log line. "Add API client" mints a client_id/client_secret pair
-           for the machine API (POST /oauth/token). -->
+      <!-- CONNECTOR-NETWORK-EXPOSURE — this inspector UI is loopback-only,
+           unconditionally, forever — there is no admin login. "API
+           clients" is a separate credential system for machine callers
+           (POST /oauth/token): adding the first one is what makes that
+           one endpoint reachable non-loopback. Management (mint/list/
+           revoke) still happens from this same loopback session; only the
+           read-only per-client detail view lives in the right pane. -->
       <section id="network-access-pane" class="collapsible" data-key="network-access">
         <h2 class="section-head">
           <span class="caret">▾</span>
@@ -117,14 +96,10 @@
           <div id="network-access-loading" class="empty">Loading…</div>
           <div id="network-access-content" hidden>
             <p id="network-access-state" class="muted"></p>
-            <div class="tunnel-form-actions">
-              <button id="network-access-enable-btn" type="button" class="tunnel-primary-btn">Enable network access</button>
-              <button id="network-access-rotate-btn" type="button" hidden>Rotate secret</button>
-            </div>
-            <div id="network-access-reveal" class="tunnel-form-error" hidden></div>
 
-            <h3 class="api-clients-title">API clients</h3>
-            <ul id="api-clients-list"><li class="empty-msg">No API clients yet.</li></ul>
+            <h3 class="api-clients-title">API clients <span id="api-clients-count" class="muted"></span></h3>
+            <p class="network-access-subhead">Credentials for scripts/automations calling POST /oauth/token — not for logging into this UI (there's no login; this dashboard is loopback-only).</p>
+            <button id="network-access-clients-link" type="button" class="tunnel-name-btn" title="Click to view API clients in the right pane">View API clients →</button>
             <form id="api-client-form" class="tunnel-field" autocomplete="off">
               <input type="text" name="name" placeholder="Client label (optional)">
               <button type="submit">Add API client</button>
