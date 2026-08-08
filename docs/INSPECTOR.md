@@ -1,6 +1,8 @@
 # Inspector
 
-> The inspector is the connector's local web UI. It binds to `127.0.0.1:9090` (port configurable via `INSPECTOR_PORT`), renders live state, and exposes per-MCP operator actions. **Loopback only — never bridge to a public load balancer.** It carries the bcrypt-protected webhook URL with a copy button by design, and the SDK ↔ connector IPC routes carry no auth of their own.
+> The inspector is the connector's local web UI. It binds to `127.0.0.1:9090` (port configurable via `INSPECTOR_PORT`), renders live state, and exposes per-MCP operator actions. Loopback access is **always trusted, unconditionally, forever** — that never changes, and there is no admin login of any kind. It carries the bcrypt-protected webhook URL with a copy button by design, and the SDK ↔ connector IPC routes carry no auth of their own beyond the per-MCP webhook token. **Never bridge `INSPECTOR_PORT` to a public load balancer.**
+>
+> One thing, and only one thing, is ever reachable non-loopback: `POST /oauth/token`, the machine API's OAuth2 `client_credentials` grant — and only once an operator has added at least one API client from that same trusted loopback session. See [Network access](#network-access) below. The dashboard itself never becomes reachable off-box; there is no opt-in that changes that.
 
 Open it at <http://localhost:9090/> (or via SSH port-forward / `kubectl exec` from a deployed container).
 
@@ -123,13 +125,13 @@ If you find a leak, that's a **bug** — file an issue or rerun the leak test pa
 
 ## HTTP endpoints
 
-The inspector exposes a small set of HTTP routes on the loopback. **All of these are unauthenticated** — the trust boundary is the loopback bind.
+The inspector exposes a small set of HTTP routes. From the loopback bind, **every one of these is unauthenticated** — the trust boundary there is the loopback bind itself, exactly as it's always been. From anywhere else, only `POST /oauth/token` is reachable at all — everything else 403s unconditionally, whether or not any API client exists. There is no session, no login, no header that changes this for any other route.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET`  | `/`            | Static UI (`index.html`) |
-| `GET`  | `/app.js`, `/style.css` | Static assets |
-| `GET`  | `/events`      | Server-Sent Events stream of inspector state |
+| `GET`  | `/`            | Static UI (`index.html`) — loopback-only |
+| `GET`  | `/app.js`, `/style.css` | Static assets — loopback-only |
+| `GET`  | `/events`      | Server-Sent Events stream of inspector state — loopback-only |
 | `POST` | `/reconnect`   | Re-read YAML and redial the controller |
 | `POST` | `/mcp/reload-creds` | Re-fetch creds for one MCP from the controller |
 | `POST` | `/mcp/restart` | Restart one MCP child |
@@ -142,8 +144,12 @@ The inspector exposes a small set of HTTP routes on the loopback. **All of these
 | `POST` | `/tool/call`   | Invoke a tool through the same dispatch path the controller uses |
 | `GET`  | `/internal/webhook/stream?mcp=<name>` | SDK ↔ connector IPC: SSE stream of webhook events |
 | `POST` | `/internal/webhook/revoke` | SDK ↔ connector IPC: explicit teardown |
+| `GET`  | `/internal/network-access/status` | `{enabled}` — loopback-only |
+| `POST` \| `GET` | `/internal/network-access/clients` | Mint / list machine-API `client_id`+`client_secret` pairs ("Add API client") — loopback-only. The FIRST client added flips `enabled` and live-rebinds `/oauth/token` non-loopback |
+| `POST` | `/internal/network-access/clients/revoke` | Revoke a machine-API client — loopback-only |
+| `POST` | `/oauth/token` | Machine API — `grant_type=client_credentials` token exchange. The one route reachable non-loopback (self-authenticates via the body) |
 
-The session-creds routes are **write-only** by design. There is no `GET /mcp/session-creds` — the inspector never reads back values, ever.
+The session-creds routes are **write-only** by design. There is no `GET /mcp/session-creds` — the inspector never reads back values, ever. Same convention for machine-API client secrets: `clients` reveals the plaintext exactly once in the response body, never again — the inspector UI displays it (and the client ID) redacted afterward, with a Copy button wired to the real value.
 
 ## Reconnect button
 
@@ -155,7 +161,7 @@ Top-right header. Re-reads `connector.yaml` and dials the controller again. Pick
 |---|---|---|
 | `INSPECTOR_PORT` | `9090` | TCP port; binds to loopback only by default |
 | `INSPECTOR_BIND_ADDR` | `127.0.0.1` | Bind address. Loopback set: `127.0.0.1` / `::1` / `localhost`. Any other value requires `INSPECTOR_ALLOW_NONLOOPBACK=1`. |
-| `INSPECTOR_ALLOW_NONLOOPBACK` | (unset) | Set to `1` to acknowledge a non-loopback bind. Required for Fly.io deployments using `::` behind the WireGuard mesh (with `fly ips list` empty). |
+| `INSPECTOR_ALLOW_NONLOOPBACK` | (unset) | Set to `1` to acknowledge a non-loopback bind. Required for Fly.io deployments using `::` behind the WireGuard mesh (with `fly ips list` empty). Reserved for that case only — unrelated to the machine-API rebind below, which needs no env var at all. |
 | `LOG_LEVEL` | `info` | Pino log verbosity |
 
 ## Troubleshooting
@@ -163,7 +169,30 @@ Top-right header. Re-reads `connector.yaml` and dials the controller again. Pick
 - **"My tool shows Awaiting config but I want to call it."** Open the MCP creds view (click the purple name) and paste your dev creds, OR ask an admin to set them in the controller UI. Tools without `envKeys` never enter the awaiting state.
 - **"Session creds disappeared."** They expire 12h after paste. Re-paste — the timer resets on re-apply, not on activity.
 - **"Webhook URL changed."** Expected — the random tail re-mints on every `webhook-allocate` (e.g. on connector reconnect). The prefix is stable across reconnects, so pasted Twilio configs that match by prefix continue resolving.
-- **"I want to test from a remote machine."** Don't bridge the inspector port. Use `ssh -L 9090:localhost:9090 <connector-host>` or `kubectl port-forward`.
+- **"I want to test from a remote machine."** `ssh -L 9090:localhost:9090 <connector-host>` or `kubectl port-forward` — the only way to reach the dashboard, always. There is no alternative that skips the tunnel; the dashboard never becomes directly reachable, no matter how many API clients exist. If what you actually need is a machine hitting `/oauth/token` directly (not a human viewing the dashboard), see [Network access](#network-access).
+
+## Network access
+
+Off by default; there is no admin login anywhere in this flow.
+
+1. Reach the inspector the way you do today — port-forward / `docker exec` / cloud-console exec — gated by whatever platform credential already gates that (kubeconfig RBAC, docker socket access, cloud IAM).
+2. In the Network Access panel, click **"Add API client"**. This mints a `client_id`/`client_secret` pair, shown once in the right pane. **The first client you ever add** also, atomically:
+   - Persists `network_access.enabled = true`.
+   - **Live-rebinds** the inspector's listener from `127.0.0.1` to reachable-from-elsewhere, in-process — no container/process restart.
+   Every client after the first is just another credential; the rebind is a no-op once it's already happened.
+3. **Loopback access never changes.** A request from `127.0.0.1` / `::1` is always trusted, forever, regardless of how many API clients exist — the dashboard is not reachable non-loopback under any configuration.
+4. **Non-loopback traffic reaches exactly one route**, `POST /oauth/token` — see [Machine API](#machine-api). Everything else 403s, unconditionally, from off-box.
+5. **State persists across restarts.** If `network_access.enabled` is already `true` in Postgres, the next boot binds non-loopback directly — the loopback-first-then-add-a-client sequence above is one-time, not something repeated on every restart.
+
+No env var is involved anywhere in this flow — it's entirely DB/UI-driven, deliberately, so onboarding never requires a redeploy.
+
+## Machine API
+
+A credential shape for non-human callers — no browser, no redirects, `client_credentials` grant (OAuth2 §4.4):
+
+- **Self-issued (default).** The connector is its own token issuer. From the Network Access panel, click **"Add API client"** to mint a `client_id`/`client_secret` pair (shown once, then redacted — Copy always copies the real value). That pair exchanges for a short-lived HS256 JWT via `POST /oauth/token` (`grant_type=client_credentials`) — standard OAuth2 request/response shape, including RFC 6749 §5.2's `invalid_client` error body for a wrong secret or unknown client (deliberately indistinguishable, so a client-enumeration attempt learns nothing).
+- **Federated.** The connector can instead trust a customer's real IdP directly — same signature/`iss`/`aud`/`exp` verification, just against that IdP's JWKS instead of the connector's own signing key. The caller's `client_credentials` exchange happens against the customer's IdP, never this connector.
+- **Revoking a client** ("Remove" in the same panel) blocks its *next* `/oauth/token` attempt immediately. It does not force-expire a JWT that client already holds — that JWT stays valid until its own (short) natural expiry. There's no token-revocation list in this version; if that's a problem for your threat model, keep the access-token lifetime short.
 
 ## Cross-references
 

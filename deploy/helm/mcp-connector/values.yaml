@@ -54,7 +54,23 @@ secrets:
   connectorKeyFile: /etc/mcp-connector/connector.key
   postgresUrl: ""
 
-# The chart does NOT create a Service for the inspector port by design.
+# The chart does NOT create a Service for the inspector port by default.
 # The inspector binds 127.0.0.1 inside the pod; expose it via kubectl
-# port-forward, not a Service. Exposing 9090 as a Service would leak the
-# bcrypt-protected webhook URLs.
+# port-forward, not a Service — that stays the recommended path for
+# operator-only access.
+#
+# CONNECTOR-NETWORK-EXPOSURE — set networkAccess.enabled: true to render a
+# Service for the inspector port when you want it reachable from elsewhere
+# in the cluster (e.g. a machine caller hitting the /oauth/token API). This
+# alone does NOT expose anything unauthenticated: only /oauth/token is
+# ever reachable non-loopback, gated by a machine caller's own client_id/
+# client_secret (see docs/NETWORK-ACCESS.md). The dashboard itself never
+# becomes reachable this way, under any configuration. Enabling this
+# Service without also adding an API client from the inspector's loopback
+# session is a no-op: the app still 403s /oauth/token until one exists.
+networkAccess:
+  enabled: false
+  # ClusterIP keeps this inside the cluster network by default; switch to
+  # LoadBalancer/NodePort only if you've deliberately decided the connector
+  # should be reachable from outside the cluster too.
+  serviceType: ClusterIP

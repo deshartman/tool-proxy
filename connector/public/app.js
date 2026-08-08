@@ -39,6 +39,10 @@ let selection = null;
 let lastManifest = null;
 let frameSeq = 0;
 
+// CONNECTOR-NETWORK-EXPOSURE — this UI is loopback-only, unconditionally,
+// forever. There is no login screen, no session token, nothing to attach
+// to fetch calls — see CLAUDE.md "Inspector UI notes".
+
 elShowHb.addEventListener('change', () => {
   showHeartbeats = elShowHb.checked;
   document.querySelectorAll('.frame-item.heartbeat').forEach((el) => {
@@ -705,6 +709,7 @@ function applySelectionHighlight() {
   document.querySelectorAll('.tunnel-name-btn').forEach((el) => {
     el.classList.toggle('selected', el.dataset.tunnelId === tunnelId);
   });
+  document.getElementById('network-access-clients-link')?.classList.toggle('selected', selection?.kind === 'apiClients');
 }
 
 function buildToolDetail(sel) {
@@ -863,6 +868,7 @@ const DETAIL_BUILDERS = {
   webhook: buildWebhookDetail,
   tunnel: (sel) => buildTunnelDetailPanel(sel),
   mcpMessages: buildMcpMessagesDetail,
+  apiClients: buildApiClientsDetail,
 };
 
 function renderDetail() {
@@ -2085,7 +2091,223 @@ elTunnelForm.addEventListener('submit', async (ev) => {
   }
 });
 
+// CONNECTOR-NETWORK-EXPOSURE — Network Access panel. This dashboard is
+// loopback-only, unconditionally, forever — there is no admin login. "API
+// clients" is a separate, multi-row credential system for machine callers
+// (POST /oauth/token): adding the FIRST one flips network_access.enabled
+// and live-rebinds the listener so that one endpoint becomes reachable
+// non-loopback. Client ID and Client Secret are always shown redacted —
+// the Copy button copies the real underlying value, never the masked text.
+const elNetworkAccessLoading = document.getElementById('network-access-loading');
+const elNetworkAccessContent = document.getElementById('network-access-content');
+const elNetworkAccessState = document.getElementById('network-access-state');
+const elNetworkAccessBadge = document.getElementById('network-access-badge');
+const elNetworkAccessClientsLink = document.getElementById('network-access-clients-link');
+const elApiClientsCount = document.getElementById('api-clients-count');
+const elApiClientForm = document.getElementById('api-client-form');
+
+const csrfHeaders = { 'content-type': 'application/json', 'x-inspector-request': '1' };
+const REDACTED = '••••••••••••••••••••••••';
+
+// Small "copy" → "copied" button, same convention as the Webhooks panel's
+// copy-able URL (renderWebhooks above). Always copies the real value
+// passed in, never whatever is currently displayed on screen.
+function makeCopyButton(value, label) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'webhook-copy';
+  btn.textContent = label || 'copy';
+  btn.addEventListener('click', () => {
+    navigator.clipboard?.writeText(value).then(() => {
+      const original = btn.textContent;
+      btn.textContent = 'copied';
+      setTimeout(() => { btn.textContent = original; }, 1200);
+    });
+  });
+  return btn;
+}
+
+function renderNetworkAccessState(enabled) {
+  elNetworkAccessLoading.hidden = true;
+  elNetworkAccessContent.hidden = false;
+  elNetworkAccessState.textContent = enabled
+    ? ''
+    : 'No API clients yet — loopback-only (today\'s default). Adding one makes /oauth/token reachable from outside this host.';
+  elNetworkAccessBadge.hidden = false;
+  elNetworkAccessBadge.textContent = enabled ? 'API ACCESS ENABLED' : 'LOOPBACK-ONLY';
+}
+
+async function fetchNetworkAccessStatus() {
+  try {
+    const resp = await fetch('/internal/network-access/status');
+    const body = await resp.json();
+    if (body.ok !== false) renderNetworkAccessState(body.enabled);
+  } catch { /* leave loading state — non-fatal, operator can retry via reload */ }
+}
+
+// API clients — the Add form lives in the left panel (next to the "API
+// clients" entry point); submitting it opens/refreshes the right-pane
+// list so the new row is immediately visible there.
+let apiClientsCache = [];
+let justCreatedApiClient = null; // { clientId, clientSecret } — cleared once acknowledged, or on Remove
+
+async function fetchApiClientsList() {
+  try {
+    const resp = await fetch('/internal/network-access/clients');
+    const body = await resp.json();
+    if (body.ok) {
+      apiClientsCache = body.clients;
+      const activeCount = apiClientsCache.filter((c) => !c.revokedAt).length;
+      elApiClientsCount.textContent = activeCount > 0 ? `(${activeCount})` : '';
+      if (selection?.kind === 'apiClients') renderDetail();
+    }
+  } catch { /* leave prior state rendered */ }
+}
+
+elNetworkAccessClientsLink?.addEventListener('click', () => {
+  setSelection({ kind: 'apiClients', key: 'apiClients' });
+  // Always re-fetch on open rather than trusting whatever the boot-time
+  // fetch last landed — closes a race where clicking before that first
+  // fetch resolves would otherwise render a stale/empty list.
+  void fetchApiClientsList();
+});
+
+elApiClientForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const submitBtn = elApiClientForm.querySelector('button[type="submit"]');
+  const originalLabel = submitBtn.textContent;
+  submitBtn.disabled = true;
+  try {
+    const name = new FormData(elApiClientForm).get('name');
+    const resp = await fetch('/internal/network-access/clients', {
+      method: 'POST', headers: csrfHeaders, body: JSON.stringify({ name: name || undefined }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.ok === false) throw new Error(body.error || `HTTP ${resp.status}`);
+    justCreatedApiClient = { clientId: body.clientId, clientSecret: body.clientSecret };
+    elApiClientForm.reset();
+    await fetchApiClientsList();
+    await fetchNetworkAccessStatus(); // badge flips to ENABLED on the first add
+    setSelection({ kind: 'apiClients', key: 'apiClients' }); // new row appears in the right pane
+  } catch (err) {
+    submitBtn.textContent = `Failed: ${err.message}`;
+    setTimeout(() => { submitBtn.textContent = originalLabel; }, 3000);
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
+// Client ID is not a secret (it's the OAuth2 "username" half) — show
+// enough of it to recognize a row and confirm a paste, mask the middle.
+// Client Secret stays fully redacted always; it's the actual credential.
+function partialRedact(value) {
+  if (!value || value.length <= 12) return REDACTED;
+  return `${value.slice(0, 6)}${REDACTED}${value.slice(-4)}`;
+}
+
+// One flat row per client: label, Client ID (partially shown) + copy,
+// Client Secret (fully redacted) + copy, Revoke/Delete. Copy always
+// copies the real underlying value, never the masked text on screen.
+// The secret is only ever known client-side for the row you just created
+// THIS page session (justCreatedApiClient) — the server never returns it
+// again after the initial mint, so older rows (including ones created in
+// an earlier session, before this page load) have no working secret-copy
+// button, just an explanatory placeholder.
+function buildApiClientRow(c) {
+  const li = document.createElement('li');
+  li.className = c.revokedAt ? 'api-client-row revoked' : 'api-client-row';
+
+  const label = document.createElement('span');
+  label.className = 'api-client-label';
+  label.textContent = c.name || '(unnamed)';
+  li.appendChild(label);
+
+  const idField = document.createElement('span');
+  idField.className = 'api-client-field';
+  idField.append('Client ID: ', Object.assign(document.createElement('code'), { textContent: partialRedact(c.clientId) }));
+  li.appendChild(idField);
+  li.appendChild(makeCopyButton(c.clientId, 'copy'));
+
+  const secretField = document.createElement('span');
+  secretField.className = 'api-client-field';
+  const knownSecret = justCreatedApiClient?.clientId === c.clientId ? justCreatedApiClient.clientSecret : null;
+  secretField.append('Client Secret: ', Object.assign(document.createElement('code'), { textContent: REDACTED }));
+  li.appendChild(secretField);
+  // "Copy Now" (not just "copy") on a freshly-created row — this is the
+  // only moment the real secret is ever available; there's no button at
+  // all on older rows, since the server never returns it again.
+  if (knownSecret) li.appendChild(makeCopyButton(knownSecret, 'Copy Now'));
+
+  // Runs a state-changing action and surfaces failure ON THE BUTTON
+  // itself (briefly) rather than doing nothing when the request 404s/
+  // 500s — e.g. a stale connector process that hasn't picked up a route
+  // added after it started. Silent failure here is exactly what made an
+  // earlier "Delete doesn't work" report hard to diagnose.
+  async function runAction(btn, path, onSuccess) {
+    btn.disabled = true;
+    const original = btn.textContent;
+    try {
+      const res = await fetch(path, {
+        method: 'POST', headers: csrfHeaders, body: JSON.stringify({ clientId: c.clientId }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await onSuccess();
+    } catch (err) {
+      btn.textContent = `Failed: ${err.message}`;
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = original; }, 3000);
+    }
+  }
+
+  if (c.revokedAt) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.addEventListener('click', () => runAction(deleteBtn, '/internal/network-access/clients/delete', async () => {
+      await fetchApiClientsList();
+    }));
+    li.appendChild(deleteBtn);
+  } else {
+    const revokeBtn = document.createElement('button');
+    revokeBtn.type = 'button';
+    revokeBtn.textContent = 'Revoke';
+    revokeBtn.addEventListener('click', () => runAction(revokeBtn, '/internal/network-access/clients/revoke', async () => {
+      if (justCreatedApiClient?.clientId === c.clientId) justCreatedApiClient = null;
+      await fetchApiClientsList();
+    }));
+    li.appendChild(revokeBtn);
+  }
+  return li;
+}
+
+function buildApiClientsDetail() {
+  elDetailTitle.textContent = 'API clients';
+  const wrap = document.createElement('div');
+  wrap.className = 'api-clients-detail';
+
+  const intro = document.createElement('p');
+  intro.className = 'muted';
+  intro.textContent = 'Credentials for a script or automation calling this connector directly via POST /oauth/token — this dashboard itself has no login. Values are redacted; Copy always copies the real one.';
+  wrap.appendChild(intro);
+
+  const list = document.createElement('ul');
+  list.id = 'api-clients-list';
+  if (apiClientsCache.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty-msg';
+    li.textContent = 'No API clients yet.';
+    list.appendChild(li);
+  }
+  for (const c of apiClientsCache) {
+    list.appendChild(buildApiClientRow(c));
+  }
+  wrap.appendChild(list);
+
+  return wrap;
+}
+
 // Boot ────────────────────────────────────────────────────────
 void fetchTunnelConfig();
-
+void fetchNetworkAccessStatus();
+void fetchApiClientsList();
 connectSse();

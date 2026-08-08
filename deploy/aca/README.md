@@ -87,6 +87,27 @@ To view the UI: `az containerapp exec --name "$APP" --resource-group "$RG" --com
 
 **Do not** route public ingress to the inspector port. The Webhooks panel exposes the bcrypt-protected webhook URL with a copy button — that URL *is* the secret.
 
+## Network access (opt-in, off by default)
+
+`--ingress disabled` above stays the right default — this feature doesn't
+change that. If you want the inspector reachable from elsewhere in your
+Azure VNet (not the public internet), switch to internal ingress instead:
+
+```bash
+az containerapp ingress enable \
+  --name "$APP" --resource-group "$RG" \
+  --type internal --target-port 9090 --transport auto
+```
+
+That alone doesn't expose anything unauthenticated — only `POST /oauth/token`
+is ever reachable non-loopback, gated by a machine caller's own
+`client_id`/`client_secret`. Until an operator has added at least one API
+client from the inspector's loopback session (or one already exists from
+a prior boot), internal callers just get 403s. The dashboard itself never
+answers non-loopback requests, under any configuration. See
+`docs/NETWORK-ACCESS.md`. Still never use `--type external` for this port
+— that's public internet, which this feature is not for.
+
 ## Reconnect — orchestrator vs. built-in
 
 The connector auto-reconnects on unexpected WS close by default (`policy.reconnect.enabled: true` in `connector.yaml`). On Container Apps, two shapes work; pick one.

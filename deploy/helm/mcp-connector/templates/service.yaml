@@ -1,0 +1,29 @@
+{{/*
+Opt-in only. The chart still ships NO Service by default
+(networkAccess.enabled defaults to false in values.yaml) — infra-level
+exposure (this Service) is a separate decision from what the connector
+itself allows once traffic can reach it (see docs/NETWORK-ACCESS.md).
+Only POST /oauth/token ever answers a non-loopback request, gated by a
+machine caller's own client_id/client_secret; the dashboard stays
+loopback-only regardless. Flipping this Service on without ALSO adding an
+API client from the inspector's loopback session just makes the port
+reachable to a 403 on every path; it's meaningless until that has
+happened at least once. ClusterIP by default — pair with an
+Ingress/Gateway of your own if you need traffic from outside the cluster.
+*/}}
+{{- if .Values.networkAccess.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-connector.fullname" . }}-inspector
+  labels:
+    {{- include "mcp-connector.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.networkAccess.serviceType }}
+  selector:
+    {{- include "mcp-connector.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: inspector
+      port: 9090
+      targetPort: inspector
+{{- end }}

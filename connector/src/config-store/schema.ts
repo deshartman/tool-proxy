@@ -46,5 +46,29 @@ CREATE TABLE IF NOT EXISTS ${schema}.controllers (
 
 -- Phase-1 gate: at most one row. Phase-2 will DROP this index.
 CREATE UNIQUE INDEX IF NOT EXISTS one_controller_only ON ${schema}.controllers ((TRUE));
+
+-- Network access. Exactly one row, id=1. Gates ONLY the machine API
+-- (POST /oauth/token + future JWT-protected routes) being reachable
+-- non-loopback — the operator UI (dashboard, tool calls, tunnel config,
+-- API-client management) stays loopback-only unconditionally, forever, no
+-- opt-in. Flips to TRUE the first time an operator adds an API client
+-- (see mintApiClient's caller in network-access-routes.ts); never reverts
+-- automatically even if every client is later removed.
+CREATE TABLE IF NOT EXISTS ${schema}.network_access (
+    id                SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    enabled           BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Machine-API client credentials. Multi-row, one per integration, so a
+-- single caller can be revoked without touching the others.
+CREATE TABLE IF NOT EXISTS ${schema}.api_clients (
+    client_id         TEXT PRIMARY KEY,          -- random, not secret
+    client_secret_ct  BYTEA NOT NULL,             -- sealed
+    name              TEXT,                      -- operator label ("Add API client")
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_at        TIMESTAMPTZ                -- NULL = active
+);
 `;
 }
