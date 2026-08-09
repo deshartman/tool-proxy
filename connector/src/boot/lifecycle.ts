@@ -26,6 +26,7 @@ import type { ToolManifest } from "../tunnel/frames.js";
 import { Inspector, startInspector, rebindInspector } from "../inspector/server.js";
 import { createNetworkAccessRoutes } from "../inspector/network-access-routes.js";
 import { handleOauthToken } from "../inspector/oauth-token-route.js";
+import { handleOutboundCalls } from "../inspector/outbound-calls-route.js";
 import { deriveJwtSigningKey } from "../auth/jwt.js";
 import { createLogger } from "../logger.js";
 import { WebhookRegistry } from "../tunnel/webhook-registry.js";
@@ -169,6 +170,19 @@ async function bootFromDb(): Promise<void> {
       configStore: store,
       signingKey: deriveJwtSigningKey(masterKey.bytes),
       expiresInSec: 3600,
+    }));
+
+    // CONNECTOR-NETWORK-EXPOSURE step 9 — the one machine-API route with a
+    // real dependency on ControllerApiCoordinator. Wired once here, same as
+    // oauthTokenHandler above (both ABOVE the empty-DB `if (!row) return`
+    // below — see CLAUDE.md "TDZ discipline inside bootFromDb"). getCoordinator
+    // reads the outer hoisted `controllerApi` binding directly, so it always
+    // reflects the live tunnel's coordinator (or undefined between
+    // reconnects) with no rewiring needed on every dial — same pattern
+    // mcpActions.callControllerApi already relies on.
+    inspector.wireOutboundCalls((req, res) => handleOutboundCalls(req, res, {
+      verifierConfig: { selfIssuedSigningKey: deriveJwtSigningKey(masterKey.bytes) },
+      getCoordinator: () => controllerApi,
     }));
 
     // Wire tunnel routes for DB mode — allows inspector UI to configure tunnel

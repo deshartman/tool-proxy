@@ -101,13 +101,25 @@ connector. Both modes can be active at once. Ask your Twilio contact if
 you need this wired up for your deployment; it's not yet exposed as a
 self-serve inspector action.
 
-## What's not here yet
+## Machine API routes
 
-The machine-API route for triggering connector actions directly (e.g.
-`outbound.place_call`) is still in progress — this document will be
-updated with the exact request shape once it ships. Today, `/oauth/token`
-issuance is fully live; there is no protected route to call with the
-resulting token yet.
+Today there's one protected route beyond `/oauth/token` itself:
+**`POST /v1/outbound/calls`** — triggers a real outbound Twilio call or
+message through the tunnel. Attach the bearer token from step 4 above:
+
+```bash
+curl -s -X POST https://<connector-address>:9090/v1/outbound/calls \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"action":"place_call","to":"+15551234567","agentId":"agt_123","channelId":"chn_456"}'
+```
+
+`action` is `"place_call"` or `"send_message"`; full request/response shape,
+error codes, and the `machine-api:<clientId>` audit-trail identity this
+route uses are documented in [`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) §7.
+Only self-issued (HS256) bearers are accepted by this route today —
+federated-mode tokens aren't wired up for it yet even where federated mode
+itself is configured.
 
 ## Troubleshooting
 

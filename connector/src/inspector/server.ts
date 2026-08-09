@@ -215,6 +215,15 @@ export class Inspector {
     this.oauthTokenHandler = handler;
   }
 
+  // CONNECTOR-NETWORK-EXPOSURE step 9 — POST /v1/outbound/calls handler.
+  // Same optional-until-wired convention as oauthTokenHandler: unwired boot
+  // paths fall through to 404.
+  outboundCallsHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+
+  wireOutboundCalls(handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>): void {
+    this.outboundCallsHandler = handler;
+  }
+
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
   private readonly frames: FrameTap[] = []
   private readonly current: InspectorState;
@@ -925,14 +934,14 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
 // caller. There is no admin login: the operator UI (dashboard, tool
 // calls, tunnel config, API-client management, everything else in this
 // dispatch table) is loopback-only, unconditionally, forever. The ONLY
-// thing a non-loopback caller can ever reach is the machine API —
-// /oauth/token today (self-authenticated via client_id/client_secret in
-// the body), and any future JWT-protected route (e.g. the outbound-calls
-// route once it lands — see CLAUDE.md "Inspector UI notes"), which does
-// its own bearer check inline, mirroring how /oauth/token and
-// authorizeWebhookMcp() work today.
+// things a non-loopback caller can ever reach are the machine API's
+// /oauth/token (self-authenticated via client_id/client_secret in the
+// body) and /v1/outbound/calls (JWT-bearer-gated, see
+// outbound-calls-route.ts) — both do their own auth check inline,
+// mirroring how authorizeWebhookMcp() works today.
 const NON_LOOPBACK_ALLOWED_PATHS = new Set([
   "/oauth/token",
+  "/v1/outbound/calls",
 ]);
 
 // One check point for the whole dispatch table. Loopback callers pass
@@ -1070,6 +1079,10 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     }
     if (path === "/oauth/token" && req.method === "POST") {
       if (inspector.oauthTokenHandler) { void inspector.oauthTokenHandler(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/v1/outbound/calls" && req.method === "POST") {
+      if (inspector.outboundCallsHandler) { void inspector.outboundCallsHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
 

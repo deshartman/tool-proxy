@@ -1,6 +1,6 @@
 # OUTBOUND-CALLS — enterprise-triggers-outbound-call walkthrough
 
-> **Status:** demo — `examples/demos/outbound-demo/` is reference material (not auto-loaded); the mechanism it exercises (v1.4 controller-call) is shipped.
+> **Status:** demo — `examples/demos/outbound-demo/` is reference material (not auto-loaded); the mechanism it exercises (v1.4 controller-call) is shipped. A second, production-shaped entry point — `POST /v1/outbound/calls` — is also shipped; see §7.
 > **Repo location:** `examples/demos/outbound-demo/` — self-contained: MCP tool, capability declaration, driver script, and config all in one folder.
 
 This document walks through the flow that lets an enterprise's own system trigger a real outbound Twilio call or SMS through the tunnel, from the connector side. It's the connector-side companion to the controller's own action-registry contract (`docs/CONTROLLER-ACTIONS.md` in the controller repo) — read that doc for what happens after the frame lands on the controller; this doc covers everything up to and including sending the frame.
@@ -100,3 +100,40 @@ policy:
 ```
 
 This is a deliberate manual step, not a change to the shipped default — the default protects every other tool call on every other MCP from hanging for 35 seconds on a genuine failure; only this one demo needs the wider window.
+
+## 7. Calling directly (machine API)
+
+Everything above goes through a Twilio-bundled MCP drop-in (`outbound-demo`) reached via the inspector's loopback `/tool/call` route — useful for proving the mechanism works, but not how a real enterprise system should call this. That system instead calls `POST /v1/outbound/calls` directly: no bundled MCP, no loopback requirement, no `isAuthorTwilio` check. Auth is a JWT bearer from the machine API, not the webhook-token/code-trust gate the demo path uses.
+
+```
+enterprise's own system
+  -> POST /oauth/token                         (mint a bearer — see docs/NETWORK-ACCESS.md)
+  -> POST /v1/outbound/calls                   (this route)
+  -> ControllerApiCoordinator.call() -> controller-call frame over the tunnel WS
+  -> controller's ControllerActionRegistry.invoke()
+  -> Twilio Voice / Messaging API
+  -> result flows back down the same path -> HTTP response
+```
+
+1. Get a bearer token (see [`docs/NETWORK-ACCESS.md`](NETWORK-ACCESS.md) for adding an API client and exchanging it at `/oauth/token`).
+2. Call the route:
+
+   ```bash
+   curl -s -X POST https://<connector-address>:9090/v1/outbound/calls \
+     -H "authorization: Bearer $ACCESS_TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{
+       "action": "place_call",
+       "to": "+15551234567",
+       "agentId": "agt_123",
+       "channelId": "chn_456"
+     }'
+   ```
+
+   Body shape is the same `action` / `to` / `agentId` / `channelId` / `callContext?` / `idempotencyKey?` params documented in §3 — `action` is `"place_call"` or `"send_message"` here (mapped internally to the `outbound.place_call` / `outbound.send_message` wire actions). Omit `idempotencyKey` and the connector mints one for you — but if your system might legitimately retry a request, generate and pass your own so a retry dedupes instead of placing a second call.
+
+3. Response is `{ "result": { "callSid": "..." } }` (or `{ "providerId": "..." }` for `send_message`) on success. Error shape and codes are identical to §5, plus `not_authorized` (401, missing/invalid/expired bearer) and `bad_request` (400, malformed body) from this route's own gate before the call ever reaches the tunnel.
+
+There is no `tool_timeout_ms` gotcha here — this route isn't a tool call, so the connector's `policy.tool_timeout_ms` never wraps it. It uses its own fixed 30s ceiling on the controller round-trip, matching the guidance in §6 for the `outbound.*` action family.
+
+The frame's `mcp` field (see `docs/MCP-PROTOCOL.md` §"v1.4 — Controller API calls") carries `machine-api:<clientId>` for calls made this way, instead of a bundled MCP's name — the controller's audit trail can still attribute the call to a specific machine caller via the JWT's `sub` claim.
