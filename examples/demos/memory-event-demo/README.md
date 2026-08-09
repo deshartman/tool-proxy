@@ -3,8 +3,12 @@
 Self-contained: everything for this demo lives in this one folder — the
 MCP tool, its capability declaration, and the driver script + config that
 exercises it. Reference material — the connector does not read from
-`examples/` at runtime. Sibling of [`../outbound-demo/`](../outbound-demo/README.md);
-same shape, targeting a different controller action.
+`examples/` at runtime. This is now the reference example for the
+Twilio-bundled-MCP-calls-out shape (`callControllerApi` via a Type 1
+drop-in tool, reached through `/tool/call`) — `../outbound-demo/` used to
+be its sibling but was rewired to demo the external machine-API route
+(`POST /v1/outbound/calls`) directly instead; see
+[`../outbound-demo/README.md`](../outbound-demo/README.md) for why.
 
 Smoke test for the v1.4 controller-call tunnel mechanism
 ([docs/MCP-PROTOCOL.md](../../../docs/MCP-PROTOCOL.md) §"v1.4 — Controller
@@ -84,9 +88,10 @@ policy:
   tool_timeout_ms: 10000
 ```
 
-(10s is enough here — no need for `outbound-demo`'s 35000. Don't assume
-the connector's 5s default is safe just because this action's own timeout
-is shorter than `outbound.*`'s; it's still longer than 5s.)
+(10s is enough here — no need for the 35000 a tool-call-mediated
+`outbound.*` caller would need. Don't assume the connector's 5s default is
+safe just because this action's own timeout is shorter than
+`outbound.*`'s; it's still longer than 5s.)
 
 and restart the connector.
 

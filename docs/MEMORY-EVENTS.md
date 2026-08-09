@@ -42,7 +42,7 @@ Valid `identity.channel` values (mirrors the controller's own `IDENTITY_CHANNEL_
 
 ## 3. Why no confirmation gate, unlike the outbound demo
 
-`docs/OUTBOUND-CALLS.md`'s driver script prompts `Proceed? [y/N]` because it triggers real Twilio spend and a real ringing phone. This action has neither — it's a memory write with no external side effect. The controller has also explicitly decided `idempotencyKey` is optional and **not deduped in v1**: a retry-after-timeout can create a duplicate memory entry, accepted as low-harm (worst case, the fact is recalled twice) rather than the double-dial risk `outbound.place_call` carries without one. So the demo tool doesn't mint a key on the caller's behalf the way `outbound-demo` does — pass one only if you specifically want dedup-adjacent behavior on your own retries.
+`docs/OUTBOUND-CALLS.md`'s driver script prompts `Proceed? [y/N]` because it triggers real Twilio spend and a real ringing phone. This action has neither — it's a memory write with no external side effect. The controller has also explicitly decided `idempotencyKey` is optional and **not deduped in v1**: a retry-after-timeout can create a duplicate memory entry, accepted as low-harm (worst case, the fact is recalled twice) rather than the double-dial risk `outbound.place_call` carries without one. So this demo's tool doesn't mint a key on the caller's behalf — pass one only if you specifically want dedup-adjacent behavior on your own retries. (`outbound.place_call`'s own caller-facing surface, `/v1/outbound/calls`, mints one for you if you omit it — see `docs/OUTBOUND-CALLS.md` §3 — since dialing twice is a real side effect worth defaulting to safe.)
 
 ## 4. Running it
 
@@ -76,7 +76,7 @@ policy:
   tool_timeout_ms: 10000
 ```
 
-10 seconds is enough here — no need for `outbound-demo`'s 35000. Don't assume the connector's 5s default is automatically safe just because this action's own timeout is shorter than `outbound.*`'s; it's still longer than 5s.
+10 seconds is enough here — no need for the 35000 a tool-call-mediated `outbound.*` caller would need (see `docs/OUTBOUND-CALLS.md` §7). Don't assume the connector's 5s default is automatically safe just because this action's own timeout is shorter than `outbound.*`'s; it's still longer than 5s.
 
 ## 6. Error codes
 

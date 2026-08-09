@@ -1397,7 +1397,7 @@ The asymmetry favors the migration: a fresh connector against an old controller 
 
 ## v1.4 — Controller API calls (Twilio-bundled only)
 
-> **Status: shipped.** The frame pair, coordinator, author gate, and both call surfaces (in-process SDK for Type 1, inspector loopback for Type 3) are live. `examples/demos/outbound-demo/` is the first real caller — a demo drop-in invoking `outbound.place_call` / `outbound.send_message` (see [docs/OUTBOUND-CALLS.md](OUTBOUND-CALLS.md)); it's reference material like `examples/demos/{sample,crm,salesforce}`, not auto-loaded. No bundle shipped in `bundled-mcps/` by default calls it yet.
+> **Status: shipped.** The frame pair, coordinator, author gate, and both call surfaces (in-process SDK for Type 1, inspector loopback for Type 3) are live. `examples/demos/memory-event-demo/` is the reference caller for the in-process-SDK shape — a demo drop-in invoking `memory.append_event` (see [docs/MEMORY-EVENTS.md](MEMORY-EVENTS.md)); it's reference material like `examples/demos/{sample,crm,salesforce}`, not auto-loaded. No bundle shipped in `bundled-mcps/` by default calls it yet. `outbound.place_call` / `outbound.send_message` are reachable two ways: from a Twilio-bundled MCP's own tool via this same `callControllerApi` mechanism (no reference demo exercises this for `outbound.*` specifically today — `memory-event-demo` demonstrates the identical shape for a different action), or externally via the machine-API `POST /v1/outbound/calls` route (see [docs/OUTBOUND-CALLS.md](OUTBOUND-CALLS.md)), which `examples/demos/outbound-demo/` exercises.
 
 ### Why
 

@@ -1,9 +1,9 @@
 // Smoke test for the v1.4 controller-call tunnel mechanism
 // (docs/MCP-PROTOCOL.md §"v1.4 — Controller API calls (Twilio-bundled
 // only)"), targeting memory.append_event. Standalone demo bundle, not
-// agentic-memory, for the same reason outbound-demo isn't: this action's
-// error vocabulary (invalid_params/controller_error) doesn't fit
-// agentic-memory's MEMORY-MCP-INTERFACE.md-pinned ErrorCode union.
+// agentic-memory: this action's error vocabulary (invalid_params/
+// controller_error) doesn't fit agentic-memory's MEMORY-MCP-INTERFACE.md-
+// pinned ErrorCode union.
 //
 // See ../invoke.mjs for the driver script.
 
@@ -36,7 +36,8 @@ const InputSchema = {
   occurredAt: z.string().optional().describe("ISO 8601; defaults to now"),
   // Optional and NOT deduped by the controller in v1 — a retry-after-timeout
   // can create a duplicate entry, explicitly accepted as low-harm. No hard
-  // requirement to generate one, unlike outbound-demo's idempotencyKey.
+  // requirement to generate one, unlike the dial-twice-is-real-money case
+  // outbound.place_call's own params carry an idempotencyKey for.
   idempotencyKey: z.string().optional(),
 };
 
