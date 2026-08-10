@@ -20,10 +20,23 @@ whatever agent/channel the controller resolves — not a simulation.
 ```
 outbound-demo/
 ├── README.md              this file
-├── invoke.mjs               driver script — plays "the enterprise's own system"
+├── invoke.mjs               driver script (self-issued / HS256) — plays "the enterprise's own system"
 ├── run-outbound.sh          thin shell wrapper around invoke.mjs
+├── invoke-federated.mjs     driver script (federated / RS256) — also plays the IdP
+├── run-federated.sh         thin shell wrapper around invoke-federated.mjs
 └── config.example.json      tracked template; copy to config.json and fill in real values
 ```
+
+There are two ways a caller authenticates to `/v1/outbound/calls`, and one
+driver for each. Both reuse the same `config.json` for `action`/`to`/
+`agentId`/`channelId`; they differ only in where the bearer comes from:
+
+- **Self-issued (`run-outbound.sh`)** — the connector mints an HS256 token at
+  `POST /oauth/token` from a `client_id`/`client_secret`. This is the path
+  that needs the "Add API client" prerequisite below.
+- **Federated (`run-federated.sh`)** — an external IdP signs an RS256 token
+  and the connector verifies it against that IdP's JWKS. No API client, no
+  `/oauth/token`. See "Testing federated mode" below.
 
 No MCP, no drop-in, no `bundled-mcps/` activation step — this script talks
 directly to the connector's machine API, which is the whole point of that
@@ -78,6 +91,55 @@ multi-instance dev workflow — pass `--port=<port>` (or set `INSPECTOR_PORT`):
 ```bash
 ./run-outbound.sh --port=9091 --clientId=... --clientSecret=... --to=... --agentId=... --channelId=...
 ```
+
+## Testing federated mode
+
+Federated mode accepts a bearer signed by *your own IdP* instead of one the
+connector minted — the connector only verifies it (RS256 signature against
+the IdP's JWKS, plus `iss`/`aud`/`exp`). See
+[docs/NETWORK-ACCESS.md](../../../docs/NETWORK-ACCESS.md) "Federated mode".
+
+Because the token comes from an IdP, there's nothing for the connector to
+mint — so `run-federated.sh` **plays the IdP for you**: it generates a
+throwaway RSA keypair, serves its public half as a JWKS on a local port,
+configures the connector's trusted issuer to point at it, signs a short-lived
+RS256 token, calls the route, then restores the connector's prior
+trusted-issuer config (so the test leaves no trace). One command, no external
+IdP required:
+
+```bash
+cd examples/demos/outbound-demo
+# reuses config.json for action/to/agentId/channelId (clientId/clientSecret ignored)
+./run-federated.sh --port=9091
+```
+
+Same `Proceed? [y/N]` prompt and same real-call caution as `run-outbound.sh`.
+A `200` proves the whole federated path: JWKS fetch → RS256 verify →
+`iss`/`aud` check → tunnel → controller → Twilio.
+
+**Against a real IdP** (Auth0/Okta/Entra/Keycloak/…): mint a
+`client_credentials` RS256 token from your IdP, then either configure the
+trusted issuer once in the inspector's **Network Access → Federated JWT**
+panel and pass only the token, or let the script configure it via flags:
+
+```bash
+./run-federated.sh --port=9091 --token="$REAL_JWT" \
+  --issuer=https://your-tenant.example.com/ \
+  --jwksUrl=https://your-tenant.example.com/.well-known/jwks.json \
+  --audience=mcp-connector
+```
+
+The token's `iss`/`aud` must match the configured issuer/audience, and the
+JWKS URL must be reachable *from the connector*. Add `--keep-issuer` to leave
+the config in place after the run.
+
+> Note on Twilio Org OAuth2 as the IdP: Twilio's Organization-level OAuth
+> apps are a client-credentials issuer (`https://oauth.twilio.com/v2/token`),
+> which fits the *pattern* — but federated mode here does offline JWKS
+> verification only (no token introspection), so it requires Twilio's access
+> tokens to be RS256 JWTs with a public JWKS and a pinnable `iss`/`aud`. That
+> isn't confirmed in Twilio's public docs; decode a real Org token first to
+> check its `alg` and whether a JWKS endpoint is published.
 
 ## Wire-format action names
 
