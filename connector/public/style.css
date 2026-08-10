@@ -947,6 +947,8 @@ h2 {
 }
 .tunnel-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tunnel-field small { font-size: 0.72rem; }
+/* FEDERATED-JWT-MODE — Save + Clear side by side under the three inputs. */
+.trusted-issuer-actions { display: flex; gap: 0.4rem; }
 .tunnel-authmode {
   border: 1px solid var(--border);
   border-radius: 4px;

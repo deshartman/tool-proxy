@@ -132,6 +132,65 @@ async function handleDeleteClient(req: IncomingMessage, res: ServerResponse, dep
   res.end(JSON.stringify({ ok: true }));
 }
 
+// ─── Federated JWT trust config ───────────────────────────────────────────
+// FEDERATED-JWT-MODE — three handlers folded in alongside API-client
+// management (same deps, same trust tier, one wiring call site). Federated
+// mode has no per-client allowlist: any JWT signed by the configured trusted
+// issuer, with the right audience, not expired, is accepted. Client lifecycle
+// is entirely the customer's own IdP's responsibility.
+
+// GET /internal/network-access/trusted-issuer. No redaction — nothing secret.
+async function handleGetTrustedIssuer(_req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
+  setJsonHeaders(res);
+  const config = await deps.configStore.getTrustedIssuerConfig();
+  res.statusCode = 200;
+  res.end(JSON.stringify({ ok: true, config: config ?? null }));
+}
+
+// POST /internal/network-access/trusted-issuer — body { issuer, jwksUrl,
+// audience } (all three required, non-empty strings). Setting a config for
+// the FIRST time — when no self-issued API client has ever flipped it — also
+// flips network_access.enabled on and live-rebinds the listener non-loopback,
+// mirroring handleAddClient. Without it a customer who configures ONLY
+// federated mode (never adds an API client) would leave /v1/outbound/calls
+// unreachable non-loopback even with a fully valid federated JWT.
+async function handleSetTrustedIssuer(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
+  if (!guardCsrf(req, res)) return;
+  setJsonHeaders(res);
+  const body = await readBody(req, res);
+  if (!body) return;
+  const issuer = typeof body.issuer === "string" ? body.issuer.trim() : "";
+  const jwksUrl = typeof body.jwksUrl === "string" ? body.jwksUrl.trim() : "";
+  const audience = typeof body.audience === "string" ? body.audience.trim() : "";
+  if (!issuer || !jwksUrl || !audience) {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ ok: false, error: "issuer, jwksUrl, and audience are all required" }));
+    return;
+  }
+  await deps.configStore.setTrustedIssuerConfig({ issuer, jwksUrl, audience });
+  const wasEnabled = (await deps.configStore.getNetworkAccessState()).enabled;
+  if (!wasEnabled) await deps.configStore.setNetworkAccessEnabled(true);
+  res.statusCode = 200;
+  // Rebind AFTER the response has flushed — same ordering as handleAddClient;
+  // rebindNonLoopback() force-closes existing connections (including the one
+  // carrying this response), and doing it before res.end() finishes writing
+  // races the client into ERR_EMPTY_RESPONSE.
+  if (!wasEnabled) res.on("finish", () => deps.rebindNonLoopback());
+  res.end(JSON.stringify({ ok: true }));
+}
+
+// POST /internal/network-access/trusted-issuer/clear. Does NOT un-rebind or
+// flip network_access.enabled back to false — matches this feature's one-way-
+// widening semantics everywhere else (revoking an API client doesn't
+// re-narrow the bind either).
+async function handleClearTrustedIssuer(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
+  if (!guardCsrf(req, res)) return;
+  setJsonHeaders(res);
+  await deps.configStore.clearTrustedIssuerConfig();
+  res.statusCode = 200;
+  res.end(JSON.stringify({ ok: true }));
+}
+
 export function createNetworkAccessRoutes(deps: NetworkAccessRoutesDeps) {
   return {
     handleStatus: (req: IncomingMessage, res: ServerResponse) => handleStatus(req, res, deps),
@@ -139,6 +198,9 @@ export function createNetworkAccessRoutes(deps: NetworkAccessRoutesDeps) {
     handleListClients: (req: IncomingMessage, res: ServerResponse) => handleListClients(req, res, deps),
     handleRevokeClient: (req: IncomingMessage, res: ServerResponse) => handleRevokeClient(req, res, deps),
     handleDeleteClient: (req: IncomingMessage, res: ServerResponse) => handleDeleteClient(req, res, deps),
+    handleGetTrustedIssuer: (req: IncomingMessage, res: ServerResponse) => handleGetTrustedIssuer(req, res, deps),
+    handleSetTrustedIssuer: (req: IncomingMessage, res: ServerResponse) => handleSetTrustedIssuer(req, res, deps),
+    handleClearTrustedIssuer: (req: IncomingMessage, res: ServerResponse) => handleClearTrustedIssuer(req, res, deps),
   };
 }
 

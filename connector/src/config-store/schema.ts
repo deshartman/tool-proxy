@@ -70,5 +70,22 @@ CREATE TABLE IF NOT EXISTS ${schema}.api_clients (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     revoked_at        TIMESTAMPTZ                -- NULL = active
 );
+
+-- Federated JWT trust config. Exactly one row, id=1. Presence (all three
+-- columns non-null) = federated mode configured; absence = not configured.
+-- No 'enabled' boolean — unlike network_access there's nothing to toggle
+-- independently of "is a config present." NOT sealed: an issuer URL, a
+-- JWKS endpoint URL, and an audience string are public IdP metadata, not
+-- credentials — same reasoning that leaves controllers.controller_url
+-- unsealed. The three columns are set/cleared together by the ConfigStore
+-- methods (not enforced by a DB constraint, to keep the migration simple).
+CREATE TABLE IF NOT EXISTS ${schema}.trusted_issuer_config (
+    id                SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    issuer            TEXT,                      -- NULL when unconfigured
+    jwks_url          TEXT,
+    audience          TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 }

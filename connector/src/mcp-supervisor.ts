@@ -62,6 +62,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  authorOf,
   isType1Spawn,
   type McpServerSpec,
 } from "./config.js";
@@ -155,6 +156,12 @@ export interface McpStatus {
   // entries (always undefined for yaml entries). Surfaced in the inspector
   // for operator-side correlation with the controller's row.
   mcpId?: string;
+  // v1.4: who authored this MCP ("twilio" | "customer") — mirrors
+  // Entry.author (the source of truth isAuthorTwilio reads). Surfaced here
+  // for inspector-facing consumers; source and author are orthogonal (a
+  // customer yaml Type 2 entry has source: "yaml" same as a Twilio
+  // `bundled:` entry).
+  author: string;
 }
 
 interface Entry {
@@ -169,6 +176,10 @@ interface Entry {
   // in practice means process restart. Constant-time-compared on read
   // (see resolveMcpByWebhookToken).
   webhookToken: string;
+  // v1.4: who authored this MCP, computed once via authorOf(spec) at
+  // register()/registerOne() time — same "mint once per entry" pattern as
+  // webhookToken. isAuthorTwilio() reads this directly.
+  author: string;
   // Controller-supplied env values. Merged on every spawn so a creds-update
   // → restart picks them up. Cleared when controller returns nothing.
   controllerEnv: Record<string, string>;
@@ -251,9 +262,11 @@ export class McpSupervisor {
   register(specs: SupervisedSpec[]): void {
     for (const spec of specs) {
       if (this.entries.has(spec.name)) continue;
+      const author = authorOf(spec);
       this.entries.set(spec.name, {
         spec,
         webhookToken: randomBytes(32).toString("base64url"),
+        author,
         controllerEnv: {},
         sessionEnv: {},
         status: {
@@ -263,6 +276,7 @@ export class McpSupervisor {
           restartCount: 0,
           toolsCount: 0,
           source: isDropinSpec(spec) ? "local" : "yaml",
+          author,
         },
       });
     }
@@ -283,6 +297,13 @@ export class McpSupervisor {
       if (timingSafeEqual(known, supplied)) return name;
     }
     return undefined;
+  }
+
+  // v1.4: code-trust gate for controller-call — is `name` Twilio-authored
+  // bundled code (never a customer drop-in)? Backs the inspector loopback
+  // route's not_authorized check.
+  isAuthorTwilio(name: string): boolean {
+    return this.entries.get(name)?.author === "twilio";
   }
 
   // Boot path: spawn every Type 1/dropin child, then connect to every
@@ -499,9 +520,11 @@ export class McpSupervisor {
   registerOne(spec: SupervisedSpec, meta?: { source?: "yaml" | "local" | "controller-config"; mcpId?: string }): void {
     if (this.entries.has(spec.name)) return;
     const defaultSource = isDropinSpec(spec) ? "local" : "yaml";
+    const author = authorOf(spec);
     this.entries.set(spec.name, {
       spec,
       webhookToken: randomBytes(32).toString("base64url"),
+      author,
       controllerEnv: {},
       sessionEnv: {},
       status: {
@@ -512,6 +535,7 @@ export class McpSupervisor {
         toolsCount: 0,
         source: meta?.source ?? defaultSource,
         ...(meta?.mcpId ? { mcpId: meta.mcpId } : {}),
+        author,
       },
     });
   }

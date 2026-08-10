@@ -10,5 +10,7 @@ export type {
   WebhookEvent,
   WebhookEventName,
 } from "./webhook.js";
+export { callControllerApi } from "./controller-api.js";
+export type { CallControllerApiOptions } from "./controller-api.js";
 export { createLogger } from "../logger.js";
 export type { Logger } from "../logger.js";

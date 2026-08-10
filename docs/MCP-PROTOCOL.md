@@ -4,13 +4,17 @@
 >
 > **Authority.** This is the authoritative wire-format spec. If a frame is described here, it MUST be implemented per the schema below; if it is not described here, it MUST NOT be sent without first updating this doc.
 >
-> **Version.** v1.3 — additions covered by the most recent revisions:
+> **Version.** v1.4 — additions covered by the most recent revisions:
 > - **v1** baseline: `creds-request`, `creds-response`, `creds-update`.
 > - **v1.1**: `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; optional `mcpId` field on creds frames.
 > - **v1.2**: two additive extensions —
 >   - **MCP server-method extension** — widens the dispatcher to forward the full MCP server-method set (prompts / resources incl. templates + subscribe / completions / `logging/setLevel`); adds the `mcp-notification` frame for server→client notifications; manifest grows `prompts[]` / `resources[]` / `resourceTemplates[]` / `capabilities` on each `ServerDescriptor`. See §"v1.2 — MCP server-method extension".
 >   - **Local MCPs rescan** — adds `local-mcps-rescan` (controller → connector) and `local-mcps-rescan-ack` (connector → controller) for operator-triggered drop-in folder rescans without a connector restart. See §"v1.2 — Local MCP rescan".
-> - **v1.3** (this revision): **Customer drop-in approval gate** — adds `mcp-discovered` (connector → controller), `mcp-enable` (controller → connector), `mcp-disable` (controller → connector), `mcp-enable-ack` (connector → controller). Customer-authored drop-in MCPs no longer auto-enable when the connector finds the folder; their tools are withheld from the manifest until the controller sends `mcp-enable`. The controller becomes the gate for what surfaces to the LLM. See §"v1.3 — Customer drop-in approval gate".
+> - **v1.3**: **Customer drop-in approval gate** — adds `mcp-discovered` (connector → controller), `mcp-enable` (controller → connector), `mcp-disable` (controller → connector), `mcp-enable-ack` (connector → controller). Customer-authored drop-in MCPs no longer auto-enable when the connector finds the folder; their tools are withheld from the manifest until the controller sends `mcp-enable`. The controller becomes the gate for what surfaces to the LLM. See §"v1.3 — Customer drop-in approval gate".
+> - **v1.4** (this revision): three additive pieces, two of which were already shipped under a `v1.4` placeholder tag before this section existed to point at —
+>   - **Controller API calls (Twilio-bundled only)** (new) — adds `controller-call` (connector → controller) / `controller-call-response` (controller → connector). Lets a Twilio-authored bundled MCP's own tool handler invoke a named controller-side action and get a typed result back, synchronously, before its tool call returns. Gated to `author === "twilio"` — customer drop-ins get no access. See §"v1.4 — Controller API calls (Twilio-bundled only)".
+>   - `ServerDescriptor.protocolVersion` (§9.2, already shipped) — the negotiated MCP era string per upstream MCP.
+>   - Formal retirement of raw `mcp-notification` forwarding (§9.1/§9.4, already shipped) in favor of a `manifest-delta` re-list on upstream `*/list_changed`.
 >
 > Pre-existing frames (`register`, `register-ack`, `manifest-delta`, `rpc`, `heartbeat`, `goodbye`, `webhook-allocate`, `webhook-allocate-ack`, `webhook`, `webhook-revoke`) are documented in [connector/src/tunnel/frames.ts](../connector/src/tunnel/frames.ts) and [CLAUDE.md](../CLAUDE.md).
 
@@ -1029,10 +1033,12 @@ interface ServerDescriptor {
     logging?:    {};
   };
 
-  // v1.4 / §9.2 additive — the MCP protocol revision the connector negotiated
+  // v1.4 additive (§9.2) — the MCP protocol revision the connector negotiated
   // with this upstream ("2026-07-28" / "2025-11-25"). Advisory: the controller
   // may render a per-MCP era badge. Absent when the SDK client didn't expose a
   // negotiated version. Older controllers ignore it (unknown-fields rule).
+  // See §"v1.4 — Controller API calls (Twilio-bundled only)" for what else
+  // shipped under the v1.4 tag.
   protocolVersion?: string;
 }
 
@@ -1084,7 +1090,7 @@ Upstream errors flow back unchanged.
 
 ### `mcp-notification` frame (connector → controller)
 
-> **Superseded by v1.4 (§9.1 / §9.4) — NO LONGER EMITTED.** As of the full 2026-07-28 adoption, the connector does not forward raw MCP notifications to the controller — a UI-only controller can't interpret raw MCP. Instead: upstream `*/list_changed` triggers a manifest re-list → **`manifest-delta`** (the frame the controller already applies); `progress` / `message` / `resources/updated` / `cancelled` are **consumed connector-side** (no tunnel consumer). This frame type stays defined so an older controller that still has a handler parses it harmlessly, but the connector emits none. The v1.2 description below is retained for historical context. See `tunnel/notification-forwarder.ts`.
+> **Superseded by v1.4 (§9.1 / §9.4) — NO LONGER EMITTED.** As of the full 2026-07-28 adoption, the connector does not forward raw MCP notifications to the controller — a UI-only controller can't interpret raw MCP. Instead: upstream `*/list_changed` triggers a manifest re-list → **`manifest-delta`** (the frame the controller already applies); `progress` / `message` / `resources/updated` / `cancelled` are **consumed connector-side** (no tunnel consumer). This frame type stays defined so an older controller that still has a handler parses it harmlessly, but the connector emits none. The v1.2 description below is retained for historical context. See `tunnel/notification-forwarder.ts` and §"v1.4 — Controller API calls (Twilio-bundled only)" for what else shipped under the v1.4 tag.
 
 Server-initiated notifications emitted by an MCP get wrapped and forwarded as a single new frame. **Connector is a pure forwarder — payload is opaque.** Same async-free `send()` path as the existing `webhook` frame so a notification burst doesn't starve heartbeats.
 
@@ -1389,15 +1395,147 @@ The asymmetry favors the migration: a fresh connector against an old controller 
 - **Audit log.** Approve / disable / re-edit-creds actions all SHOULD write to the controller's existing audit log (per responsibility 9 above). Stamp the operator identity at action time; the connector doesn't track who approved.
 - **Frame storms on reconnect.** A connector with N unapproved drop-ins emits N `mcp-discovered` frames after `register-ack`. The 256 KB per-frame cap covers each (each frame is ~1 KB), but consider batching UI updates if N is large.
 
+## v1.4 — Controller API calls (Twilio-bundled only)
+
+> **Status: shipped.** The frame pair, coordinator, author gate, and both call surfaces (in-process SDK for Type 1, inspector loopback for Type 3) are live. `examples/demos/memory-event-demo/` is the reference caller for the in-process-SDK shape — a demo drop-in invoking `memory.append_event` (see [docs/MEMORY-EVENTS.md](MEMORY-EVENTS.md)); it's reference material like `examples/demos/{sample,crm,salesforce}`, not auto-loaded. No bundle shipped in `bundled-mcps/` by default calls it yet. `outbound.place_call` / `outbound.send_message` are reachable two ways: from a Twilio-bundled MCP's own tool via this same `callControllerApi` mechanism (no reference demo exercises this for `outbound.*` specifically today — `memory-event-demo` demonstrates the identical shape for a different action), or externally via the machine-API `POST /v1/outbound/calls` route (see [docs/OUTBOUND-CALLS.md](OUTBOUND-CALLS.md)), which `examples/demos/outbound-demo/` exercises.
+
+### Why
+
+Every existing connector-initiated exchange (`creds-request`, `webhook-allocate`, `mcp-discovered`) is connector-internal plumbing — nothing lets an MCP's own business logic reach up to the controller and get a typed answer back. The motivating case: a customer's own system calls into a bundled MCP's HTTP tool directly, and handling that call correctly requires the controller to do something and hand back a result — synchronously, before the tool call returns.
+
+Three scope decisions shape the design:
+
+- **Twilio-bundled only.** Scoped to `author === "twilio"` MCPs — not customer drop-ins. Bundled code is Twilio's; letting arbitrary customer-authored drop-ins trigger controller-side actions is a materially bigger trust grant that would need its own approval-gate story (see §"v1.3 — Customer drop-in approval gate", which this deliberately does NOT reuse or extend).
+- **One generic named-action RPC**, not a bespoke frame pair per capability. `{ method: action, params }` avoids growing a new frame type for every future controller-side action the way `creds-request`, `webhook-allocate`, and `mcp-discovered` each did.
+- **Advertised, not enforced.** A bundle may declare which actions it calls via `capabilities.extensions.<bundle>.controllerActions` on its MCP `initialize` response (the same pattern `bundled-mcps/agentic-memory` uses for its custom capability group — see CLAUDE.md "Schema declaration follows the trust boundary"). This is advisory metadata for the controller/operator UI, never a security boundary.
+
+### Direction, transport, and trust
+
+**Direction.** Connector-initiated only. A Twilio-bundled MCP calls out; the controller replies. There is no path in this design for the controller to proactively push a call down to a bundle.
+
+**Transport.** One frame pair over the existing tunnel WS, same JSON-line-per-frame discipline as every other frame.
+
+**Trust.** The connector only lets `author === "twilio"` MCPs send this frame — enforced entirely on the connector side (`McpSupervisor.isAuthorTwilio(name)`) before the frame ever reaches the controller. The controller derives `connectorId` from the already-authenticated WS session, same as every other frame — it MUST NOT trust `mcp` / `mcpId` on the frame as an identity claim by itself; cross-check against its own record of what's registered for that connector. This is a **code-trust** boundary (is this Twilio's own bundled code, never a customer drop-in) — orthogonal to whatever **account-scope** (tenancy) check the controller layers on top to decide which customer's data a specific call may touch. Neither substitutes for the other; both are mandatory.
+
+### ControllerCallFrame (connector → controller)
+
+```ts
+export interface ControllerCallFrame {
+  type: "controller-call";
+  requestId: string;         // UUID v4, generated by the connector
+  mcp: string;                // ServerDescriptor.name — which bundle is calling
+  mcpId?: string;              // set when this MCP came from controller-config
+  action: string;             // controller-defined method name, e.g. "memory.summarize"
+  params: unknown;            // opaque, controller validates against its own schema per action
+}
+```
+
+- `requestId` — connector-generated, echoed back verbatim on the reply. Correlates request to response; nothing else on the frame is needed for matching.
+- `mcp` — the calling bundle's `ServerDescriptor.name`. Identifies the caller for the controller's own authorization/audit trail — never trusted as an identity claim by itself (see Trust, above). One exception: calls originated by the machine API's `POST /v1/outbound/calls` route (see CLAUDE.md "Inspector UI notes" and `docs/OUTBOUND-CALLS.md` §7) have no bundle behind them at all — that route carries `machine-api:<clientId>` here instead, threading the caller's JWT `sub` claim through so the audit trail can still distinguish machine callers from each other. A future reader matching on `mcp` against the manifest's `ServerDescriptor.name` list should expect this one non-bundle value to appear.
+- `mcpId` — present only when this MCP came from the controller-config (3rd-party) roster. In practice this is **empty on essentially every real `controller-call` frame today** — nothing that qualifies for `author === "twilio"` is roster-sourced (Twilio bundles are yaml/`bundled:`-installed, not controller-pushed). Kept for forward-compat only; don't build correlation logic that assumes it's present. `mcp` (name) plus the authenticated session is the real identity.
+- `action` — free-form, entirely controller-owned; the connector imposes no enum and treats it as an opaque string. Convention: `<family>.<verb>` (e.g. `outbound.place_call`, `memory.append_event`).
+- `params` — opaque to the connector; the controller owns validation against its own per-action schema.
+
+### ControllerCallResponseFrame (controller → connector)
+
+```ts
+export interface ControllerCallResponseFrame {
+  type: "controller-call-response";
+  requestId: string;          // echoes the request's id
+  result?: unknown;           // present on success
+  error?: { code: string; message: string };  // present on failure
+}
+```
+
+- `requestId` — MUST match the request it's replying to. A response with an unrecognized `requestId` (already timed out, or a duplicate) is dropped and logged by the connector — never causes an error.
+- `result` — present on success; opaque to the connector, passed straight through to the calling bundle.
+- `error` — present on failure; `{ code, message }`. Codes are controller-owned and passed through opaquely to the calling bundle, except the connector's own `timeout` (see below), which the controller never sends because it's raised entirely client-side.
+
+**Error codes.** `timeout` is the connector's own, raised when no response lands within the per-call window (see Timeout, below) — the controller never sends this code. Everything else is controller-owned; the baseline vocabulary this plan anticipates:
+
+| Code | Meaning |
+|---|---|
+| `timeout` | Connector-side: no `controller-call-response` arrived within the timeout window. |
+| `unknown_action` | Controller doesn't recognize `action`. |
+| `not_authorized` | Controller's own re-check failed (e.g. its independent author/account-scope check) — should be rare since the connector gates before sending. |
+| `invalid_params` | `params` failed the action's own schema validation. Confirmed in use by `memory.append_event`. |
+| `cross_account` | `params` referenced a resource (e.g. a channel/identity) not owned by the account bound to this tunnel session. Confirmed in use by the `outbound.*` family — this is the account-scope gate (see Trust, above) surfacing as a typed error rather than a silent drop. |
+| `controller_error` | The action's own execution failed. |
+
+### Timeout
+
+Per-call, connector-side only, enforced entirely client-side — the wire frame carries no `timeoutMs` field because the controller doesn't need to know or act on it. Default 8s when the caller doesn't override. The calling bundle can request a longer ceiling via `callControllerApi(action, params, { timeoutMs })` — guidance is that action families known to run real work before answering (e.g. an LLM turn in the critical path, conventionally named `outbound.*`) should pass ~30s; simple/fast actions can rely on the 8s default. On timeout, the SDK caller gets a typed `{ code: "timeout" }` error rather than a hung customer-facing HTTP call. The coordinator never auto-retries — retry policy (if any) is the calling bundle's own decision, same as any other fallible tool dependency. Idempotency (a stable dedup key for actions with side effects, e.g. "place a call") is likewise entirely the bundle author's responsibility, carried inside `params` — the connector never inspects or generates one.
+
+### Frame ordering rules (v1.4)
+
+1. Exactly one `controller-call-response` per `controller-call`, matched by `requestId`. No other frame type participates in this exchange.
+2. No ordering guarantee across concurrent `controller-call` frames — from the same bundle or different ones. The controller may reply out of order; the connector correlates purely by `requestId`, never by send order.
+3. A `controller-call-response` with an unrecognized `requestId` is dropped and logged, never surfaced as an error to any caller.
+4. This frame pair does not gate or block anything else on the wire — heartbeats, `rpc`, `webhook`, and every other frame type continue to interleave freely. Same "no per-frame await on send" rule as `webhook` frames (see §"Webhook ingress" in CLAUDE.md).
+
+### Boot sequence (v1.4)
+
+Unlike v1.1's roster snapshot or v1.3's `mcp-discovered` fan-out, v1.4 has no boot-time frame exchange. The connector constructs a fresh `ControllerApiCoordinator` inside `connectTunnelDb()` (same lifetime as the creds coordinator) and binds its `send` to the live tunnel — nothing is sent until a bundle's tool handler actually calls `callControllerApi`. There is no snapshot, no replay-on-reconnect, and no soft-wait, because unlike creds or approval state, there's no cross-restart state to reconcile: a `controller-call` either round-trips within its timeout or it doesn't.
+
+A pending call whose tunnel drops mid-flight is rejected immediately (not paused for the next reconnect) — the customer-facing HTTP request behind it is still blocked waiting, so failing fast is correct; silently resuming across a reconnect would strand that caller indefinitely.
+
+### Examples (v1.4)
+
+Success:
+```json
+// →
+{ "type": "controller-call", "requestId": "3fbd...", "mcp": "agentic-memory", "action": "memory.append_event", "params": { "identity": { "channel": "sms", "value": "+15551234567" }, "event": "your flight is delayed" } }
+// ←
+{ "type": "controller-call-response", "requestId": "3fbd...", "result": { "identityId": "id_789", "stored": true } }
+```
+
+Note `memory.append_event`'s `identity` is customer-scoped only — no `channelId`/`agentId` on this action's params, unlike the `outbound.*` family. Memory is cross-channel and cross-agent by design; there's no channel or agent to scope it to.
+
+Controller-side failure:
+```json
+// ←
+{ "type": "controller-call-response", "requestId": "3fbd...", "error": { "code": "unknown_action", "message": "no handler registered for that action" } }
+```
+
+Timeout (no matching response ever arrives — the connector's own coordinator raises this, the controller never sends it):
+```json
+// callControllerApi("outbound.place_call", { to: "+1555..." }, { timeoutMs: 30000 })
+// rejects after 30s with: { code: "timeout", message: "controller-call \"outbound.place_call\" timed out" }
+```
+
+### v1.4 — Backwards compat
+
+| Scenario | Behavior |
+|---|---|
+| Connector v1.4 + Controller v1.3 (or older) | The old controller doesn't know `controller-call`. Per the unknown-frames rule it logs and ignores the frame — no `controller-call-response` is ever sent back. The calling bundle's `callControllerApi` simply runs out its timeout (default 8s, or the caller's override) and rejects with `{ code: "timeout" }`; the connector has no client-side way to distinguish "old controller" from "slow controller." |
+| Connector v1.3 (or older) + Controller v1.4 | N/A. This frame pair is connector-initiated only (see Direction, above) — an old connector never sends `controller-call`, so a new controller never has anything to reply to, and there's no reverse-push path that could strand it. |
+
+### v1.4 — Implementation notes for the controller team
+
+Carried forward verbatim from the connector-side design review — these are locked, not open questions:
+
+1. **Transport**: dedicated `controller-call` / `controller-call-response` pair, not a reverse `rpc`.
+2. **Error shape**: `{ code, message }`; codes are controller-owned and passed through opaquely except the connector's own `timeout`.
+3. **Action naming**: `<family>.<verb>` (`outbound.place_call`, `memory.append_event`), controller-owned namespace — the connector treats `action` as an opaque string.
+4. **Scope**: Twilio-authored bundles only (`author === "twilio"`). Customer drop-ins get no access in this iteration — a possible future extension, not part of this version.
+5. **Two independent, mandatory gates**: connector-side code-trust (`isAuthorTwilio`) + controller-side account-scope (derived from the authenticated session, never from frame fields). Neither substitutes for the other.
+6. **Timeout**: per-call, connector-side only, default 8s, overridable by the calling bundle. Not carried on the wire frame — the controller doesn't need to know it.
+7. **Idempotency**: entirely controller/action-schema-owned (an `idempotencyKey` inside `params` where an action needs one); the connector's coordinator never auto-retries — retry policy is the calling bundle's call.
+8. **Advertisement**: `capabilities.extensions.<bundle>.controllerActions` is optional/advisory metadata only, never a security boundary. The controller is free to enforce a stricter per-action allowlist against this list at its own discretion.
+9. **Audit/observability**: every `controller-call` / `controller-call-response` is captured automatically by the connector's existing generic frame tap (its inspector's Frames panel) — no per-frame-type opt-in exists or is needed on the connector side. On the controller side: whatever the existing per-connector activity log already does with `creds-request` / `mcp-enable` should apply its identical code path to `controller-call` — no new category of thing, just a new member of an established pattern.
+10. **Type 3 (Python) bundle access**: via the connector's inspector loopback route, reusing the same per-MCP `MCP_WEBHOOK_TOKEN` already minted for webhook ingress — no second token.
+11. **Type 1 (Node) bundle access**: via an in-process SDK helper (`callControllerApi`) that wraps the same loopback route.
+
 ## Versioning
 
-This document is v1.3. Revisions:
+This document is v1.4. Revisions:
 - v1.1 — adds `mcp-config-snapshot`, `mcp-config-delta`, `mcp-config-ack`, `mcp-config-resync` for controller-driven 3rd-party MCP rosters; adds optional `mcpId` to existing creds frames. Backwards-compatible per §"Backwards compat".
 - v1.2 — two additive extensions:
   - `local-mcps-rescan` + `local-mcps-rescan-ack` for the controller-triggered local-MCP refresh.
   - MCP server-method passthrough (prompts / resources incl. subscribe / completions / logging) and the `mcp-notification` frame for server→client notifications. Manifest grows `prompts[]` / `resources[]` / `resourceTemplates[]` / `capabilities` per server.
   Both backwards-compatible (additive only). See §"v1.2 — MCP server-method extension" → "Backwards compat".
-- v1.3 (this revision) — customer drop-in approval gate: `mcp-discovered`, `mcp-enable`, `mcp-disable`, `mcp-enable-ack`. Customer-authored drop-in MCPs no longer auto-enable; tools held back from manifest until controller approval. Backwards-compatible per §"v1.3 — Backwards compat".
+- v1.3 — customer drop-in approval gate: `mcp-discovered`, `mcp-enable`, `mcp-disable`, `mcp-enable-ack`. Customer-authored drop-in MCPs no longer auto-enable; tools held back from manifest until controller approval. Backwards-compatible per §"v1.3 — Backwards compat".
+- v1.4 (this revision) — three additive pieces: `controller-call` / `controller-call-response` (Twilio-bundled-only controller API calls, see §"v1.4 — Controller API calls (Twilio-bundled only)"); `ServerDescriptor.protocolVersion`; formal retirement of raw `mcp-notification` forwarding in favor of `manifest-delta`. Backwards-compatible — additive only, degrades to a client-side timeout against an older controller. See §"v1.4 — Backwards compat".
 - v2 — add new frame types (additive, controller MUST log+ignore unknown frames per §"Frame envelope").
 - v3 — breaking change (rare). Would require a `protocol-capabilities` handshake at register time. **Not in scope today.**
 

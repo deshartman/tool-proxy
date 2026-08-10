@@ -1,0 +1,11 @@
+{
+  "clientId": "REPLACE_WITH_REAL_API_CLIENT_ID",
+  "clientSecret": "REPLACE_WITH_REAL_API_CLIENT_SECRET",
+  "action": "place_call",
+  "to": "+15555550123",
+  "agentId": "REPLACE_WITH_REAL_AGENT_ID",
+  "channelId": "REPLACE_WITH_REAL_CHANNEL_ID",
+  "callContext": {
+    "reason": "demo smoke test"
+  }
+}

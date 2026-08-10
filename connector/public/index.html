@@ -105,6 +105,25 @@
               <input type="text" name="name" placeholder="Client label (optional)">
               <button type="submit">Add API client</button>
             </form>
+
+            <!-- FEDERATED-JWT-MODE — point the connector at the customer's
+                 own IdP instead of minting credentials here. Any RS256 JWT
+                 signed by this issuer, with the right audience, is accepted;
+                 no per-client onboarding in the connector. Setting this the
+                 first time also flips on non-loopback reachability, same as
+                 adding the first API client. None of these three values are
+                 secret (public IdP metadata), so no redaction UI. -->
+            <p class="api-clients-title">Federated JWT (bring your own IdP)</p>
+            <p id="trusted-issuer-state" class="network-access-subhead"></p>
+            <form id="trusted-issuer-form" class="tunnel-field" autocomplete="off">
+              <input type="text" name="issuer" placeholder="Issuer (iss), e.g. https://idp.example.com">
+              <input type="text" name="jwksUrl" placeholder="JWKS URL, e.g. https://idp.example.com/.well-known/jwks.json">
+              <input type="text" name="audience" placeholder="Audience (aud), e.g. mcp-connector">
+              <div class="trusted-issuer-actions">
+                <button type="submit">Save</button>
+                <button type="button" id="trusted-issuer-clear">Clear</button>
+              </div>
+            </form>
           </div>
         </div>
       </section>

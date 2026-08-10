@@ -2306,8 +2306,85 @@ function buildApiClientsDetail() {
   return wrap;
 }
 
+// FEDERATED-JWT-MODE — trusted-issuer config. Points the connector at the
+// customer's own IdP; any RS256 JWT it signs (right aud, not expired) is
+// accepted by /v1/outbound/calls. Nothing here is secret, so no redaction —
+// the status line shows the configured values verbatim. Saving the first
+// time also flips on non-loopback reachability (server-side, same as the
+// first Add API client), so refresh the network-access badge afterward.
+const elTrustedIssuerState = document.getElementById('trusted-issuer-state');
+const elTrustedIssuerForm = document.getElementById('trusted-issuer-form');
+const elTrustedIssuerClear = document.getElementById('trusted-issuer-clear');
+
+function renderTrustedIssuer(config) {
+  if (config) {
+    elTrustedIssuerState.textContent = `Configured — issuer ${config.issuer}, audience ${config.audience}. Federated JWTs from this issuer are accepted.`;
+    if (elTrustedIssuerForm) {
+      elTrustedIssuerForm.issuer.value = config.issuer;
+      elTrustedIssuerForm.jwksUrl.value = config.jwksUrl;
+      elTrustedIssuerForm.audience.value = config.audience;
+    }
+  } else {
+    elTrustedIssuerState.textContent = 'Not configured — only self-issued (Add API client) bearers are accepted. Set an issuer to also accept JWTs from your own IdP.';
+  }
+}
+
+async function fetchTrustedIssuer() {
+  try {
+    const resp = await fetch('/internal/network-access/trusted-issuer');
+    const body = await resp.json();
+    if (body.ok) renderTrustedIssuer(body.config);
+  } catch { /* leave prior state rendered — non-fatal */ }
+}
+
+elTrustedIssuerForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const submitBtn = elTrustedIssuerForm.querySelector('button[type="submit"]');
+  const originalLabel = submitBtn.textContent;
+  submitBtn.disabled = true;
+  try {
+    const fd = new FormData(elTrustedIssuerForm);
+    const payload = {
+      issuer: (fd.get('issuer') || '').trim(),
+      jwksUrl: (fd.get('jwksUrl') || '').trim(),
+      audience: (fd.get('audience') || '').trim(),
+    };
+    const resp = await fetch('/internal/network-access/trusted-issuer', {
+      method: 'POST', headers: csrfHeaders, body: JSON.stringify(payload),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.ok === false) throw new Error(body.error || `HTTP ${resp.status}`);
+    await fetchTrustedIssuer();
+    await fetchNetworkAccessStatus(); // badge flips to ENABLED if this is the first config
+  } catch (err) {
+    submitBtn.textContent = `Failed: ${err.message}`;
+    setTimeout(() => { submitBtn.textContent = originalLabel; }, 3000);
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
+elTrustedIssuerClear?.addEventListener('click', async () => {
+  const original = elTrustedIssuerClear.textContent;
+  elTrustedIssuerClear.disabled = true;
+  try {
+    const resp = await fetch('/internal/network-access/trusted-issuer/clear', {
+      method: 'POST', headers: csrfHeaders, body: '{}',
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    elTrustedIssuerForm?.reset();
+    await fetchTrustedIssuer();
+  } catch (err) {
+    elTrustedIssuerClear.textContent = `Failed: ${err.message}`;
+    setTimeout(() => { elTrustedIssuerClear.textContent = original; }, 3000);
+  } finally {
+    elTrustedIssuerClear.disabled = false;
+  }
+});
+
 // Boot ────────────────────────────────────────────────────────
 void fetchTunnelConfig();
 void fetchNetworkAccessStatus();
 void fetchApiClientsList();
+void fetchTrustedIssuer();
 connectSse();
