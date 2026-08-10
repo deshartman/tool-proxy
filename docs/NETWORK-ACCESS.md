@@ -124,24 +124,39 @@ the bind.
 
 ## Machine API routes
 
-Today there's one protected route beyond `/oauth/token` itself:
-**`POST /v1/outbound/calls`** — triggers a real outbound Twilio call or
-message through the tunnel. Attach the bearer token from step 4 above:
+There are two protected routes beyond `/oauth/token` itself:
+
+| Route | What it does | Reference |
+|---|---|---|
+| `POST /v1/outbound/calls` | Trigger a real outbound Twilio call or message through the tunnel. | [`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) |
+| `POST /v1/memory/events` | Inject a customer memory fact through the tunnel. | [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) |
+
+Attach the bearer token from step 4 above to either:
 
 ```bash
 curl -s -X POST https://<connector-address>:9090/v1/outbound/calls \
   -H "authorization: Bearer $ACCESS_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"action":"place_call","to":"+15551234567","agentId":"agt_123","channelId":"chn_456"}'
+
+curl -s -X POST https://<connector-address>:9090/v1/memory/events \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"identity":{"channel":"sms","value":"+15551234567"},"event":"your flight is delayed"}'
 ```
 
-`action` is `"place_call"` or `"send_message"`; full request/response shape,
-error codes, and the `machine-api:<clientId>` audit-trail identity this
-route uses are documented in [`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) §7.
-The bearer can be either a self-issued (HS256) token from `/oauth/token` or
-a federated (RS256) token from your own IdP once you've configured a trusted
-issuer above — the route accepts both, and the caller doesn't need to know
-or care which one this route verified.
+For outbound, `action` is `"place_call"` or `"send_message"`; full
+request/response shape and error codes are in
+[`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) §3/§5. For memory, the body is
+`{identity, event, type?, occurredAt?, idempotencyKey?}` — see
+[`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §2/§7, including the three memory
+types (`episodic` / `semantic` / `working`) and their controller dependency.
+
+Both routes use the same `machine-api:<clientId>` audit-trail identity on the
+wire, and **the same bearer works on both**: either a self-issued (HS256)
+token from `/oauth/token` or a federated (RS256) token from your own IdP once
+you've configured a trusted issuer above. Each route accepts both, and the
+caller doesn't need to know or care which one was verified.
 
 ## Troubleshooting
 

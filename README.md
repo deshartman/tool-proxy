@@ -136,6 +136,14 @@ Architecture + protocol:
 - [docs/BUNDLES.md](docs/BUNDLES.md) — Twilio-shipped MCP inventory.
 - [docs/AUTHOR-LOCAL-MCP.md](docs/AUTHOR-LOCAL-MCP.md) — how to write a drop-in.
 
+Machine API (the JWT-bearer-gated routes an external system calls directly):
+- [docs/NETWORK-ACCESS.md](docs/NETWORK-ACCESS.md) — minting credentials,
+  non-loopback reachability, federated (own-IdP) bearers.
+- [docs/OUTBOUND-CALLS.md](docs/OUTBOUND-CALLS.md) — `POST /v1/outbound/calls`,
+  trigger a real outbound call or message.
+- [docs/MEMORY-EVENTS.md](docs/MEMORY-EVENTS.md) — `POST /v1/memory/events`,
+  inject a customer memory fact.
+
 Deployment:
 - [deploy/README.md](deploy/README.md) — decision matrix + prereqs.
 - [deploy/DERIVED-IMAGE.md](deploy/DERIVED-IMAGE.md) / [deploy/VOLUME-MOUNT.md](deploy/VOLUME-MOUNT.md) — delivery paths.

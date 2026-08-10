@@ -224,6 +224,15 @@ export class Inspector {
     this.outboundCallsHandler = handler;
   }
 
+  // MEMORY-INJECTION — POST /v1/memory/events handler, the machine-API
+  // sibling of outboundCallsHandler above. Same optional-until-wired
+  // convention: unwired boot paths fall through to 404.
+  memoryEventsHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+
+  wireMemoryEvents(handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>): void {
+    this.memoryEventsHandler = handler;
+  }
+
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
   private readonly frames: FrameTap[] = []
   private readonly current: InspectorState;
@@ -936,12 +945,14 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
 // dispatch table) is loopback-only, unconditionally, forever. The ONLY
 // things a non-loopback caller can ever reach are the machine API's
 // /oauth/token (self-authenticated via client_id/client_secret in the
-// body) and /v1/outbound/calls (JWT-bearer-gated, see
-// outbound-calls-route.ts) — both do their own auth check inline,
-// mirroring how authorizeWebhookMcp() works today.
+// body) and the JWT-bearer-gated /v1/* routes (/v1/outbound/calls, see
+// outbound-calls-route.ts; /v1/memory/events, see memory-events-route.ts)
+// — all of which do their own auth check inline, mirroring how
+// authorizeWebhookMcp() works today.
 const NON_LOOPBACK_ALLOWED_PATHS = new Set([
   "/oauth/token",
   "/v1/outbound/calls",
+  "/v1/memory/events",
 ]);
 
 // One check point for the whole dispatch table. Loopback callers pass
@@ -1097,6 +1108,10 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     }
     if (path === "/v1/outbound/calls" && req.method === "POST") {
       if (inspector.outboundCallsHandler) { void inspector.outboundCallsHandler(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/v1/memory/events" && req.method === "POST") {
+      if (inspector.memoryEventsHandler) { void inspector.memoryEventsHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
 

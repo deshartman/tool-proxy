@@ -1,0 +1,7 @@
+{
+  "clientId": "REPLACE_WITH_REAL_API_CLIENT_ID",
+  "clientSecret": "REPLACE_WITH_REAL_API_CLIENT_SECRET",
+  "channel": "sms",
+  "value": "+15555550123",
+  "event": "your flight is delayed"
+}

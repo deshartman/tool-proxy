@@ -5,6 +5,8 @@
 
 This document walks through the flow that lets an enterprise's own system trigger a real outbound Twilio call or SMS through the tunnel, from the connector side. It's the connector-side companion to the controller's own action-registry contract (`docs/CONTROLLER-ACTIONS.md` in the controller repo) — read that doc for what happens after the frame lands on the controller; this doc covers everything up to and including sending the frame.
 
+This route has a sibling: **`POST /v1/memory/events`** injects a customer memory fact over the same tunnel, with the same bearer and the same `machine-api:<clientId>` audit identity — see [`docs/MEMORY-EVENTS.md`](MEMORY-EVENTS.md). The two together are the whole machine-API surface ([`docs/NETWORK-ACCESS.md`](NETWORK-ACCESS.md) "Machine API routes").
+
 ## 1. The flow, end to end
 
 ```
