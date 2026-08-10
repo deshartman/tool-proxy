@@ -21,7 +21,11 @@ import { verifyAccessToken, type JwtVerifierConfig } from "../auth/jwt.js";
 import type { ControllerApiCoordinator } from "../tunnel/controller-api-coordinator.js";
 
 export interface OutboundCallsRouteDeps {
-  verifierConfig: JwtVerifierConfig;
+  // Read fresh on every request, not frozen at wiring time — the operator can
+  // add/change/clear the trusted-issuer (federated) config live, and it must
+  // take effect with no restart. Same read-live-state rationale as
+  // getCoordinator below (see FEDERATED-JWT-MODE.md §4).
+  getVerifierConfig: () => Promise<JwtVerifierConfig>;
   // Reads the live coordinator at call time, not at wiring time — a fresh
   // instance is constructed per tunnel dial and dropped to undefined between
   // reconnects (see boot/lifecycle.ts's ControllerApiCoordinator LIFETIME
@@ -70,7 +74,7 @@ async function authenticate(
     sendJson(res, 401, { error: { code: "not_authorized", message: "missing bearer token" } });
     return undefined;
   }
-  const verified = await verifyAccessToken(token, deps.verifierConfig);
+  const verified = await verifyAccessToken(token, await deps.getVerifierConfig());
   if (!verified.valid || !verified.claims) {
     sendJson(res, 401, { error: { code: "not_authorized", message: verified.error ?? "invalid bearer token" } });
     return undefined;

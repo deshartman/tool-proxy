@@ -1077,6 +1077,20 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
       if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleDeleteClient(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
+    // FEDERATED-JWT-MODE — trusted-issuer config, folded into the same
+    // NetworkAccessRoutes factory (same deps, same loopback-only trust tier).
+    if (path === "/internal/network-access/trusted-issuer" && req.method === "GET") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleGetTrustedIssuer(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/network-access/trusted-issuer" && req.method === "POST") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleSetTrustedIssuer(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/network-access/trusted-issuer/clear" && req.method === "POST") {
+      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleClearTrustedIssuer(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
     if (path === "/oauth/token" && req.method === "POST") {
       if (inspector.oauthTokenHandler) { void inspector.oauthTokenHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;

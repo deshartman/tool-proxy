@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server } from "node:http";
-import { randomBytes } from "node:crypto";
+import { randomBytes, generateKeyPairSync, createSign, type KeyObject } from "node:crypto";
 import { handleOutboundCalls } from "../../src/inspector/outbound-calls-route.js";
-import { signHs256 } from "../../src/auth/jwt.js";
+import { signHs256, type TrustedIssuerConfig } from "../../src/auth/jwt.js";
 import type { ControllerApiCoordinator } from "../../src/tunnel/controller-api-coordinator.js";
 
 // CONNECTOR-NETWORK-EXPOSURE step 9 — POST /v1/outbound/calls. Mirrors
@@ -18,6 +18,11 @@ describe("POST /v1/outbound/calls", () => {
   const signingKey = randomBytes(32);
   const coordinatorCall = vi.fn();
   let coordinator: ControllerApiCoordinator | undefined;
+  // FEDERATED-JWT-MODE §4 — getVerifierConfig is read fresh per request; this
+  // mutable field lets a test point the verifier at a federated (RS256) trust
+  // config. Defaults to undefined, so the HS256-only cases below are
+  // unaffected by the verifierConfig → getVerifierConfig rename.
+  let trustedIssuer: TrustedIssuerConfig | undefined;
 
   function validToken(sub = "client_abc"): string {
     return signHs256({ sub }, signingKey, 3600);
@@ -25,10 +30,11 @@ describe("POST /v1/outbound/calls", () => {
 
   beforeEach(async () => {
     coordinatorCall.mockReset();
+    trustedIssuer = undefined;
     coordinator = { call: coordinatorCall } as unknown as ControllerApiCoordinator;
     server = createServer((req, res) => {
       void handleOutboundCalls(req, res, {
-        verifierConfig: { selfIssuedSigningKey: signingKey },
+        getVerifierConfig: async () => ({ selfIssuedSigningKey: signingKey, trustedIssuer }),
         getCoordinator: () => coordinator,
       });
     });
@@ -133,5 +139,82 @@ describe("POST /v1/outbound/calls", () => {
     const res = await post(validBody, { authorization: `Bearer ${validToken()}` });
     expect(res.status).toBe(503);
     expect((await res.json()).error.code).toBe("tunnel_unavailable");
+  });
+
+  // FEDERATED-JWT-MODE §4 — an RS256 bearer is accepted only when
+  // getVerifierConfig returns a matching trustedIssuer. Stub JWKS setup mirrors
+  // tests/auth/federated-jwt.test.ts: sign with a test-only RSA keypair, serve
+  // the public half over a tiny http.createServer, point the trust config at it.
+  describe("federated RS256 bearers", () => {
+    let jwksServer: Server;
+    let jwksUrl: string;
+    let privateKey: KeyObject;
+    const kid = "test-key-1";
+    const issuer = "https://idp.example.com";
+    const audience = "mcp-connector";
+
+    function b64url(input: Buffer | string): string {
+      return Buffer.from(input).toString("base64url");
+    }
+
+    function signRs256(claims: Record<string, unknown>): string {
+      const header = { alg: "RS256", typ: "JWT", kid };
+      const now = Math.floor(Date.now() / 1000);
+      const payload = { sub: "machine-caller", iss: issuer, aud: audience, iat: now, exp: now + 3600, ...claims };
+      const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
+      const signature = createSign("RSA-SHA256").update(signingInput).sign(privateKey);
+      return `${signingInput}.${b64url(signature)}`;
+    }
+
+    beforeAll(async () => {
+      const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
+      privateKey = pair.privateKey;
+      const jwk = pair.publicKey.export({ format: "jwk" }) as Record<string, unknown>;
+      const publicJwk = { ...jwk, kid, use: "sig", alg: "RS256" };
+      jwksServer = createServer((_req, res) => {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ keys: [publicJwk] }));
+      });
+      await new Promise<void>((resolve) => jwksServer.listen(0, "127.0.0.1", () => resolve()));
+      jwksUrl = `http://127.0.0.1:${(jwksServer.address() as { port: number }).port}/jwks.json`;
+    });
+
+    afterAll(async () => {
+      await new Promise<void>((resolve) => jwksServer.close(() => resolve()));
+    });
+
+    it("valid RS256 bearer with matching trustedIssuer → 200, coordinator called with the JWT sub", async () => {
+      trustedIssuer = { issuer, jwksUrl, audience };
+      coordinatorCall.mockResolvedValueOnce({ callSid: "CA-fed" });
+      const res = await post(validBody, { authorization: `Bearer ${signRs256({ sub: "fed-caller" })}` });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ result: { callSid: "CA-fed" } });
+      expect(coordinatorCall.mock.calls[0][0]).toBe("machine-api:fed-caller");
+    });
+
+    it("RS256 bearer with mismatched aud → 401", async () => {
+      trustedIssuer = { issuer, jwksUrl, audience };
+      const res = await post(validBody, { authorization: `Bearer ${signRs256({ aud: "someone-else" })}` });
+      expect(res.status).toBe(401);
+      expect((await res.json()).error.code).toBe("not_authorized");
+      expect(coordinatorCall).not.toHaveBeenCalled();
+    });
+
+    it("RS256 bearer with mismatched iss → 401", async () => {
+      trustedIssuer = { issuer, jwksUrl, audience };
+      const res = await post(validBody, { authorization: `Bearer ${signRs256({ iss: "https://evil.example.com" })}` });
+      expect(res.status).toBe(401);
+      expect(coordinatorCall).not.toHaveBeenCalled();
+    });
+
+    it("RS256 bearer presented when federated mode is NOT configured → 401 (no verifier for this alg)", async () => {
+      // trustedIssuer stays undefined (outer beforeEach) — federated never configured.
+      const res = await post(validBody, { authorization: `Bearer ${signRs256({})}` });
+      expect(res.status).toBe(401);
+      const body = await res.json();
+      expect(body.error.code).toBe("not_authorized");
+      expect(body.error.message).toMatch(/no verifier configured/);
+      expect(coordinatorCall).not.toHaveBeenCalled();
+    });
   });
 });

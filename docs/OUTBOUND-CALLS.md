@@ -19,7 +19,7 @@ enterprise's own system
   -> result flows back down the same path as controller-call-response -> HTTP response
 ```
 
-No MCP involved anywhere in this path — `/v1/outbound/calls` is a machine-API route, JWT-bearer-gated, that any external system can call directly. Every hop after the driver script is generic mechanism, not outbound-specific — see `docs/MCP-PROTOCOL.md` §"v1.4 — Controller API calls (Twilio-bundled only)" for the wire contract (`ControllerCallFrame` / `ControllerCallResponseFrame`) that everything below rides on, and see `connector/src/inspector/outbound-calls-route.ts` for this route's own auth + validation layer on top of it.
+No MCP involved anywhere in this path — `/v1/outbound/calls` is a machine-API route, JWT-bearer-gated, that any external system can call directly. The bearer can be either a self-issued (HS256) token from `/oauth/token` or a federated (RS256) token from the customer's own IdP once a trusted issuer is configured (see `docs/NETWORK-ACCESS.md` "Federated mode") — the route verifies both and the caller doesn't need to know which. Every hop after the driver script is generic mechanism, not outbound-specific — see `docs/MCP-PROTOCOL.md` §"v1.4 — Controller API calls (Twilio-bundled only)" for the wire contract (`ControllerCallFrame` / `ControllerCallResponseFrame`) that everything below rides on, and see `connector/src/inspector/outbound-calls-route.ts` for this route's own auth + validation layer on top of it.
 
 ## 2. Why a driver script, not a direct call
 

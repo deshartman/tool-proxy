@@ -97,9 +97,30 @@ masked text on screen.
 Instead of the connector minting its own credentials, you can point it at
 your existing IdP: any validly-signed JWT from that issuer, with the right
 audience claim, is accepted — no separate onboarding step in the
-connector. Both modes can be active at once. Ask your Twilio contact if
-you need this wired up for your deployment; it's not yet exposed as a
-self-serve inspector action.
+connector, and no per-client allowlist here (who's allowed to call,
+revocation, and audit stay entirely with your own IdP). Both modes can be
+active at once; the connector picks the right verifier by the token's own
+`alg` header (HS256 → self-issued, RS256 → federated).
+
+Configure it self-serve from the inspector's **Network Access** panel, in
+the **Federated JWT** sub-section: fill in three fields —
+
+- **Issuer (`iss`)** — the `iss` claim your IdP stamps on its tokens, e.g.
+  `https://idp.example.com`.
+- **JWKS URL** — where the connector fetches your IdP's public signing keys,
+  e.g. `https://idp.example.com/.well-known/jwks.json`. Keys are cached for
+  5 minutes, so a rotation at your IdP is picked up automatically.
+- **Audience (`aud`)** — the `aud` claim the connector requires, e.g.
+  `mcp-connector`.
+
+None of the three are secret (they're public IdP metadata), so they're shown
+verbatim, not redacted. Click **Save**. Just like adding your first API
+client, **setting a trusted issuer for the first time also flips on
+non-loopback reachability** for the machine API — so a customer who only ever
+uses federated mode (and never mints a self-issued client) still gets
+`/v1/outbound/calls` reachable from the rest of their network. **Clear**
+removes the config; like every widening in this feature it does not re-narrow
+the bind.
 
 ## Machine API routes
 
@@ -117,9 +138,10 @@ curl -s -X POST https://<connector-address>:9090/v1/outbound/calls \
 `action` is `"place_call"` or `"send_message"`; full request/response shape,
 error codes, and the `machine-api:<clientId>` audit-trail identity this
 route uses are documented in [`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) §7.
-Only self-issued (HS256) bearers are accepted by this route today —
-federated-mode tokens aren't wired up for it yet even where federated mode
-itself is configured.
+The bearer can be either a self-issued (HS256) token from `/oauth/token` or
+a federated (RS256) token from your own IdP once you've configured a trusted
+issuer above — the route accepts both, and the caller doesn't need to know
+or care which one this route verified.
 
 ## Troubleshooting
 

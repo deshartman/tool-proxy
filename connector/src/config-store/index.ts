@@ -4,6 +4,7 @@ import { envString, envOptional } from "../env.js";
 import { schemaSql } from "./schema.js";
 import { MasterKey } from "./master-key.js";
 import { seal, open } from "./seal.js";
+import type { TrustedIssuerConfig } from "../auth/jwt.js";
 
 export interface ControllerRow {
   id: string;
@@ -218,6 +219,45 @@ export class ConfigStore {
        VALUES (1, $1, now())
        ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
       [enabled]
+    );
+  }
+
+  // ─── Federated JWT trust config ─────────────────────────────────────────
+  // Presence (all three columns non-null) = federated mode configured. Not
+  // sealed — issuer/JWKS URL/audience are public IdP metadata, not secrets.
+  // The three columns move together: set writes all three, clear nulls all
+  // three, get returns undefined unless all three are present.
+
+  async getTrustedIssuerConfig(): Promise<TrustedIssuerConfig | undefined> {
+    const { rows } = await this.pool.query(
+      `SELECT issuer, jwks_url, audience FROM ${this.schema}.trusted_issuer_config WHERE id=1`
+    );
+    const r = rows[0];
+    if (!r || r.issuer === null || r.jwks_url === null || r.audience === null) return undefined;
+    return { issuer: r.issuer, jwksUrl: r.jwks_url, audience: r.audience };
+  }
+
+  // Upsert — this table only ever has the one row (id=1), same idiom as
+  // setNetworkAccessEnabled.
+  async setTrustedIssuerConfig(config: TrustedIssuerConfig): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO ${this.schema}.trusted_issuer_config (id, issuer, jwks_url, audience, updated_at)
+       VALUES (1, $1, $2, $3, now())
+       ON CONFLICT (id) DO UPDATE SET
+         issuer = EXCLUDED.issuer,
+         jwks_url = EXCLUDED.jwks_url,
+         audience = EXCLUDED.audience,
+         updated_at = now()`,
+      [config.issuer, config.jwksUrl, config.audience]
+    );
+  }
+
+  async clearTrustedIssuerConfig(): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO ${this.schema}.trusted_issuer_config (id, issuer, jwks_url, audience, updated_at)
+       VALUES (1, NULL, NULL, NULL, now())
+       ON CONFLICT (id) DO UPDATE SET
+         issuer = NULL, jwks_url = NULL, audience = NULL, updated_at = now()`
     );
   }
 

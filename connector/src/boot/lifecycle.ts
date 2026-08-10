@@ -181,7 +181,15 @@ async function bootFromDb(): Promise<void> {
     // reconnects) with no rewiring needed on every dial — same pattern
     // mcpActions.callControllerApi already relies on.
     inspector.wireOutboundCalls((req, res) => handleOutboundCalls(req, res, {
-      verifierConfig: { selfIssuedSigningKey: deriveJwtSigningKey(masterKey.bytes) },
+      // FEDERATED-JWT-MODE §4 — read the trusted-issuer config fresh from
+      // Postgres on every request so an operator setting/clearing it live
+      // takes effect immediately, no restart. The self-issued HS256 key is
+      // still derived once from the master key; the federated RS256 branch
+      // is present only when store.getTrustedIssuerConfig() returns a row.
+      getVerifierConfig: async () => ({
+        selfIssuedSigningKey: deriveJwtSigningKey(masterKey.bytes),
+        trustedIssuer: await store.getTrustedIssuerConfig(),
+      }),
       getCoordinator: () => controllerApi,
     }));
 
