@@ -9,7 +9,7 @@ The earlier PoC (in-shim LLM agent, `can_answer` / `ask_procedure`) is preserved
 1. Reads `connector.yaml` (yaml-listed bundled / hand-written MCPs) AND auto-discovers customer-authored drop-in folders under `${MCP_DROPIN_DIR}/<name>/`:
    - **Type 1 (customer-authored, drop-in shape — default).** Folder under `customer-mcps/<name>/{tools,prompts,resources}/*.ts`. No yaml entry, no `server.ts`. The drop-in scanner finds the folder; the synthesized child runtime ([`src/sdk/dropin-runner.ts`](src/sdk/dropin-runner.ts)) spawns a per-folder subprocess.
    - **Type 1 (hand-written, legacy escape hatch).** Yaml entry with `transport: http` + `dir:` (no `endpoint`). The connector spawns `tsx <dir>/server.ts` as a child. No in-repo MCP uses this shape today; it stays available for a future Type 1 MCP that needs to ship its own `package.json` (e.g. a third-party SDK that can't hoist to the workspace).
-   - **Type 2 — connect to existing 3rd-party MCP.** Pushed via the controller UI (NOT the yaml) as `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) v1.1.
+   - **Type 2 — connect to existing 3rd-party MCP.** Pushed via the controller UI (NOT the yaml) as `mcp-config-snapshot` / `mcp-config-delta` per [docs/MCP-PROTOCOL.md](../docs/MCP-PROTOCOL.md) v1.1.
 2. Connects to each, runs `tools/list` to discover their tools.
 3. Builds a **`ToolManifest`** by aggregating every discovered tool. Trust boundary is per-MCP-server: pick which servers run, get every tool they expose.
 4. Dials out to a controller URL via WSS and pushes `{ type: "register", manifest }`.
@@ -20,7 +20,7 @@ The connector holds no LLM, runs no agent loop, and reads no documents. It is a 
 
 ## Wire protocol (frames)
 
-Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts); the contract for the controller team is **[`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md)**:
+Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts); the contract for the controller team is **[`docs/MCP-PROTOCOL.md`](../docs/MCP-PROTOCOL.md)**:
 
 - `register { manifest }` — first frame after connect
 - `manifest-delta { delta }` — diff of `added`/`removed`/`changed` tools
@@ -28,11 +28,11 @@ Defined in [`src/tunnel/frames.ts`](src/tunnel/frames.ts); the contract for the 
 - `heartbeat { ts }` — every `policy.heartbeat_interval_ms`
 - `goodbye { reason? }` — graceful shutdown signal
 - `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke` — webhook ingress (Twilio statusCallback / inbound-webhook delivery routed back over the tunnel)
-- `creds-request` (out) / `creds-response` (in) / `creds-update` (in) — per-MCP creds protocol. The connector asks the controller for env values for each MCP after `register-ack`; the controller stores them in its existing UI/DB and pushes updates when an operator edits them. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"New frames added in v1".
-- `mcp-config-snapshot` (in) / `mcp-config-delta` (in) / `mcp-config-ack` (out) / `mcp-config-resync` (out) — v1.1 controller-driven 3rd-party MCP roster. Operators manage 3rd-party MCPs through the controller UI; the controller pushes the roster to the connector over the existing tunnel. The connector reconciles in-memory (no yaml rewrite); auth shapes (`none` / `bearer` / `header` / `oauth2-client-credentials`) and HTTP-family transports (http / streamable-http / sse) are resolved at spawn time. (WebSocket was removed in the MCP SDK-v2 migration — not a spec transport; a stale `websocket` entry is rejected at connect, non-fatal.) See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.1 — 3rd-party MCP roster".
-- `local-mcps-rescan` (in) / `local-mcps-rescan-ack` (out) — v1.2 controller-triggered rescan of customer-authored drop-in MCPs. Operator clicks **Refresh local MCPs** in the controller UI; the connector re-runs its drop-in scanner and reconciles new / removed folders. Same operation exposed loopback-only at `/mcp/rescan-local` on the inspector port for local-dev iteration. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
-- `mcp-notification` (out) — v1.2 server→client notifications forwarded from local MCPs to the controller (`notifications/progress`, `notifications/message`, `notifications/resources/updated`, `notifications/{tools,prompts,resources}/list_changed`). See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension".
-- `mcp-discovered` (out) / `mcp-enable` (in) / `mcp-disable` (in) / `mcp-enable-ack` (out) — v1.3 customer drop-in approval gate. Customer-authored drop-in MCPs no longer auto-enable; the connector advertises each via `mcp-discovered` and withholds the tools from the manifest until the controller sends `mcp-enable` (optionally carrying pasted env values). Approval state lives controller-only; replayed via `mcp-enable` after every `register-ack`. Disable is manifest-visibility-only — the child stays running. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.3 — Customer drop-in approval gate".
+- `creds-request` (out) / `creds-response` (in) / `creds-update` (in) — per-MCP creds protocol. The connector asks the controller for env values for each MCP after `register-ack`; the controller stores them in its existing UI/DB and pushes updates when an operator edits them. See [`docs/MCP-PROTOCOL.md`](../docs/MCP-PROTOCOL.md) §"New frames added in v1".
+- `mcp-config-snapshot` (in) / `mcp-config-delta` (in) / `mcp-config-ack` (out) / `mcp-config-resync` (out) — v1.1 controller-driven 3rd-party MCP roster. Operators manage 3rd-party MCPs through the controller UI; the controller pushes the roster to the connector over the existing tunnel. The connector reconciles in-memory (no yaml rewrite); auth shapes (`none` / `bearer` / `header` / `oauth2-client-credentials`) and HTTP-family transports (http / streamable-http / sse) are resolved at spawn time. (WebSocket was removed in the MCP SDK-v2 migration — not a spec transport; a stale `websocket` entry is rejected at connect, non-fatal.) See [`docs/MCP-PROTOCOL.md`](../docs/MCP-PROTOCOL.md) §"v1.1 — 3rd-party MCP roster".
+- `local-mcps-rescan` (in) / `local-mcps-rescan-ack` (out) — v1.2 controller-triggered rescan of customer-authored drop-in MCPs. Operator clicks **Refresh local MCPs** in the controller UI; the connector re-runs its drop-in scanner and reconciles new / removed folders. Same operation exposed loopback-only at `/mcp/rescan-local` on the inspector port for local-dev iteration. See [`docs/MCP-PROTOCOL.md`](../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
+- `mcp-notification` (out) — v1.2 server→client notifications forwarded from local MCPs to the controller (`notifications/progress`, `notifications/message`, `notifications/resources/updated`, `notifications/{tools,prompts,resources}/list_changed`). See [`docs/MCP-PROTOCOL.md`](../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension".
+- `mcp-discovered` (out) / `mcp-enable` (in) / `mcp-disable` (in) / `mcp-enable-ack` (out) — v1.3 customer drop-in approval gate. Customer-authored drop-in MCPs no longer auto-enable; the connector advertises each via `mcp-discovered` and withholds the tools from the manifest until the controller sends `mcp-enable` (optionally carrying pasted env values). Approval state lives controller-only; replayed via `mcp-enable` after every `register-ack`. Disable is manifest-visibility-only — the child stays running. See [`docs/MCP-PROTOCOL.md`](../docs/MCP-PROTOCOL.md) §"v1.3 — Customer drop-in approval gate".
 
 Inbound `tools/call` uses `name = "${serverName}.${toolName}"`. The connector splits on the first `.`.
 
@@ -174,7 +174,7 @@ const echo: Tool = {
 export default echo;
 ```
 
-For more depth — env precedence, `Refresh local MCPs`, the third-party-SDK case — see [docs/AUTHOR-LOCAL-MCP.md](../../docs/AUTHOR-LOCAL-MCP.md).
+For more depth — env precedence, `Refresh local MCPs`, the third-party-SDK case — see [docs/AUTHOR-LOCAL-MCP.md](../docs/AUTHOR-LOCAL-MCP.md).
 
 For **bundled multi-service MCPs** (Twilio-shipped, hand-written), prefer a service-first folder layout (`<service>/{tools,prompts,resources}/` under the bundle root) over a flat `tools/` tree. Customer drop-ins stay flat.
 
@@ -184,14 +184,14 @@ For **bundled multi-service MCPs** (Twilio-shipped, hand-written), prefer a serv
 
 Picking up a freshly-dropped folder doesn't need a process restart. Two paths:
 
-- **Controller UI** — Connector detail → MCPs tab → **Refresh local MCPs**. Emits a `local-mcps-rescan` frame down the WSS tunnel; the connector re-runs its drop-in scanner and reconciles new / removed folders against the running supervisor entries. Manifest changes ride the existing `manifest-delta` path. See [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
+- **Controller UI** — Connector detail → MCPs tab → **Refresh local MCPs**. Emits a `local-mcps-rescan` frame down the WSS tunnel; the connector re-runs its drop-in scanner and reconciles new / removed folders against the running supervisor entries. Manifest changes ride the existing `manifest-delta` path. See [docs/MCP-PROTOCOL.md](../docs/MCP-PROTOCOL.md) §"v1.2 — Local MCP rescan".
 - **Inspector** — <http://localhost:9090/> → **MCP Status** panel → **Refresh local MCPs**. Loopback-only POST against the connector's inspector port; same coordinator method, no controller round-trip. Useful when iterating locally.
 
 Operator-driven only — there's no fs-watcher. fs events fire mid-edit (a save-in-progress would spawn against half-written code) and there's no clean way to tell "operator finished editing" from intermediate save events; explicit operator action is the right primitive.
 
 #### Approval gate (v1.3+)
 
-Customer-authored drop-ins do NOT auto-enable. After the connector spawns the child and lists its tools, it withholds the tools from the manifest and emits an `mcp-discovered` frame to the controller. The controller surfaces the MCP in a "Pending approval" lane within its custom-MCPs section; an operator clicks **Approve** (and pastes any `envKeys` values inline) to send `mcp-enable` back. Only then does the connector add the tools to `manifest-delta`. See [docs/MCP-PROTOCOL.md](../../docs/MCP-PROTOCOL.md) §"v1.3 — Customer drop-in approval gate" for the full handshake.
+Customer-authored drop-ins do NOT auto-enable. After the connector spawns the child and lists its tools, it withholds the tools from the manifest and emits an `mcp-discovered` frame to the controller. The controller surfaces the MCP in a "Pending approval" lane within its custom-MCPs section; an operator clicks **Approve** (and pastes any `envKeys` values inline) to send `mcp-enable` back. Only then does the connector add the tools to `manifest-delta`. See [docs/MCP-PROTOCOL.md](../docs/MCP-PROTOCOL.md) §"v1.3 — Customer drop-in approval gate" for the full handshake.
 
 The approved-set lives **controller-only** — after every connector restart, the controller automatically re-replays `mcp-enable` for every previously-approved MCP. The connector keeps no approval state across restarts. Disable via the controller UI is a manifest-visibility toggle: the child stays running, re-enable is sub-second.
 
@@ -223,21 +223,22 @@ Two things make this work:
 
 Keep individual tool files **unaware** of creds gating — register them or don't, but don't make each tool re-check `process.env`. That keeps tools clean and the gating concentrated in `server.ts`.
 
-#### `outputSchema` + `structuredContent` — five rules
+#### `outputSchema` + `structuredContent` — six rules
 
 Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 / Type 3 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker.
 
-1. **Plain object of zod fields, NOT `z.object({...})`.** SDK convention — wrapping in `z.object` changes the inferred argument type and breaks the handler signature. See [`examples/demos/sample/tools/weather.ts`](../../examples/demos/sample/tools/weather.ts) for the canonical shape.
+1. **Plain object of zod fields, NOT `z.object({...})`.** SDK convention — wrapping in `z.object` changes the inferred argument type and breaks the handler signature. See [`examples/demos/sample/tools/weather.ts`](../examples/demos/sample/tools/weather.ts) for the canonical shape.
 2. **Every field gets `.describe(...)`.** This is the contract authors read in the controller UI.
 3. **Return both `content[]` AND `structuredContent` on success.** `content[0].text` is the human-readable form (LLM consumption); `structuredContent` is the machine-shaped sibling field that the controller's `projectPath()` reads from directly. Mismatch between the two is a bug — they should serialize to the same data.
 4. **Schema describes the projection target, not the upstream SDK response.** For tools that wrap an external API, list *only* the fields the handler currently returns. Widen later if a procedure needs more.
 5. **Errors return `content[]` only — no `structuredContent`.** Tool-level failure is signalled via `isError: true` (or just an error envelope in `content[0].text`). Do NOT also set `structuredContent` on the error path — the SDK validates `structuredContent` against `outputSchema` even when `isError: true`, and an error envelope shape (`{ error: "no_customer" }`) won't match a success schema. The schema describes the success shape only.
+6. **A shared error-envelope helper must be typed against the SDK's `CallToolResult`, never a hand-rolled interface.** Bundles that factor their error path into a local `errors.ts` (`bundled-mcps/agentic-memory`, `examples/demos/salesforce`) return `CallToolResult & { isError: true }` — imported as `import type { CallToolResult } from "@modelcontextprotocol/server"`, which is erased at compile time and adds no runtime dependency. A bare `interface ToolErrorResult { isError: true; content: [...] }` lacks the index signature `registerTool`'s handler-return type requires, and TypeScript does not extend fresh-object-literal leniency to a value typed as a distinct named interface — so every call site fails assignability with `TS2769`. Nothing catches this today (`bundled-mcps/**` is outside `tsc -b`, and `tsx` strips types unchecked), so it is invisible until someone runs `tsc` by hand.
 
 Type 2 tools (external `endpoint:` / `command:` MCPs) advertise whatever their upstream `tools/list` returns. The connector forwards that verbatim — schema or not — and the controller handles the missing-schema case gracefully.
 
 #### Prompts and resources (v1.2)
 
-Both follow the same author shape as tools — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. **In drop-in folders** (the default authoring shape) the runner auto-discovers `prompts/*.ts` and `resources/*.ts` siblings of `tools/`; nothing else needed. Worked examples in [`examples/demos/sample/prompts/weather-briefing.ts`](../../examples/demos/sample/prompts/weather-briefing.ts) and [`examples/demos/sample/resources/uuids-recent.ts`](../../examples/demos/sample/resources/uuids-recent.ts).
+Both follow the same author shape as tools — one module per item, exported with a `register(server)` that calls the SDK's `registerPrompt` / `registerResource`. **In drop-in folders** (the default authoring shape) the runner auto-discovers `prompts/*.ts` and `resources/*.ts` siblings of `tools/`; nothing else needed. Worked examples in [`examples/demos/sample/prompts/weather-briefing.ts`](../examples/demos/sample/prompts/weather-briefing.ts) and [`examples/demos/sample/resources/uuids-recent.ts`](../examples/demos/sample/resources/uuids-recent.ts).
 
 ```
 customer-mcps/my-mcp/
@@ -267,7 +268,7 @@ The split mirrors what the protocol expects:
 - **Prompts** = parameterised templates the controller's procedure-author UI consumes (`compose_compliant_sms_campaign`, `refund_eligibility_check`). Authored once per MCP, version-controlled.
 - **Resources** = read-only canonical state surfaced as named, citeable artefacts (`twilio://content-templates`, `ek://sources/{source_id}`). Procedures read them via `resources/read` instead of burning a tool call. Authors that need server-pushed freshness signal `subscribe: true` on the underlying SDK call so the connector forwards `notifications/resources/updated` as `mcp-notification`.
 
-The connector forwards the full server-method surface (`prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `completion/complete`, `logging/setLevel`) and wraps server-initiated notifications as the `mcp-notification` frame. See [`docs/MCP-PROTOCOL.md`](../../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension" for the wire contract.
+The connector forwards the full server-method surface (`prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `completion/complete`, `logging/setLevel`) and wraps server-initiated notifications as the `mcp-notification` frame. See [`docs/MCP-PROTOCOL.md`](../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension" for the wire contract.
 
 ## Tests
 
@@ -327,10 +328,10 @@ CONNECTOR_CONFIG=./connector.yaml \
 
 ## Production deployment
 
-See [deploy/README.md](../../deploy/README.md) plus the per-cloud guides:
-[AWS Fargate](../../deploy/terraform/README.md),
-[Azure Container Apps](../../deploy/aca/README.md),
-[GCP GKE](../../deploy/helm/README.md).
+See [deploy/README.md](../deploy/README.md) plus the per-cloud guides:
+[AWS Fargate](../deploy/terraform/README.md),
+[Azure Container Apps](../deploy/aca/README.md),
+[GCP GKE](../deploy/helm/README.md).
 
 ## Out of scope (production hardening)
 

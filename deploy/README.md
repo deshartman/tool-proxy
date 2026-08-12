@@ -52,7 +52,7 @@ The connector dials the controller with `Authorization: Bearer <bearer>` plus `X
 
 Rotate via the row's **Rotate Secret** (long-lived) or by issuing a new client secret (OAuth2); previous credentials stay valid for 24h so the connector can pick up the new value on its next restart without coordinated downtime.
 
-> **API Key posture caveat.** The Twilio API Key tunnel-security row authenticates the WS handshake fine, but it does NOT auto-fill `TWILIO_AUTH_TOKEN` for the bundled `apis` MCP — the bundle is AuthToken-only at the Twilio-client layer. If you're running the Twilio bundle, either also include an AuthToken on the row, or run a sibling Auth Token row whose creds the controller can auto-fill from. See [MCP-PROTOCOL.md §"Twilio-bundled auto-fill"](../MCP-PROTOCOL.md).
+> **API Key posture caveat.** The Twilio API Key tunnel-security row authenticates the WS handshake fine, but it does NOT auto-fill `TWILIO_AUTH_TOKEN` for the bundled `apis` MCP — the bundle is AuthToken-only at the Twilio-client layer. If you're running the Twilio bundle, either also include an AuthToken on the row, or run a sibling Auth Token row whose creds the controller can auto-fill from. See [MCP-PROTOCOL.md §"Twilio-bundled auto-fill"](../docs/MCP-PROTOCOL.md).
 
 ## Webhook ingress
 

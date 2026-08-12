@@ -141,6 +141,7 @@ only fires against the auto-provisioned dev container.
 
 ## Production (Fly.io)
 
-Deployed as `twilio-tool-sdk-mock`. See
-[`../../deploy/fly/mock/fly.toml.example`](../../deploy/fly/mock/fly.toml.example)
-if present, or the `MOCK-BACKEND-DB` plan doc for the deploy walkthrough.
+Deployed as `twilio-tool-sdk-mock`. The manifests are **generated, not checked in** —
+run `mcp-connector deploy init --target fly-mock`, which emits them in-tree alongside
+the mock source it packages. See [`../../deploy/fly/README.md`](../../deploy/fly/README.md)
+for the Fly operator runbook.

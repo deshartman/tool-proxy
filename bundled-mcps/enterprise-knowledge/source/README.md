@@ -2,7 +2,7 @@
 
 Enterprise Knowledge MCP server — LlamaIndex-backed RAG for procedures that reference enterprise documents.
 
-This is a [Type 3 bundle](../../CLAUDE.md): customers consume it as a single yaml line in `connector.yaml` (`bundled: enterprise-knowledge`) plus a `.env`. The connector image installs this package into its own venv at `/opt/bundled-mcps/enterprise-knowledge/` at build time. **The source tree here is a build input; only the installed venv ships in the runtime image.**
+This is a [Type 3 bundle](../../../CLAUDE.md): customers consume it as a single yaml line in `connector.yaml` (`bundled: enterprise-knowledge`) plus a `.env`. The connector image installs this package into its own venv at `/opt/bundled-mcps/enterprise-knowledge/` at build time. **The source tree here is a build input; only the installed venv ships in the runtime image.**
 
 ## Status
 
@@ -11,7 +11,7 @@ Production-ready. LlamaIndex backend with pgvector and Ollama embedding sidecar.
 ## Prerequisites
 
 1. **Postgres with pgvector** — see `EK_PGVECTOR_DSN` below.
-2. **Ollama embedding sidecar** — required for embeddings. See [bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md](../../bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md) for deployment shapes (Docker Compose, Kubernetes, Fly.io).
+2. **Ollama embedding sidecar** — required for embeddings. See [bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md](../EMBEDDING-SIDECAR.md) for deployment shapes (Docker Compose, Kubernetes, Fly.io).
 
 ## Tools
 
@@ -72,7 +72,7 @@ Creds are delivered via the controller UI in production or the inspector's sessi
 
 ## Provisioning the Embedding Sidecar
 
-The bundle requires an Ollama sidecar for generating embeddings. See [bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md](../../bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md) for:
+The bundle requires an Ollama sidecar for generating embeddings. See [bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md](../EMBEDDING-SIDECAR.md) for:
 - Docker Compose (single-host)
 - Kubernetes (Deployment + Service + PVC)
 - Fly.io (separate app with persistent volume)

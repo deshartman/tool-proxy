@@ -1,6 +1,6 @@
 # Bundles in this connector image
 
-This file lists the [Type 3 bundled MCPs](../CLAUDE.md) that the connector image at the current commit is built against. Bundle source lives in [`bundles/<name>/`](../bundles/) — a sibling tree to the connector itself, deliberately separate from `mcp/` so the runtime image carries only the *installed* venv (`/opt/bundled-mcps/<name>/.venv/`), not the build inputs (`pyproject.toml`, `src/`, `migrations/`).
+This file lists the [Type 3 bundled MCPs](../CLAUDE.md) that the connector image at the current commit is built against. Bundle source lives in [`bundles/<name>/`](../bundled-mcps/) — a sibling tree to the connector itself, deliberately separate from `mcp/` so the runtime image carries only the *installed* venv (`/opt/bundled-mcps/<name>/.venv/`), not the build inputs (`pyproject.toml`, `src/`, `migrations/`).
 
 | Bundle | Source | Entrypoint (in image) | `.env` stub |
 |---|---|---|---|
