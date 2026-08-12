@@ -233,18 +233,18 @@ export class Inspector {
     this.memoryEventsHandler = handler;
   }
 
-  // MEMORY-INJECTION — POST /v1/identity/find + /v1/identity/list, the resolve
-  // half of memory injection's resolve-then-write flow (memoryEventsHandler
-  // above is the write half). Wired as a pair because neither is useful alone
-  // and both share one deps object; same optional-until-wired convention.
-  identityFindHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  // MEMORY-INJECTION — POST /v1/identity/list, the resolve half of memory
+  // injection's resolve-then-write flow (memoryEventsHandler above is the write
+  // half). A sibling /v1/identity/find was wired here until the controller merged
+  // the two: its exact lookup is subsumed by list's substring `identifier`, since
+  // an exact address is a substring of itself. Same optional-until-wired
+  // convention; kept as an object arg so a second identity route can rejoin
+  // without changing the call site.
   identityListHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 
   wireIdentityRoutes(handlers: {
-    handleFind: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
     handleList: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
   }): void {
-    this.identityFindHandler = handlers.handleFind;
     this.identityListHandler = handlers.handleList;
   }
 
@@ -962,19 +962,21 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
 // /oauth/token (self-authenticated via client_id/client_secret in the
 // body) and the JWT-bearer-gated /v1/* routes (/v1/outbound/calls, see
 // outbound-calls-route.ts; /v1/memory/events, see memory-events-route.ts;
-// /v1/identity/{find,list}, see identity-routes.ts) — all of which do
-// their own auth check inline, mirroring how authorizeWebhookMcp() works
-// today.
+// /v1/identity/list, see identity-routes.ts) — all of which do their own
+// auth check inline, mirroring how authorizeWebhookMcp() works today.
 //
 // /v1/identity/list is the first entry here that returns bulk customer PII
 // rather than performing one targeted action; see identity-routes.ts's
 // header for why that's an accepted widening and what it means for the
 // blast radius of a leaked bearer.
+//
+// /v1/identity/find was briefly a member and is deliberately NOT here any
+// more — the controller deleted the action, so it must fall through to the
+// non-loopback rejection like any other unknown path.
 const NON_LOOPBACK_ALLOWED_PATHS = new Set([
   "/oauth/token",
   "/v1/outbound/calls",
   "/v1/memory/events",
-  "/v1/identity/find",
   "/v1/identity/list",
 ]);
 
@@ -1135,10 +1137,6 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     }
     if (path === "/v1/memory/events" && req.method === "POST") {
       if (inspector.memoryEventsHandler) { void inspector.memoryEventsHandler(req, res); return; }
-      res.statusCode = 404; res.end(); return;
-    }
-    if (path === "/v1/identity/find" && req.method === "POST") {
-      if (inspector.identityFindHandler) { void inspector.identityFindHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/v1/identity/list" && req.method === "POST") {

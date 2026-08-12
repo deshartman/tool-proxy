@@ -124,14 +124,18 @@ the bind.
 
 ## Machine API routes
 
-There are four protected routes beyond `/oauth/token` itself:
+There are three protected routes beyond `/oauth/token` itself:
 
 | Route | What it does | Reference |
 |---|---|---|
 | `POST /v1/outbound/calls` | Trigger a real outbound Twilio call or message through the tunnel. | [`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) |
-| `POST /v1/identity/find` | Resolve one customer address to an opaque identity handle. Lookup-only. | [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §3 |
-| `POST /v1/identity/list` | Browse/search the account's identities. **Returns bulk PII** — see the note below. | [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §5 |
+| `POST /v1/identity/list` | Browse, search, **and resolve** the account's identities. **Returns bulk PII** — see the note below. | [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §5 |
 | `POST /v1/memory/events` | Tell an agent something out of band — one note into its working memory for a given identity. | [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) |
+
+A fourth, `POST /v1/identity/find`, existed briefly and is **gone**: the
+controller merged it into `identity.list`, whose `identifier` is a substring, and
+an exact address is a substring of itself. Its path is no longer allowlisted, so a
+non-loopback call to it now gets a `403` like any other unknown path.
 
 Attach the bearer token from step 4 above to any of them:
 
@@ -142,11 +146,11 @@ curl -s -X POST https://<connector-address>:9090/v1/outbound/calls \
   -d '{"action":"place_call","to":"+15551234567","agentId":"agt_123","channelId":"chn_456"}'
 
 # Memory injection is two calls: resolve, then write.
-curl -s -X POST https://<connector-address>:9090/v1/identity/find \
+curl -s -X POST https://<connector-address>:9090/v1/identity/list \
   -H "authorization: Bearer $ACCESS_TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"identifier":"+15551234567","channel":"phone"}'
-# -> {"result":{"identity":{"identityId":"identity_9f2c1a04-7b3e-4d51-8a6f-2e0b9c4d7a13",...}}}   or   {"identity":null}
+  -d '{"identifier":"+15551234567"}'
+# -> {"result":{"identities":[{"identityId":"identity_9f2c1a04-...","aliases":[...],...}]}}   or   {"identities":[]}
 
 curl -s -X POST https://<connector-address>:9090/v1/memory/events \
   -H "authorization: Bearer $ACCESS_TOKEN" \
@@ -163,14 +167,19 @@ For memory, the write body is
 [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §2/§10. Two things to know: **it takes an
 `identityId`, not an address** (resolution is a separate lookup-only call, so a
 typo can't mint a phantom customer), and **`agentId` is required** because
-working memory is keyed per agent. On `find`, `channel` is required and never
-inferred — `phone`, `email`, or `webchat-uid`.
+working memory is keyed per agent.
 
-A `null` identity from `find` is a normal `200`, not an error: it means you have
-a customer this account has never interacted with. Put your fact in the outbound
+On `list`, `channel` is optional — it only narrows. **`identifier` is a
+case-insensitive substring, so a full address can match several identities**
+(`des@example.com` also matches `des@example.com.au`). Don't take
+`identities[0]`; compare against each result's `aliases` and pick the exact one —
+see [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §2.
+
+An empty `identities: []` is a normal `200`, not an error: it means you have a
+customer this account has never interacted with. Put your fact in the outbound
 call's `callContext` instead — see [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §4.
 
-All four routes use the same `machine-api:<clientId>` audit-trail identity on the
+All three routes use the same `machine-api:<clientId>` audit-trail identity on the
 wire, and **the same bearer works on all of them**: either a self-issued (HS256)
 token from `/oauth/token` or a federated (RS256) token from your own IdP once
 you've configured a trusted issuer above. Each route accepts both, and the

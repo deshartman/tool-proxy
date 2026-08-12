@@ -1,9 +1,21 @@
-// Browse/search the account's identities — answers "who do you know", which
-// identity.find (exact match only) cannot. Mirrors the controller's
+// Browse, search, AND resolve the account's identities. Mirrors the controller's
 // identity.list action; see docs/CONTROLLER-ACTIONS.md §identity.list in the
 // controller repo.
 //
-// TWO SHARP EDGES, both deliberate controller-side:
+// This is the only identity lookup there is. A sibling identity.find did the
+// exact single-row version until the controller merged them: `identifier` is a
+// case-insensitive SUBSTRING and an exact address is a substring of itself, so
+// one predicate serves both browse and resolve rather than two query paths that
+// could drift over the same data.
+//
+// THAT MERGE HAS A SHARP EDGE FOR RESOLVE. A full address can match MORE THAN ONE
+// row — `identifier: "des@example.com"` also matches `des@example.com.au`. So
+// never take identities[0] as "the" customer: compare each result's `aliases`
+// (always the FULL set per identity, never narrowed by the query) against the
+// address you asked about. An empty array means unknown customer, which is a
+// normal answer, not an error.
+//
+// TWO MORE SHARP EDGES, both deliberate controller-side:
 //   - No cap and no cursor. Omitting `limit` returns the account's ENTIRE
 //     identity set. Capping at 100 was considered and rejected because a silent
 //     truncation is indistinguishable from "that's all of them", whereas an
@@ -17,14 +29,14 @@
 // DO NOT RETRY ON TIMEOUT. There's no cancellation path: the controller's query
 // runs to completion and replies onto a requestId already discarded, so a retry
 // loop stacks abandoned full-account scans on it while the caller sees only
-// failures. Raise the timeout (or narrow with match/channel) instead.
+// failures. Raise the timeout (or narrow with identifier/channel) instead.
 
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { callControllerApi } from "@mcp-shim/connector/sdk";
 
 const InputSchema = {
-  match: z.string().optional().describe("Case-insensitive substring on alias values"),
+  identifier: z.string().optional().describe("Case-insensitive SUBSTRING on alias values — may match several identities"),
   channel: z.enum(["phone", "email", "webchat-uid"]).optional().describe("Optional narrowing; omit for any kind"),
   // Deliberately no default. Substituting one here would reintroduce exactly the
   // silent truncation the controller refused to ship.
@@ -38,7 +50,7 @@ const OutputSchema = {
       isTemp: z.boolean(),
       provider: z.string(),
       externalRef: z.string(),
-      // Always the FULL alias set, never narrowed by match/channel — search by
+      // Always the FULL alias set, never narrowed by identifier/channel — search by
       // email and you still get their phone. You asked to resolve a customer, so
       // you get the record, not an echo of the query.
       aliases: z.array(z.object({ channel: z.string(), value: z.string() })),
@@ -64,12 +76,12 @@ export const list: Tool = {
         inputSchema: InputSchema,
         outputSchema: OutputSchema,
       },
-      async ({ match, channel, limit }) => {
+      async ({ identifier, channel, limit }) => {
         try {
           const result = (await callControllerApi(
             "identity.list",
             {
-              ...(match ? { match } : {}),
+              ...(identifier ? { identifier } : {}),
               ...(channel ? { channel } : {}),
               ...(limit !== undefined ? { limit } : {}),
             },

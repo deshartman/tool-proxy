@@ -1,10 +1,24 @@
 # MEMORY-EVENTS — enterprise-injects-context walkthrough
 
-> **Status:** shipped. Three machine-API routes cover this —
-> `POST /v1/identity/find`, `POST /v1/identity/list`, and
-> `POST /v1/memory/events`. Two paths reach the same three controller actions:
+> **Status:** shipped. Resolution and the write are confirmed against a real
+> connector; **delivery to the model has not been demonstrated as one chain** —
+> see §12, which is specific about which links are proven and which are easy to
+> assume.
+>
+> Two machine-API routes cover this — `POST /v1/identity/list` and
+> `POST /v1/memory/events`. Two paths reach the same two controller actions:
 > the machine-API routes (§1–§10, the first-class path) and a Twilio-bundled
 > MCP's own tools calling `callControllerApi` (§11, still supported).
+>
+> A third route, `POST /v1/identity/find`, existed briefly and is **deleted**.
+> The controller merged it into `identity.list`, whose `identifier` param is a
+> case-insensitive substring — and an exact address is a substring of itself, so
+> one predicate serves both browse and resolve rather than two query paths that
+> could drift over the same data. Calling the old action now returns
+> `unknown_action`; the connector route is gone and its path is no longer
+> allowlisted for non-loopback callers. §2 covers the one consequence that needs
+> real thought: **a full address can match more than one identity.**
+>
 > **Repo location:** `examples/demos/memory-inject-demo/` (machine-API driver) and
 > `examples/demos/memory-event-demo/` (MCP-tool reference) — both self-contained,
 > both reference material; the connector does not read from `examples/` at runtime.
@@ -27,8 +41,14 @@ with a legitimate external write.
 
 **It is a resolve-then-write flow, not one call.** `POST /v1/memory/events`
 takes an opaque `identityId`, never an address — you resolve one first via
-`POST /v1/identity/find`. §3 explains why that split exists and why it isn't
+`POST /v1/identity/list`. §3 explains why that split exists and why it isn't
 the extra friction it looks like.
+
+**The note survives across turns until it expires**, so `ttlSeconds` is genuine
+shelf life. It is not spent by the first turn that happens to load it. The
+trade-off runs the other way instead: a live note goes back on the wire every
+turn until it expires, so the agent may raise the fact **more than once** inside
+the window — see §6.
 
 ## 1. The flow, end to end
 
@@ -37,10 +57,10 @@ enterprise's own system
   -> examples/demos/memory-inject-demo/run-memory-inject.sh   (plays the role of "the enterprise's own system")
   -> POST /oauth/token on the connector's inspector            (mint a bearer — see docs/NETWORK-ACCESS.md)
 
-  -> POST /v1/identity/find    { identifier, channel }
+  -> POST /v1/identity/list    { identifier?, channel?, limit? }
        -> ControllerApiCoordinator.call() -> controller-call frame over the tunnel WS
-       -> controller's identity.find  (account-scoped, LOOKUP-ONLY)
-       -> { identity: IdentitySummary | null }
+       -> controller's identity.list  (account-scoped, LOOKUP-ONLY, substring)
+       -> { identities: IdentitySummary[] }   <- may be MORE THAN ONE; [] = unknown
 
   -> POST /v1/memory/events    { agentId, identityId, event, ttlSeconds? }
        -> ControllerApiCoordinator.call() -> controller-call frame
@@ -52,7 +72,7 @@ enterprise's own system
   -> then POST /v1/outbound/calls, or just wait for the customer to make contact
 ```
 
-No MCP involved anywhere in this path — all three are machine-API routes,
+No MCP involved anywhere in this path — both are machine-API routes,
 JWT-bearer-gated, that any external system can call directly, and **one bearer
 covers all of them**. It can be either a self-issued (HS256) token from
 `/oauth/token` or a federated (RS256) token from the customer's own IdP once a
@@ -67,9 +87,10 @@ driver script is generic mechanism, not memory-specific — see
 `connector/src/inspector/identity-routes.ts` for the routes' own auth +
 validation layer on top of it.
 
-**`POST /v1/identity/list`** sits alongside `find`: same bearer, same
-mechanism, but it answers "who do you know" rather than resolving one known
-identifier. §5 covers it, including the one sharp edge (no cap, no cursor).
+**`POST /v1/identity/list` is both the browse call and the resolve call.** Omit
+`identifier` and it answers "who do you know"; supply a full address and it
+resolves that customer. §5 covers its two sharp edges — no cap/no cursor, and
+substring matching meaning a full address can return several rows.
 
 ## 2. Params and result
 
@@ -80,19 +101,24 @@ routes mirror that strictness locally, so an unknown field is a `400` here
 rather than a wasted round trip.
 
 ```ts
-// POST /v1/identity/find request body
+// POST /v1/identity/list request body — every field optional
 {
-  identifier: string,       // REQUIRED — your customer reference, in your namespace
-  channel: string,          // REQUIRED — "phone" | "email" | "webchat-uid"; never derived
+  identifier?: string,      // case-insensitive SUBSTRING on alias values. A full
+                            // address resolves one customer — but see the warning
+                            // below: it can match SEVERAL identities.
+  channel?: string,         // optional narrowing; omit for any kind. Optional
+                            // because substring matching needs no kind.
+  limit?: number,           // OMIT for the account's full identity set — see §5
+  timeoutMs?: number,       // route-level, NOT forwarded; default 30000, clamped 1000-120000
 }
-// 200 response — `identity: null` is a NORMAL answer, see §4
-{ result: { identity: IdentitySummary | null } }
+// 200 response — an EMPTY array is a normal answer, see §4
+{ result: { identities: IdentitySummary[] } }
 
 
 // POST /v1/memory/events request body
 {
   agentId: string,          // REQUIRED — whose working memory receives the note
-  identityId: string,       // REQUIRED — from /v1/identity/find. NOT an address.
+  identityId: string,       // REQUIRED — from /v1/identity/list. NOT an address.
   event: string,            // REQUIRED, non-empty — the fact
   occurredAt?: string,      // ISO 8601; controller defaults to now
   ttlSeconds?: number,      // default 600; >86400 clamped, but 0/negative/fractional REJECTED — see §6
@@ -100,20 +126,26 @@ rather than a wasted round trip.
 }
 // 200 response — note it does NOT echo identityId; you supplied it
 { result: { stored: true, expiresAt: string } }
-
-
-// POST /v1/identity/list request body — every field optional
-{
-  match?: string,           // case-insensitive substring on alias values
-  channel?: string,         // optional narrowing; omit for any kind
-  limit?: number,           // OMIT for the account's full identity set — see §5
-  timeoutMs?: number,       // route-level, not forwarded; default 30000, clamped 1000-120000
-}
-// 200 response
-{ result: { identities: IdentitySummary[] } }
 ```
 
-`find` and `list` return the same record, so you parse one type:
+> **`identifier` is a substring, so resolve can return more than one row.**
+> `identifier: "des@example.com"` also matches `des@example.com.au`. **Never
+> write `identities[0]` and treat it as "the" customer.** When you pass a full
+> address expecting one person, compare it against each returned identity's
+> `aliases` — always the full set per identity, never narrowed by your query — and
+> pick the exact match. `examples/demos/memory-inject-demo/invoke.mjs` does this
+> and labels the ambiguous cases; copy that shape.
+>
+> Exact-first-with-substring-fallback was considered and rejected
+> controller-side: it would guarantee one row, but a 1-element result would then
+> mean either "exact hit" or "one substring hit" with no way to tell which.
+
+`timeoutMs` is the connector's own knob and is **stripped before forwarding** —
+the controller's schema is `.strict()` and explicitly refuses it, with a test
+pinning that refusal, because silent tolerance would let a real mistake sit
+undetected.
+
+The result record:
 
 ```ts
 interface IdentitySummary {
@@ -127,11 +159,14 @@ interface IdentitySummary {
 }
 ```
 
-`aliases` is the **full** set, never narrowed by your `match`/`channel` — search
-by email and you still get their phone. You asked to resolve your customer, so
-you get the record, not an echo of your query. Note `test-harness` can appear
-here even though it's refused as an input `channel`; it's a controller-internal
-construct.
+`aliases` is the **full** set, never narrowed by your `identifier`/`channel` —
+search by email and you still get their phone. You asked to resolve your
+customer, so you get the record, not an echo of your query. That is also what
+makes disambiguation possible: it's the field you compare a full address against.
+Note `test-harness` can appear here even though it's refused as an input
+`channel`; it's a controller-internal construct. An identity whose only alias is
+`test-harness` is therefore **reachable only by browsing** — no `identifier`
+value resolves it, since you can't filter on a channel the input refuses.
 
 **`agentId` is required on the write**, and this is the one place the contract
 reversed during development. Working memory is keyed
@@ -142,7 +177,7 @@ an agent. (An earlier note in `MCP-PROTOCOL.md` said this action carried no
 working-memory write.)
 
 Note the asymmetry, since it's easy to misread: **the write needs an `agentId`;
-`find` and `list` do not.** Identity is per-account, not per-agent — a customer
+`list` does not.** Identity is per-account, not per-agent — a customer
 can be well known to the account while never having used the agent you're
 injecting against. That case works.
 
@@ -167,48 +202,54 @@ resolve was find-or-**create**, which made three failure modes structural:
    out until the agent failed to mention the fact on the call.
 
 Splitting resolution out fixes all three at once: lookup is now read-only, you
-state the kind (so opaque UIDs work), and an unknown customer comes back as
-`null` immediately.
+can name the kind (so opaque UIDs work), and an unknown customer comes back as an
+empty array immediately.
 
-**`channel` is required on `find` and the controller will not derive it.** Its
-normalisation is kind-aware — lowercase for email, trim-only for phone and
-webchat-uid — so an exact lookup is impossible without knowing the kind.
+**`channel` is optional.** It only narrows the result set — omit it and any kind
+matches. A sibling `identity.find` required it, because its equality lookup ran
+against a kind-normalised column and that normalisation is kind-aware (lowercase
+for email, trim-only for phone and webchat-uid). Substring matching needs no
+kind: `ILIKE` is case-insensitive on its own. When you do supply it:
 
 | `channel` | Covers |
 |---|---|
 | `phone` | E.164 numbers. Also the resolution kind for `sms`, `voice`, `whatsapp`, `rcs`, `mms` — the old 9-value channel enum folded onto four kinds internally, so the finer label was never observable at lookup time. |
 | `email` | Email addresses. |
-| `webchat-uid` | Opaque session UIDs. **Only reachable because you state the kind.** |
+| `webchat-uid` | Opaque session UIDs. |
 
-`test-harness` is refused on input — it's a controller-internal construct.
+`test-harness` is refused on input — it's a controller-internal construct, so an
+identity whose only alias is `test-harness` can be browsed but not filtered for.
 
-Sniffing the kind from the string shape is exactly what the retired `customer`
-field did, and is precisely why webchat UIDs were unreachable. Being asked for
-it is the fix, not a regression.
+Sniffing the kind from the string shape is what the retired `customer` field did,
+and is precisely why webchat UIDs were unreachable. Being *able* to state it is
+the fix.
 
-**The connector validates presence and enum membership, not resolvability.**
-It checks `identifier` is a non-empty string and `channel` is one of the three,
-then stops. `identityId` on the write is checked for non-emptiness only and
-deliberately **not** pattern-matched — the id format is the controller's to
-change, and a connector-side guess at what an id looks like would reject valid
-handles the day that format moves. Strings are trimmed, and the trimmed value is
-what's forwarded; optional fields are omitted from the forwarded params entirely
-when absent rather than sent as `undefined`.
+**The connector validates types and enum membership, not resolvability.**
+It checks `identifier` is a string when present and `channel` is one of the three
+when present, then stops. `identityId` on the write is checked for non-emptiness
+only and deliberately **not** pattern-matched — the id format is the controller's
+to change, and a connector-side guess at what an id looks like would reject valid
+handles the day that format moves. Optional fields are omitted from the forwarded
+params entirely when absent rather than sent as `undefined`.
 
 The one exception to pass-it-through is the `channel` enum, which the connector
-does hold a local copy of. It earns that coupling three ways: the field is
-required, so a missing value has to be caught locally anyway; the set is closed
-and small; and `test-harness` is a plausible caller guess the controller
-explicitly refuses, so naming the valid set locally turns an opaque
-`invalid_params` round trip into a precise `400`. The cost is real and accepted —
-a channel kind added controller-side needs a connector bump before callers can
-use it.
+does hold a local copy of. It earns that coupling two ways: the set is closed and
+small, and `test-harness` is a plausible caller guess the controller explicitly
+refuses, so naming the valid set locally turns an opaque `invalid_params` round
+trip into a precise `400`. The cost is real and accepted — a channel kind added
+controller-side needs a connector bump before callers can use it.
 
-## 4. When `find` returns `identity: null`
+**Retired param names are rejected, not ignored.** `match` (this param's name
+before the merge) and `customer` (the retired address field on the write) both
+return `400` naming the replacement. Silently dropping `match` would run an
+unfiltered whole-account query while the caller believed they had narrowed it.
+
+## 4. When `list` returns an empty array
 
 **This is a normal answer, not an error path to log and drop.** It means you
-have a customer the controller has never interacted with. The natural but wrong
-reading is "injection is broken for new customers."
+have a customer the controller has never interacted with, and it carries exactly
+the meaning the deleted `find` route's `identity: null` did. The natural but
+wrong reading is "injection is broken for new customers."
 
 - **Never contacted:** call `POST /v1/outbound/calls` with your fact in
   `callContext`. It rides the call into the hydration bag. There's no memory to
@@ -218,10 +259,17 @@ reading is "injection is broken for new customers."
 The demo driver exits **3** for this case, distinct from a real failure's 1, and
 prints the alternative.
 
-## 5. `POST /v1/identity/list` — no cap, no cursor
+## 5. `POST /v1/identity/list` — no cap, no cursor, and possibly several rows
 
-`list` answers "who do you know", which `find` (exact match, 0 or 1 result)
-cannot. Account-scoped, newest first.
+`list` is the only identity lookup. Omit `identifier` and it answers "who do you
+know"; supply a full address and it resolves that customer. Account-scoped,
+newest first.
+
+**A full address can match more than one identity** — `identifier` is a
+substring, so `"des@example.com"` also matches `"des@example.com.au"`. Compare
+against each result's `aliases` rather than taking `identities[0]`; see the
+warning in §2. This is the one part of the find→list merge that needs real code
+on your side, not just a renamed field.
 
 **Omitting `limit` returns everything.** The controller considered capping at
 100 and rejected it: a cap truncates *silently* — 100 rows back is
@@ -232,13 +280,13 @@ page size.
 **So the binding constraint is the timeout, not the response size.** The tunnel
 WS takes `ws`'s default 100 MiB `maxPayload`, so even a very large list fits in
 one frame. What doesn't fit is the clock: this route defaults to **30s** (vs the
-coordinator's 8s default that `find` and the write use) and accepts a
+coordinator's 8s default that the write uses) and accepts a
 caller-supplied `timeoutMs`, clamped to 1000–120000. Clamped rather than
 rejected — an out-of-range value is a caller misjudging their own account size,
 not a malformed request.
 
 **On timeout you get nothing, not a partial result.** Raise `timeoutMs` for a
-large account, or narrow with `match`/`channel`.
+large account, or narrow with `identifier`/`channel`.
 
 **Do not retry a timed-out `list` — raise `timeoutMs` instead.** There is no
 cancellation path. When your window elapses the connector stops waiting, but the
@@ -274,18 +322,55 @@ writing a caller:
 - **Multiple injections queue** as separate notes in arrival order — they never
   overwrite. They're serialized through the same per-identity lock live
   conversation turns use, so an injection can't clobber a real turn either.
-- **Shelf life is `ttlSeconds`, default 600s.** Working memory is flushed to
-  episodic after inactivity, and injection deliberately does **not** reset that
-  clock — otherwise a silent customer's row would be held open artificially. The
-  600s default equals the controller's own `quietFlushMs` default, so omitting
-  the field behaves exactly as it did before the field existed: **inject
-  immediately before the outbound leg** that should mention the fact.
+- **It survives across turns until it expires.** The controller's
+  `shouldPersistTranscriptItem` keeps a *live* injected note in the persisted
+  transcript. Builder-synthesised `system` items are still dropped — those get
+  re-synthesised every turn, so persisting them would grow the wire by one item
+  per turn and poison the cache prefix. An injected note isn't re-synthesised, so
+  that argument never applied to it.
 
-  Raise it and **inject-then-wait-for-inbound works too** — which it did not
-  before. An injected `system` note isn't a transcript turn, so a row holding
-  only injections looked *empty* to the flush sweeper, which marked it flushed
-  and destroyed the fact before the customer ever made contact. The TTL holds
-  the row open.
+  The predicate tests **liveness, not presence**, so an expired note is dropped by
+  the same mechanism that keeps a live one. Nothing accumulates.
+
+  > **This reverses an earlier consume-once design, and the reason is worth
+  > keeping.** Stripping the note after any turn was tried and failed in the
+  > field, because it combined badly with the deliberately non-directive wrapper
+  > (which states the fact but doesn't instruct the agent to raise it). Real
+  > customers open with a greeting, so the note was spent on a turn the agent had
+  > no reason to use it on, and was gone by the turn that mattered:
+  >
+  > ```
+  > inject "your package will be delayed by 1 day"
+  > customer: "Hi"                    -> note stripped here
+  > customer: "What is the status?"   -> nothing left to answer from
+  > ```
+  >
+  > That's not an edge case — it's the shape of every inbound conversation.
+  > Don't re-introduce consume-once without solving the greeting turn.
+- **The cost of that: the agent may raise the fact more than once.** A live note
+  goes back on the wire every turn until it expires, so within the TTL window it
+  can surface repeatedly. **Keep `ttlSeconds` tight when that matters.** Bounded
+  and recoverable, unlike a silently lost fact — which is the trade that was
+  deliberately chosen.
+- **`ttlSeconds` is genuine shelf life.** Default 600s. Working memory is flushed
+  to episodic after inactivity, and injection deliberately does **not** reset that
+  clock — otherwise a silent customer's row would be held open artificially. The
+  600s default equals the controller's own `quietFlushMs` default, so omitting the
+  field behaves exactly as it did before the field existed.
+
+  Raising it is what **inject-then-wait-for-inbound** needs, and that case was
+  impossible before the field existed: an injected `system` note isn't a
+  transcript turn, so a row holding only injections looked *empty* to the flush
+  sweeper, which marked it flushed and destroyed the fact before the customer ever
+  made contact. The TTL is what holds the row open.
+
+  **Two different branches are easy to conflate here; only one is field-proven.**
+  *A live note surviving successive turns* is confirmed live (a greeting turn
+  followed by a real question, with the note still present for the second). *The
+  flush sweeper declining to reap a notes-only row past `quietFlushMs` with no
+  contact at all* has never run live — it is unit-covered only, and §12 step 7
+  explains why a live test of it can appear to pass without the sweeper ever
+  facing such a row. Inject-then-outbound depends on neither.
 
   **The range policy is asymmetric, so don't read "clamped" as "anything
   goes".** A value *above* 86400s is clamped, not rejected — the controller's
@@ -303,10 +388,12 @@ writing a caller:
 - **The episodic tail is automatic, conditional on the agent speaking.** If the
   agent voices the fact, that `assistant` turn is summarised into episodic
   normally, and "flight is delayed" becomes "flight was delayed yesterday" with
-  no extra machinery. A fact injected but never spoken leaves no episodic trace
-  — deliberate: episodic memory should record what was actually *communicated*,
-  and the `controller_action` audit row is the record that the injection
-  happened.
+  no extra machinery.
+- **`stored: true` means WRITTEN, not MENTIONED.** A fact the agent never voices
+  leaves **no trace at all** — the note expires either way and no episode is
+  written, so the controller's own `controller_action` audit line is the only
+  record the injection happened. Don't read a `200` as a guarantee the customer
+  will hear it; it guarantees the note was there to be read.
 
 ## 7. Idempotency — never minted here
 
@@ -348,31 +435,33 @@ cd examples/demos/memory-inject-demo
 cp config.example.json config.json
 # edit: clientId/clientSecret from step 2, plus agentId
 
-# 4. One run = one call. Browse, resolve, then write.
-./run-memory-inject.sh --list
-./run-memory-inject.sh --find --identifier=+15555550123 --channel=phone
-./run-memory-inject.sh --inject --agentId=agt_123 --identityId=<from find> \
+# 4. One run = one call. Resolve, then write.
+./run-memory-inject.sh --list                                # browse everyone
+./run-memory-inject.sh --list --identifier=+15555550123      # resolve one
+./run-memory-inject.sh --inject --agentId=agt_123 --identityId=<from list> \
   --event="your flight is delayed"
 ```
 
 Each mode maps to exactly one route, and every flag is a field of that route
 spelled the same way — see
 [the driver's README](../examples/demos/memory-inject-demo/README.md). It fires
-immediately with no prompt (§7). If `--find` comes back `null` it exits **3** and
-prints the alternative (§4) rather than treating it as a failure.
+immediately with no prompt (§7). If `--list` matches nothing it exits **3** and
+prints the alternative (§4) rather than treating it as a failure; when it matches
+several, it marks which rows carry the exact alias you asked for rather than
+picking one (§2).
 
 No `policy.tool_timeout_ms` change is needed, unlike the MCP-tool path (§11):
 these aren't tool calls, so the connector's outer tool timeout never applies.
-`identity.find` and `memory.inject_context` are an identity resolve and a row
-write with no LLM turn, so both routes pass **no** timeout override and inherit
-`ControllerApiCoordinator`'s 8s default — contrast `outbound.*`'s explicit 30s,
-which it needs because it runs a synchronous LLM turn. `identity.list` is the
-exception and defaults to 30s (§5).
+`memory.inject_context` is a row write with no LLM turn, so that route passes
+**no** timeout override and inherits `ControllerApiCoordinator`'s 8s default —
+contrast `outbound.*`'s explicit 30s, which it needs because it runs a
+synchronous LLM turn. `identity.list` can walk the whole account, so it defaults
+to 30s and takes a caller override (§5).
 
 ## 9. Calling without the demo script
 
 The demo script is a thin wrapper over a few HTTP calls — nothing stops you
-doing the same thing directly. One bearer covers all three routes:
+doing the same thing directly. One bearer covers both routes:
 
 ```bash
 ACCESS_TOKEN=$(curl -s -X POST http://127.0.0.1:9090/oauth/token \
@@ -380,51 +469,58 @@ ACCESS_TOKEN=$(curl -s -X POST http://127.0.0.1:9090/oauth/token \
   -d "grant_type=client_credentials&client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET" \
   | node -e 'process.stdin.on("data",d=>console.log(JSON.parse(d).access_token))')
 
-# 1. Resolve the customer. `channel` is required — "phone", "email", or "webchat-uid".
-curl -s -X POST http://127.0.0.1:9090/v1/identity/find \
+# 1. Resolve the customer. `channel` is OPTIONAL — it only narrows.
+curl -s -X POST http://127.0.0.1:9090/v1/identity/list \
   -H "authorization: Bearer $ACCESS_TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"identifier":"+15555550123","channel":"phone"}'
-# -> {"result":{"identity":{"identityId":"identity_9f2c1a04-7b3e-4d51-8a6f-2e0b9c4d7a13","aliases":[...],...}}}
-# -> {"result":{"identity":null}}  = never contacted; see §4
+  -d '{"identifier":"+15555550123"}'
+# -> {"result":{"identities":[{"identityId":"identity_9f2c1a04-...","aliases":[...],...}]}}
+# -> {"result":{"identities":[]}}   = never contacted; see §4
+#
+# `identifier` is a SUBSTRING, so this can return several rows. Pick the one whose
+# `aliases` contains your exact address — do NOT take identities[0]. See §2.
 
-# 2. Write the fact against the id you got back.
+# 2. Write the fact against the id you picked.
 curl -s -X POST http://127.0.0.1:9090/v1/memory/events \
   -H "authorization: Bearer $ACCESS_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"agentId":"agt_123","identityId":"identity_9f2c1a04-7b3e-4d51-8a6f-2e0b9c4d7a13","event":"your flight is delayed"}'
 # -> {"result":{"stored":true,"expiresAt":"2026-08-12T10:10:00Z"}}
+#    stored: true means WRITTEN, not MENTIONED — see §6.
 
-# An email identity resolves the same way — only `channel` differs:
-curl -s -X POST http://127.0.0.1:9090/v1/identity/find \
+# An email resolves the same way. Narrow with `channel` if the substring is
+# ambiguous across kinds:
+curl -s -X POST http://127.0.0.1:9090/v1/identity/list \
   -H "authorization: Bearer $ACCESS_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"identifier":"someone@example.com","channel":"email"}'
 
-# Hold the note open for an INBOUND contact rather than an immediate outbound leg:
+# Hold the note open longer for an INBOUND contact rather than an immediate
+# outbound leg. This is real shelf life — the note survives successive turns until
+# it expires, so keep it tight if repeated mentions would be a problem (§6).
 curl -s -X POST http://127.0.0.1:9090/v1/memory/events \
   -H "authorization: Bearer $ACCESS_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"agentId":"agt_123","identityId":"identity_9f2c1a04-7b3e-4d51-8a6f-2e0b9c4d7a13","event":"your order shipped","ttlSeconds":3600}'
 
-# Browse the account. No cap and no cursor — see §5 before running this
-# against a large account.
+# Browse the whole account — omit `identifier`. No cap and no cursor, so read §5
+# before running this against a large account.
 curl -s -X POST http://127.0.0.1:9090/v1/identity/list \
   -H "authorization: Bearer $ACCESS_TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"match":"smith","channel":"email"}'
+  -d '{}'
 ```
 
 The frame's `mcp` field (see [`docs/MCP-PROTOCOL.md`](MCP-PROTOCOL.md) §"v1.4 —
 Controller API calls") carries `machine-api:<clientId>` for calls made this way,
 instead of a bundled MCP's name — the controller's audit trail can still
 attribute the write to a specific machine caller via the JWT's `sub` claim. That
-applies to all three routes, so a resolve and its follow-up write are
-attributable to the same caller.
+applies to both routes, so a resolve and its follow-up write are attributable to
+the same caller.
 
 ## 10. Error codes
 
-Identical across all three routes. `not_authorized` (401), `bad_request` (400),
+Identical across both routes. `not_authorized` (401), `bad_request` (400),
 and `payload_too_large` (413) come from the route's own gate, before the call
 ever reaches the tunnel. Everything else is either the connector's own `timeout`
 / `tunnel_unavailable` or controller-owned and passed through opaquely as
@@ -433,29 +529,30 @@ ever reaches the tunnel. Everything else is either the connector's own `timeout`
 | Code | HTTP | Where it comes from |
 |---|---|---|
 | `not_authorized` | 401 | The route's own gate: missing, malformed, or expired bearer token. |
-| `bad_request` | 400 | The route's own gate. On the write: malformed JSON, missing/empty `agentId`/`identityId`/`event`, non-string `occurredAt`/`idempotencyKey`, non-numeric `ttlSeconds`, or an unknown top-level field. On `find`: missing/empty `identifier`, or a `channel` outside the three valid kinds. |
+| `bad_request` | 400 | The route's own gate. On the write: malformed JSON, missing/empty `agentId`/`identityId`/`event`, non-string `occurredAt`/`idempotencyKey`, non-numeric `ttlSeconds`, or an unknown top-level field. On `list`: a non-string `identifier`, a non-numeric `limit`/`timeoutMs`, a `channel` outside the three valid kinds, or the retired `match` field. |
 | `payload_too_large` | 413 | The route's own gate: body over the read limit. |
 | `tunnel_unavailable` | 503 | Connector-side: no live tunnel to send the frame over (or the tunnel closed mid-call). |
-| `timeout` | 502 | Connector-side: no reply within the window — 8s for `find` and the write, 30s (or your `timeoutMs`) for `list`. On `list` this means you get **nothing**, not a partial (§5). |
-| `unknown_action` | 502 | Controller has no handler for the requested action. |
+| `timeout` | 502 | Connector-side: no reply within the window — 8s for the write, 30s (or your `timeoutMs`) for `list`. On `list` this means you get **nothing**, not a partial (§5). |
+| `unknown_action` | 502 | Controller has no handler for the requested action — what the deleted `identity.find` now returns. |
 | `cross_account` | 502 | Controller: the target `agentId` or `identityId` isn't in this tunnel session's account. Also covers a merged (dead) identity handle. |
 | `invalid_params` | 502 | Controller: `params` failed the action's `.strict()` schema. |
 | `controller_error` | 502 | Controller: everything else. |
 
 Three things that are **not** errors, and shouldn't be handled as such:
 
-- **`identity: null` from `find`** — a `200`. The customer is simply unknown
-  (§4).
+- **An empty `identities: []`** — a `200`. The customer is simply unknown (§4).
+  This carries the meaning the deleted `find` route's `identity: null` had.
+- **Several rows for one full address** — a `200`, and expected: `identifier` is
+  a substring (§2). Disambiguate on `aliases`; it is not an error to resolve.
 - **A `ttlSeconds` above 86400** — a `200`, clamped. Read `expiresAt` (§6).
   (A `ttlSeconds` of 0, negative, or fractional is a genuine `invalid_params`,
   though — the policy is asymmetric.)
-- **An empty `identities: []` from `list`** — a `200`. Nobody matched.
 
 Notably **not** `no_supervisor` — that's an `outbound.*` channel-availability
 check, and an injection doesn't need the agent to have a supervisor procedure
 bound. And notably not `invalid_params` for an unresolvable address: resolution
-is lookup-only now, so a customer the controller doesn't know is a `null`, not a
-rejection.
+is lookup-only now, so a customer the controller doesn't know is an empty array,
+not a rejection.
 
 ## 11. The other path — calling these actions from a Twilio-bundled MCP's own tools
 
@@ -471,8 +568,8 @@ Its flow:
 ```
 run-memory-event.sh
   -> POST /tool/call on the connector's inspector   ({server, tool, args})
-  -> memory-event-demo's find tool
-  -> callControllerApi("identity.find", { identifier, channel })
+  -> memory-event-demo's list tool
+  -> callControllerApi("identity.list", { identifier, channel? })
   -> POST /internal/controller-api/call on the connector's inspector
   -> ControllerApiCoordinator.call() -> ... same as §1 from here down
 
@@ -481,8 +578,9 @@ run-memory-event.sh
   -> callControllerApi("memory.inject_context", { agentId, identityId, event, ... })
 ```
 
-That demo ships three tools mirroring the three actions — `find`, `list`, and
-`invoke` — so the resolve-then-write split is visible on this path too.
+That demo ships two tools mirroring the two actions — `list` and `invoke` — so the
+resolve-then-write split is visible on this path too. It shipped a third, `find`,
+until the controller merged that action away.
 
 **The `tool_timeout_ms` gotcha, unique to this path.** Reaching a tool via
 `/tool/call` wraps the call in the connector's own outer
@@ -495,7 +593,7 @@ policy:
   tool_timeout_ms: 10000
 ```
 
-10 seconds is enough for `find` and `invoke` — no need for the 35000 a
+10 seconds is enough for `invoke` — no need for the 35000 a
 tool-call-mediated `outbound.*` caller would need (see
 [`docs/OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) §7). Don't assume the 5s default is
 safe just because these actions' own timeout is shorter than `outbound.*`'s; it's
@@ -515,25 +613,64 @@ author-gated to `twilio` — see its README for why it can't go through the usua
 
 ## 12. End-to-end check
 
-Proves the note actually reached the model, not just the database:
+Proves the note actually reached the model, not just the database.
 
-1. `POST /v1/identity/find` with a customer you know exists → expect a non-null
-   `identity` with a populated `aliases` array.
-2. `POST /v1/identity/find` with a deliberate typo → expect `identity: null`,
-   **and** confirm on a second call that no identity was created for the typo in
-   between. That's the property the old find-or-create shape couldn't offer (§3).
+Steps 1–3 and 6 are cheap and unambiguous. **Steps 4–5 and 7 are the ones that
+matter, the ones not yet demonstrated as a single chain, and the ones easiest to
+convince yourself of on weaker evidence than you think** — each carries a note on
+how a version of it can appear to pass while proving nothing.
+
+1. `POST /v1/identity/list` with `identifier` set to an address you know exists →
+   expect at least one identity with a populated `aliases` array, and confirm one
+   of them carries that address **exactly**. Several rows is normal, not a bug
+   (§2).
+2. `POST /v1/identity/list` with a deliberate typo → expect `identities: []`,
+   **and** confirm no identity was created for the typo in between. Check the
+   alias count for the typo directly rather than eyeballing a list; the old
+   find-or-create shape's whole failure mode was being invisible (§3).
 3. `POST /v1/memory/events` with that `identityId`, an `agentId`, and
-   `event: "your flight is delayed"`.
+   `event: "your flight is delayed"`. Confirm the row landed.
 4. **Immediately** trigger an outbound call or SMS to that same identity on that
    same agent (see [`docs/OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md)). Immediately,
    because injection doesn't reset the flush clock (§6).
-5. Confirm the agent raises the delay **unprompted** — that proves the `system`
-   note reached the model.
-6. Let the working row go idle past the TTL, then confirm the episodic summary
-   mentions the delay — that proves the tail works via the agent's own utterance.
+5. Confirm the agent raises the delay **unprompted**. This is the only step that
+   proves the feature works; everything before it proves data moved.
+
+   > **Three substitutions each weaken this to the point of proving something
+   > else, and they're easy to make one at a time.** Writing the note straight
+   > into the session store instead of through `POST /v1/memory/events` skips the
+   > entire connector path. Simulating the inbound as a local HTTP POST instead of
+   > a real Twilio message skips routing and identity resolution. And asking a
+   > *targeted* question ("any update on my appointment?") only shows the model
+   > had the note and used it — not that it would have volunteered it. All three
+   > together demonstrate "a system note in working memory reaches the model and
+   > shapes the reply", which is worth knowing but is **not** this step. Use the
+   > real route, a real inbound, and an open-ended opener.
+   >
+   > Substituting only *some* of them still leaves this step outstanding, and
+   > that's the state today: a real Twilio inbound has read an injected note and
+   > answered from it, but that note was written by a probe calling the same
+   > functions `memory.inject_context` uses internally rather than through the
+   > route. The connector write path is separately proven — real
+   > `memory.inject_context` calls land correctly. **Both halves work; a single
+   > unbroken connector→Twilio chain has not been demonstrated.**
+6. Confirm the episodic summary mentions the delay — that proves the tail works
+   via the agent's own utterance (§6). Conditional on step 5: a fact the agent
+   never voiced leaves no episodic trace by design.
 7. **TTL check.** Inject with `ttlSeconds: 3600`, wait past 10 minutes with no
-   contact, then place the call. The fact must still be there. Before
-   `ttlSeconds` existed it would have been silently gone (§6).
+   contact, then make contact. The fact must still be there — before `ttlSeconds`
+   existed it would have been silently gone (§6).
+
+   > **This one can pass without ever exercising the branch it tests.** The
+   > mechanism under test is the flush sweeper *declining* to reap a row that
+   > holds only injected notes. If no sweeper tick happens to land inside that
+   > window, the row survives because nothing looked at it — which is not the
+   > same result and looks identical. Check the sweeper actually ran during the
+   > wait before believing the pass.
+   >
+   > Don't let a passing step 5 upgrade this one. *A live note surviving
+   > successive turns* and *the sweeper sparing a notes-only row with no contact
+   > at all* are different branches; the first is field-proven, this is not.
 
 Outbound SMS works for this as well as voice: the first outbound SMS body loads
 working memory (it previously hard-coded an empty history, so only the

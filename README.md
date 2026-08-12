@@ -141,9 +141,9 @@ Machine API (the JWT-bearer-gated routes an external system calls directly):
   non-loopback reachability, federated (own-IdP) bearers.
 - [docs/OUTBOUND-CALLS.md](docs/OUTBOUND-CALLS.md) — `POST /v1/outbound/calls`,
   trigger a real outbound call or message.
-- [docs/MEMORY-EVENTS.md](docs/MEMORY-EVENTS.md) — `POST /v1/identity/find`,
-  `/v1/identity/list` and `/v1/memory/events`: resolve a customer, then tell an
-  agent something out of band.
+- [docs/MEMORY-EVENTS.md](docs/MEMORY-EVENTS.md) — `POST /v1/identity/list` and
+  `/v1/memory/events`: resolve a customer, then tell an agent something out of
+  band.
 
 Deployment:
 - [deploy/README.md](deploy/README.md) — decision matrix + prereqs.

@@ -23,7 +23,7 @@
 // A `type` field existed briefly here and was cancelled outright, not deferred.
 //
 // THIS ROUTE DOES NOT ACCEPT AN ADDRESS. `identityId` is an opaque controller
-// handle obtained from POST /v1/identity/find (identity-routes.ts) — injection
+// handle obtained from POST /v1/identity/list (identity-routes.ts) — injection
 // is the second half of a resolve-then-write flow. Two earlier shapes are both
 // retired: a nested `identity: { channel, value }` pair, then a flat `customer`
 // string the controller resolved internally. That internal resolve was
@@ -149,13 +149,13 @@ function validateMemoryEventBody(
   const agentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
   if (!agentId) return bad('"agentId" must be a non-empty string');
 
-  // An opaque controller handle from POST /v1/identity/find, NOT an address.
+  // An opaque controller handle from POST /v1/identity/list, NOT an address.
   // Deliberately not pattern-checked: the format is the controller's to change,
   // and a connector-side guess at what an id looks like would reject valid
   // handles the day that format moves.
   const identityId = typeof body.identityId === "string" ? body.identityId.trim() : "";
   if (!identityId) {
-    return bad('"identityId" must be a non-empty string — resolve one via POST /v1/identity/find (this route does not accept a phone number or email address)');
+    return bad('"identityId" must be a non-empty string — resolve one via POST /v1/identity/list (this route does not accept a phone number or email address)');
   }
 
   const event = typeof body.event === "string" ? body.event.trim() : "";

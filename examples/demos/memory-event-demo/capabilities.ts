@@ -7,7 +7,7 @@ const capabilities = {
     "memory-event-demo": {
       // Three actions, because injection is a resolve-then-write flow: resolve
       // the customer to an opaque identityId, then write the fact against it.
-      controllerActions: ["identity.find", "identity.list", "memory.inject_context"],
+      controllerActions: ["identity.list", "memory.inject_context"],
     },
   },
 };

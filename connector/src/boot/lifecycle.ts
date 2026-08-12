@@ -211,9 +211,9 @@ async function bootFromDb(): Promise<void> {
       getCoordinator: () => controllerApi,
     }));
 
-    // MEMORY-INJECTION — POST /v1/identity/{find,list}, the resolve half of the
-    // flow /v1/memory/events completes. Identical deps to both routes above,
-    // and wired ABOVE the empty-DB `if (!row) return` for the same TDZ reason.
+    // MEMORY-INJECTION — POST /v1/identity/list, the resolve half of the flow
+    // /v1/memory/events completes. Identical deps to both routes above, and
+    // wired ABOVE the empty-DB `if (!row) return` for the same TDZ reason.
     const identityRoutes = createIdentityRoutes({
       getVerifierConfig: async () => ({
         selfIssuedSigningKey: deriveJwtSigningKey(masterKey.bytes),

@@ -5,9 +5,9 @@
 
 This document walks through the flow that lets an enterprise's own system trigger a real outbound Twilio call or SMS through the tunnel, from the connector side. It's the connector-side companion to the controller's own action-registry contract (`docs/CONTROLLER-ACTIONS.md` in the controller repo) — read that doc for what happens after the frame lands on the controller; this doc covers everything up to and including sending the frame.
 
-This route has siblings: **`POST /v1/memory/events`** injects a fact into an agent's working memory over the same tunnel, with the same bearer and the same `machine-api:<clientId>` audit identity, and **`POST /v1/identity/{find,list}`** resolve the customer handle that write requires — see [`docs/MEMORY-EVENTS.md`](MEMORY-EVENTS.md). The four together are the whole machine-API surface ([`docs/NETWORK-ACCESS.md`](NETWORK-ACCESS.md) "Machine API routes").
+This route has siblings: **`POST /v1/memory/events`** injects a fact into an agent's working memory over the same tunnel, with the same bearer and the same `machine-api:<clientId>` audit identity, and **`POST /v1/identity/list`** resolves the customer handle that write requires — see [`docs/MEMORY-EVENTS.md`](MEMORY-EVENTS.md). The three together are the whole machine-API surface ([`docs/NETWORK-ACCESS.md`](NETWORK-ACCESS.md) "Machine API routes").
 
-One case where the two features meet: if `identity.find` returns `null` — a customer the account has never interacted with — there is no working memory to inject into, and the correct move is to place the call *here* with the fact in `callContext`, where it rides into the hydration bag. See [`docs/MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §4.
+One case where the two features meet: if `identity.list` comes back empty — a customer the account has never interacted with — there is no working memory to inject into, and the correct move is to place the call *here* with the fact in `callContext`, where it rides into the hydration bag. See [`docs/MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §4.
 
 ## 1. The flow, end to end
 

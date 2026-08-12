@@ -6,25 +6,18 @@
 // ONE MODE = ONE API CALL. Nothing is combined, nothing is derived, and every
 // flag is a field of that call spelled exactly as the wire spells it:
 //
-//   --list     POST /v1/identity/list    [--match --channel --limit --timeoutMs]
-//   --find     POST /v1/identity/find     --identifier --channel
-//   --inject   POST /v1/memory/events     --agentId --identityId --event
-//                                        [--occurredAt --ttlSeconds --idempotencyKey]
+//   --list     POST /v1/identity/list   [--identifier --channel --limit --timeoutMs]
+//   --inject   POST /v1/memory/events    --agentId --identityId --event
+//                                       [--occurredAt --ttlSeconds --idempotencyKey]
 //
-// Only --list/--find/--inject (which call), --port, --clientId and
-// --clientSecret belong to the script; none of those appear in a request body.
-// Reading this file should tell you the API. Don't add a flag that renames,
-// combines, or derives an API field, and don't make one mode issue two calls —
-// an earlier version resolved-then-wrote in a single run, which made the write
-// look as though it accepted an address when it only ever accepted an
-// identityId.
-//
-// The normal sequence is find (or list) to get an identityId, then inject with
-// it. They're separate runs because they're separate calls:
+// Only --list/--inject (which call), --port, --clientId and --clientSecret belong
+// to the script; none of those appear in a request body. Reading this file should
+// tell you the API. Don't add a flag that renames, combines, or derives an API
+// field, and don't make one mode issue two calls.
 //
 //   node invoke.mjs --clientId=... --clientSecret=... \
-//     --find --identifier=+15555550123 --channel=phone
-//   # -> prints identityId
+//     --list --identifier=+15555550123
+//   # -> prints matching identities + their identityIds
 //   node invoke.mjs --clientId=... --clientSecret=... \
 //     --inject --agentId=agt_123 --identityId=<that> --event="your flight is delayed"
 //
@@ -32,8 +25,16 @@
 // let the controller resolve it, but that resolve was find-or-CREATE: a typo'd
 // digit minted a phantom customer with a real working-memory row hanging off it,
 // and the mistyped write "succeeded" — nobody found out until the agent said
-// nothing on the call. Lookup is now read-only; a typo comes back as
-// `identity: null`. See README.md §"Why the extra round trip".
+// nothing on the call. Lookup is now read-only and returns an empty array.
+//
+// `identifier` IS A SUBSTRING, SO RESOLVE CAN RETURN SEVERAL ROWS. There used to
+// be a separate exact lookup (identity.find); the controller merged it into this
+// one, because an exact address is a substring of itself and two query paths over
+// the same data could drift. The catch: "des@example.com" also matches
+// "des@example.com.au". NEVER take identities[0] as "the" customer — compare each
+// result's `aliases` (always the FULL set per identity, never narrowed by the
+// query) against the address you asked about. This script does exactly that below
+// and flags the ambiguous cases, which is the pattern an integrator should copy.
 //
 // Credentials: add an API client via the inspector's Network Access panel (or
 // POST /internal/network-access/clients) and pass --clientId/--clientSecret, or
@@ -44,16 +45,19 @@
 // duplicate-on-retry as low-harm (it does not dedup in v1). It does write a real
 // note into a real agent's working memory, so point it at a test agent.
 //
-// Timing: working memory flushes to episodic after ttlSeconds of inactivity
-// (default 600s) and injecting does NOT reset that clock. Inject immediately
-// before the outbound leg that should mention the fact, or raise --ttlSeconds to
-// hold the row open for an INBOUND contact.
+// TIMING — the note SURVIVES successive turns until it expires, so ttlSeconds is
+// genuine shelf life. A consume-once design (strip after any turn) was tried and
+// failed in the field: customers open with a greeting, so the note was spent on a
+// turn the agent had no reason to use it on and was gone by the turn that
+// mattered. The cost of the fix is the opposite risk — a live note goes back on
+// the wire every turn, so the agent may raise the fact MORE THAN ONCE inside the
+// window. Keep --ttlSeconds tight when that matters.
 //
 // Pass --port=<port> (or set INSPECTOR_PORT) for a connector that isn't on 9090
 // — e.g. a second instance from ./scripts/start-connector.sh 9091.
 //
-// Exit codes: 0 success, 1 a real failure, 3 --find found no such customer,
-// which is NOT a bug — see the message it prints.
+// Exit codes: 0 success, 1 a real failure, 3 --list matched no identity, which is
+// NOT a bug — see the message it prints.
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -61,7 +65,7 @@ import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CHANNELS = ["phone", "email", "webchat-uid"];
-const MODES = ["list", "find", "inject"];
+const MODES = ["list", "inject"];
 
 function parseFlags(argv) {
   const flags = {};
@@ -74,20 +78,35 @@ function parseFlags(argv) {
 
 const flags = parseFlags(process.argv.slice(2));
 
-// Retired shapes, rejected rather than ignored so a stale shell-history line
-// says why instead of failing somewhere unrelated.
+// Retired shapes, rejected rather than ignored so a stale shell-history line says
+// why instead of failing somewhere unrelated.
 if ("customer" in flags) {
-  // Was the field on the retired contract, where the address went straight to
-  // /v1/memory/events. The field find takes is `identifier`.
+  // The field on the retired contract, where the address went straight to
+  // /v1/memory/events and the controller resolved it internally.
   console.error("--customer no longer exists. Resolution is its own call:");
-  console.error("  --find --identifier=+15555550123 --channel=phone");
+  console.error("  --list --identifier=+15555550123");
+  process.exit(1);
+}
+if ("find" in flags) {
+  // POST /v1/identity/find is gone: the controller deleted the action, because
+  // list's substring `identifier` subsumes an exact lookup.
+  console.error("--find no longer exists — identity.find was deleted controller-side.");
+  console.error("Its exact lookup is subsumed by --list, whose --identifier is a substring:");
+  console.error("  --list --identifier=+15555550123");
+  console.error("Note a full address can match SEVERAL identities; check each one's aliases.");
+  process.exit(1);
+}
+if ("match" in flags) {
+  // `match` was this param's name until the find/list merge.
+  console.error('--match was renamed --identifier (the field the API now takes).');
+  console.error("  --list --identifier=smith --channel=email");
   process.exit(1);
 }
 if (flags.list) {
   // --list used to double as the `match` param, making one flag both a mode
   // selector and a body field.
   console.error("--list takes no value. The substring param is its own flag, as the API names it:");
-  console.error("  --list --match=smith --channel=email");
+  console.error("  --list --identifier=smith --channel=email");
   process.exit(1);
 }
 
@@ -95,11 +114,10 @@ const chosen = MODES.filter((m) => m in flags);
 if (chosen.length !== 1) {
   console.error(
     chosen.length === 0
-      ? "Pick exactly one call: --list, --find, or --inject."
+      ? "Pick exactly one call: --list or --inject."
       : `Pick exactly one call, not ${chosen.map((m) => `--${m}`).join(" + ")}.`,
   );
-  console.error("  --list                      [--match --channel --limit --timeoutMs]");
-  console.error("  --find    --identifier --channel");
+  console.error("  --list                      [--identifier --channel --limit --timeoutMs]");
   console.error("  --inject  --agentId --identityId --event  [--occurredAt --ttlSeconds --idempotencyKey]");
   process.exit(1);
 }
@@ -139,40 +157,20 @@ if (typeof clientId !== "string" || !clientId || typeof clientSecret !== "string
   process.exit(1);
 }
 
-function requireStrings(pairs) {
-  for (const [name, value] of pairs) {
+if (mode === "inject") {
+  for (const [name, value] of [["agentId", agentId], ["identityId", identityId], ["event", event]]) {
     if (typeof value !== "string" || !value.trim()) {
-      console.error(`--${name} is required for --${mode}.`);
+      console.error(`--${name} is required for --inject.`);
       process.exit(1);
     }
   }
-}
-
-// channel is REQUIRED on find and never derived: the controller's normalisation
-// is kind-aware (lowercase for email, trim-only for phone and webchat-uid), so
-// an exact lookup is impossible without knowing the kind. Sniffing it from the
-// string shape is what the retired contract did, and is why opaque webchat UIDs
-// were unreachable. On list it's optional — it only narrows.
-function requireChannel(optional) {
-  if (optional && channel === undefined) return;
-  if (!CHANNELS.includes(channel)) {
-    console.error(`--channel must be one of: ${CHANNELS.join(", ")}${optional ? " when supplied" : ""}`);
-    if (channel) console.error(`Got "${channel}". Note "sms"/"voice"/"whatsapp" all resolve as "phone".`);
-    process.exit(1);
-  }
-}
-
-if (mode === "find") {
-  requireStrings([["identifier", identifier]]);
-  requireChannel(false);
-} else if (mode === "inject") {
-  requireStrings([
-    ["agentId", agentId],
-    ["identityId", identityId],
-    ["event", event],
-  ]);
-} else {
-  requireChannel(true);
+} else if (channel !== undefined && !CHANNELS.includes(channel)) {
+  // Optional on list — it only narrows. Unlike the deleted find route, substring
+  // matching never needs the kind in order to match (ILIKE is case-insensitive
+  // on its own), so absence means "any kind".
+  console.error(`--channel must be one of: ${CHANNELS.join(", ")} when supplied`);
+  if (channel) console.error(`Got "${channel}". Note "sms"/"voice"/"whatsapp" all resolve as "phone".`);
+  process.exit(1);
 }
 
 // --- transport ---------------------------------------------------------------
@@ -203,7 +201,7 @@ async function post(path, body, token) {
     if (err?.code === "timeout" && path === "/v1/identity/list") {
       console.error("identity.list has no cap — a large account can exceed the window, and a timeout");
       console.error("returns NOTHING rather than a partial list.");
-      console.error("Raise --timeoutMs (up to 120000), or narrow with --match / --channel.");
+      console.error("Raise --timeoutMs (up to 120000), or narrow with --identifier / --channel.");
       console.error("Do NOT loop on this: the controller's query can't be cancelled, so it runs to");
       console.error("completion either way and a retry loop just stacks abandoned scans on it.");
     }
@@ -212,14 +210,14 @@ async function post(path, body, token) {
   return parsed.result;
 }
 
-function printIdentity(id, indent = "  ") {
+function printIdentity(id, marker = "") {
   const aliases = (id.aliases ?? []).map((a) => `${a.channel}:${a.value}`).join(", ");
-  console.log(`${indent}identityId:   ${id.identityId}`);
+  console.log(`  ${id.identityId}${marker}`);
   // aliases is the FULL set, never narrowed by the query — search by email and
-  // you still get their phone.
-  console.log(`${indent}aliases:      ${aliases || "(none)"}`);
-  console.log(`${indent}isTemp:       ${id.isTemp}   (false once a CRM hydration confirmed it)`);
-  console.log(`${indent}lastEngaged:  ${id.lastEngagedAt ?? "never"}   sessions: ${id.sessionCount}`);
+  // you still get their phone. It's also what you disambiguate on.
+  console.log(`    aliases:      ${aliases || "(none)"}`);
+  console.log(`    isTemp:       ${id.isTemp}   (false once a CRM hydration confirmed it)`);
+  console.log(`    lastEngaged:  ${id.lastEngagedAt ?? "never"}   sessions: ${id.sessionCount}`);
 }
 
 // --- bearer ------------------------------------------------------------------
@@ -245,76 +243,81 @@ if (!tokenRes.ok) {
 }
 const accessToken = tokenBody.access_token;
 
-// --- 1. identity.list --------------------------------------------------------
+// --- identity.list -----------------------------------------------------------
 
 if (mode === "list") {
-  const match = flags.match || undefined;
-  console.log(`\nPOST /v1/identity/list ${match ? `(match="${match}")` : "(no match — the WHOLE account)"} ...`);
+  console.log(
+    `\nPOST /v1/identity/list ${identifier ? `(identifier substring "${identifier}")` : "(no identifier — the WHOLE account)"} ...`,
+  );
   const result = await post(
     "/v1/identity/list",
     {
-      ...(match ? { match } : {}),
+      ...(identifier ? { identifier } : {}),
       ...(channel ? { channel } : {}),
-      // No default page size: omitting limit returns the whole account by
-      // design, and substituting one here would reintroduce the silent
-      // truncation the controller refused to ship.
+      // No default page size: omitting limit returns the whole account by design,
+      // and substituting one here would reintroduce the silent truncation the
+      // controller refused to ship.
       ...(flags.limit ? { limit: Number(flags.limit) } : {}),
       ...(flags.timeoutMs ? { timeoutMs: Number(flags.timeoutMs) } : {}),
     },
     accessToken,
   );
+
   const identities = result?.identities ?? [];
-  console.log(`\n${identities.length} identit${identities.length === 1 ? "y" : "ies"}:\n`);
-  for (const id of identities) {
-    printIdentity(id);
-    console.log("");
-  }
-  console.log("Inject against one with:");
-  console.log('  --inject --agentId=<agt> --identityId=<from above> --event="..."');
-  process.exit(0);
-}
 
-// --- 2. identity.find --------------------------------------------------------
-
-if (mode === "find") {
-  console.log(`\nPOST /v1/identity/find (${channel}: ${identifier}) ...`);
-  const result = await post("/v1/identity/find", { identifier, channel }, accessToken);
-
-  const identity = result?.identity ?? null;
-  if (!identity) {
-    // NOT a bug, and worth spelling out — the natural but wrong reading of null
-    // is "injection is broken for new customers".
-    console.log(`\nNo identity found for ${channel}: ${identifier}`);
+  if (identities.length === 0) {
+    // NOT a bug, and worth spelling out — the natural but wrong reading of an
+    // empty array is "injection is broken for new customers". This carries
+    // exactly the meaning the deleted find route's `identity: null` had.
+    console.log(`\nNo identity matched${identifier ? ` "${identifier}"` : ""}.`);
     console.log("\nThis is a normal answer, not a failure: the controller has never interacted");
     console.log("with this customer, so there is no conversation history to prepend a note to.");
     console.log("Lookup is deliberately read-only — it will not create one.");
-    // Most likely cause of an unexpected null: --list prints identityIds, so
-    // it's easy to feed one back in here. A hint, NOT validation — the
-    // identifier is deliberately opaque (a webchat-uid can be any string, and
-    // shape-sniffing the address is the retired contract's mistake). Safe to
-    // guess on a path that has already failed.
-    if (/^identity[_-]/i.test(identifier)) {
-      console.log("\nThat looks like an identityId. --identifier takes the ADDRESS the identity is");
-      console.log("known by, e.g. --identifier=+61401277115 --channel=phone. If you already hold");
-      console.log("the identityId, you don't need this call at all — go straight to --inject.");
+    if (identifier && /^identity[_-]/i.test(identifier)) {
+      console.log("\nThat looks like an identityId. --identifier matches ADDRESSES, not handles.");
+      console.log("If you already hold the identityId, skip this call and use --inject.");
       process.exit(3);
     }
     console.log("\nFor a never-contacted customer, put the fact in the outbound call's own");
     console.log("callContext instead, where it rides the call into hydration:");
     console.log(`  ../outbound-demo/run-outbound.sh --agentId=<agt> --channelId=<chn> \\`);
-    console.log(`    --to=${identifier} --action=place_call`);
-    console.log("\nIf you expected a hit, check for a typo — or run --list to see who is known.");
+    console.log(`    --to=${identifier || "<address>"} --action=place_call`);
+    console.log("\nIf you expected a hit, check for a typo — or drop --identifier to list everyone.");
     process.exit(3);
   }
 
-  console.log("");
-  printIdentity(identity);
-  console.log("\nInject against it with:");
-  console.log(`  --inject --agentId=<agt> --identityId=${identity.identityId} --event="..."`);
+  // THE disambiguation step. `identifier` is a substring, so a full address can
+  // pull in neighbours: "des@example.com" also matches "des@example.com.au".
+  // Comparing against each identity's full alias set is the only way to tell
+  // which row is the customer you meant — copy this, don't take identities[0].
+  const needle = identifier?.trim().toLowerCase();
+  const isExact = (id) => (id.aliases ?? []).some((a) => String(a.value).trim().toLowerCase() === needle);
+  const exact = needle ? identities.filter(isExact) : [];
+
+  console.log(`\n${identities.length} identit${identities.length === 1 ? "y" : "ies"}:\n`);
+  for (const id of identities) {
+    printIdentity(id, needle && isExact(id) ? "   <- exact alias match" : "");
+    console.log("");
+  }
+
+  if (needle && exact.length === 1) {
+    console.log("One exact alias match. Inject against it with:");
+    console.log(`  --inject --agentId=<agt> --identityId=${exact[0].identityId} --event="..."`);
+  } else if (needle && exact.length > 1) {
+    console.log(`${exact.length} identities carry that exact alias — they may be pending a merge.`);
+    console.log("Pick deliberately; don't assume the first is the right one.");
+  } else if (needle) {
+    console.log(`No alias equals "${identifier}" exactly — every row above is a SUBSTRING match.`);
+    console.log("Injecting against one of these would target a different customer. Check the");
+    console.log("aliases, or re-run with the full address.");
+  } else {
+    console.log("Inject against one with:");
+    console.log('  --inject --agentId=<agt> --identityId=<from above> --event="..."');
+  }
   process.exit(0);
 }
 
-// --- 3. memory.inject_context ------------------------------------------------
+// --- memory.inject_context ---------------------------------------------------
 
 console.log("\nPOST /v1/memory/events ...");
 console.log(`  agentId:    ${agentId}`);
@@ -342,12 +345,18 @@ const result = await post(
 
 console.log("\nSuccess:");
 console.log(JSON.stringify(result, null, 2));
-// expiresAt is the post-clamp truth. The controller's range policy is
-// asymmetric: above 86400s is clamped (its absolute-age sweeper flushes a
-// working row at 24h regardless of activity, so a longer promise would be a
-// lie), while 0, negative and fractional values are rejected outright.
+// expiresAt is the post-clamp truth. The controller's range policy is asymmetric:
+// above 86400s is clamped (its absolute-age sweeper flushes a working row at 24h
+// regardless of activity, so a longer promise would be a lie), while 0, negative
+// and fractional values are rejected outright.
 if (result?.expiresAt) {
   console.log(`\nThe note is live until ${result.expiresAt} (post-clamp).`);
-  console.log("Inject-then-outbound works regardless; inject-then-wait-for-inbound needs a TTL");
-  console.log("long enough to cover the gap — pass --ttlSeconds.");
+  console.log("It survives successive turns until then, so the agent may raise the fact more");
+  console.log("than once inside that window — keep --ttlSeconds tight if that matters.");
 }
+// stored: true means WRITTEN, not SPOKEN. If the agent never voices the fact it
+// leaves no trace at all: the note expires either way and no episode is
+// written, so the controller's own controller_action log line is the only record
+// the injection happened.
+console.log('\nNote: `stored: true` means written, not mentioned. If the agent never voices it,');
+console.log("no episodic trace is left — only the controller's audit line.");
