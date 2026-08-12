@@ -5,10 +5,14 @@
 // since Salesforce's own errorCode strings (MALFORMED_QUERY, DUPLICATE_VALUE,
 // REQUIRED_FIELD_MISSING, ...) are already descriptive.
 
-export interface ToolErrorResult {
-  isError: true;
-  content: Array<{ type: "text"; text: string }>;
-}
+import type { CallToolResult } from "@modelcontextprotocol/server";
+
+// Must stay typed against the SDK's own result type. A hand-rolled `interface
+// { isError: true; content: [...] }` lacks the index signature `registerTool`'s
+// handler-return type requires, and TS doesn't extend fresh-object-literal
+// leniency to a named interface — so it fails assignability at every call site
+// (TS2769). `import type` is erased: no runtime dep. Intersection keeps narrowing.
+export type ToolErrorResult = CallToolResult & { isError: true };
 
 interface SalesforceApiError {
   message: string;
