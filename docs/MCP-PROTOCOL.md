@@ -1397,7 +1397,7 @@ The asymmetry favors the migration: a fresh connector against an old controller 
 
 ## v1.4 — Controller API calls (Twilio-bundled only)
 
-> **Status: shipped.** The frame pair, coordinator, author gate, and both call surfaces (in-process SDK for Type 1, inspector loopback for Type 3) are live. `examples/demos/memory-event-demo/` is the reference caller for the in-process-SDK shape — a demo drop-in invoking `memory.append_event` (see [docs/MEMORY-EVENTS.md](MEMORY-EVENTS.md)); it's reference material like `examples/demos/{sample,crm,salesforce}`, not auto-loaded. No bundle shipped in `bundled-mcps/` by default calls it yet. `outbound.place_call` / `outbound.send_message` are reachable two ways: from a Twilio-bundled MCP's own tool via this same `callControllerApi` mechanism (no reference demo exercises this for `outbound.*` specifically today — `memory-event-demo` demonstrates the identical shape for a different action), or externally via the machine-API `POST /v1/outbound/calls` route (see [docs/OUTBOUND-CALLS.md](OUTBOUND-CALLS.md)), which `examples/demos/outbound-demo/` exercises.
+> **Status: shipped.** The frame pair, coordinator, author gate, and both call surfaces (in-process SDK for Type 1, inspector loopback for Type 3) are live. `examples/demos/memory-event-demo/` is the reference caller for the in-process-SDK shape — a demo drop-in invoking the three memory-injection actions (`identity.find`, `identity.list`, `memory.inject_context` — see [docs/MEMORY-EVENTS.md](MEMORY-EVENTS.md)); it's reference material like `examples/demos/{sample,crm,salesforce}`, not auto-loaded. No bundle shipped in `bundled-mcps/` by default calls it yet. `outbound.place_call` / `outbound.send_message` are reachable two ways: from a Twilio-bundled MCP's own tool via this same `callControllerApi` mechanism (no reference demo exercises this for `outbound.*` specifically today — `memory-event-demo` demonstrates the identical shape for a different action), or externally via the machine-API `POST /v1/outbound/calls` route (see [docs/OUTBOUND-CALLS.md](OUTBOUND-CALLS.md)), which `examples/demos/outbound-demo/` exercises.
 
 ### Why
 
@@ -1431,9 +1431,9 @@ export interface ControllerCallFrame {
 ```
 
 - `requestId` — connector-generated, echoed back verbatim on the reply. Correlates request to response; nothing else on the frame is needed for matching.
-- `mcp` — the calling bundle's `ServerDescriptor.name`. Identifies the caller for the controller's own authorization/audit trail — never trusted as an identity claim by itself (see Trust, above). One exception: calls originated by the machine API's `POST /v1/outbound/calls` route (see CLAUDE.md "Inspector UI notes" and `docs/OUTBOUND-CALLS.md` §7) have no bundle behind them at all — that route carries `machine-api:<clientId>` here instead, threading the caller's JWT `sub` claim through so the audit trail can still distinguish machine callers from each other. A future reader matching on `mcp` against the manifest's `ServerDescriptor.name` list should expect this one non-bundle value to appear.
+- `mcp` — the calling bundle's `ServerDescriptor.name`. Identifies the caller for the controller's own authorization/audit trail — never trusted as an identity claim by itself (see Trust, above). One exception: calls originated by the machine API's `POST /v1/outbound/calls`, `POST /v1/memory/events`, and `POST /v1/identity/{find,list}` routes (see CLAUDE.md "Inspector UI notes", `docs/OUTBOUND-CALLS.md` §7, and `docs/MEMORY-EVENTS.md` §9) have no bundle behind them at all — those routes carry `machine-api:<clientId>` here instead, threading the caller's JWT `sub` claim through so the audit trail can still distinguish machine callers from each other. A future reader matching on `mcp` against the manifest's `ServerDescriptor.name` list should expect this one non-bundle value to appear.
 - `mcpId` — present only when this MCP came from the controller-config (3rd-party) roster. In practice this is **empty on essentially every real `controller-call` frame today** — nothing that qualifies for `author === "twilio"` is roster-sourced (Twilio bundles are yaml/`bundled:`-installed, not controller-pushed). Kept for forward-compat only; don't build correlation logic that assumes it's present. `mcp` (name) plus the authenticated session is the real identity.
-- `action` — free-form, entirely controller-owned; the connector imposes no enum and treats it as an opaque string. Convention: `<family>.<verb>` (e.g. `outbound.place_call`, `memory.append_event`).
+- `action` — free-form, entirely controller-owned; the connector imposes no enum and treats it as an opaque string. Convention: `<family>.<verb>` (e.g. `outbound.place_call`, `identity.find`, `memory.inject_context`).
 - `params` — opaque to the connector; the controller owns validation against its own per-action schema.
 
 ### ControllerCallResponseFrame (controller → connector)
@@ -1458,13 +1458,13 @@ export interface ControllerCallResponseFrame {
 | `timeout` | Connector-side: no `controller-call-response` arrived within the timeout window. |
 | `unknown_action` | Controller doesn't recognize `action`. |
 | `not_authorized` | Controller's own re-check failed (e.g. its independent author/account-scope check) — should be rare since the connector gates before sending. |
-| `invalid_params` | `params` failed the action's own schema validation. Confirmed in use by `memory.append_event`. |
-| `cross_account` | `params` referenced a resource (e.g. a channel/identity) not owned by the account bound to this tunnel session. Confirmed in use by the `outbound.*` family — this is the account-scope gate (see Trust, above) surfacing as a typed error rather than a silent drop. |
+| `invalid_params` | `params` failed the action's own schema validation. Confirmed in use by the `identity.*` and `memory.inject_context` actions — their schemas are `.strict()`, so a stray key is rejected here rather than ignored. |
+| `cross_account` | `params` referenced a resource (e.g. a channel/identity/agent) not owned by the account bound to this tunnel session. Confirmed in use by the `outbound.*` family and by `memory.inject_context`, which gates BOTH its required `agentId` and its required `identityId` this way (and refuses a merged/dead identity handle the same way). Expect this code — not `invalid_params` — for a handle from the wrong account. This is the account-scope gate (see Trust, above) surfacing as a typed error rather than a silent drop. |
 | `controller_error` | The action's own execution failed. |
 
 ### Timeout
 
-Per-call, connector-side only, enforced entirely client-side — the wire frame carries no `timeoutMs` field because the controller doesn't need to know or act on it. Default 8s when the caller doesn't override. The calling bundle can request a longer ceiling via `callControllerApi(action, params, { timeoutMs })` — guidance is that action families known to run real work before answering (e.g. an LLM turn in the critical path, conventionally named `outbound.*`) should pass ~30s; simple/fast actions can rely on the 8s default. On timeout, the SDK caller gets a typed `{ code: "timeout" }` error rather than a hung customer-facing HTTP call. The coordinator never auto-retries — retry policy (if any) is the calling bundle's own decision, same as any other fallible tool dependency. Idempotency (a stable dedup key for actions with side effects, e.g. "place a call") is likewise entirely the bundle author's responsibility, carried inside `params` — the connector never inspects or generates one.
+Per-call, connector-side only, enforced entirely client-side — the wire frame carries no `timeoutMs` field because the controller doesn't need to know or act on it. Default 8s when the caller doesn't override. The calling bundle can request a longer ceiling via `callControllerApi(action, params, { timeoutMs })` — guidance is that action families known to run real work before answering (e.g. an LLM turn in the critical path, conventionally named `outbound.*`) should pass ~30s; simple/fast actions can rely on the 8s default. `identity.list` is a third case: not slow by nature, but **unbounded** — it has no server-side cap or cursor, so omitting `limit` returns the account's whole identity set, and the timeout is the only real constraint (the tunnel WS takes `ws`'s 100 MiB default `maxPayload`, so response size isn't). A timeout there returns nothing, not a partial list, so callers over large accounts should raise it. On timeout, the SDK caller gets a typed `{ code: "timeout" }` error rather than a hung customer-facing HTTP call. The coordinator never auto-retries — retry policy (if any) is the calling bundle's own decision, same as any other fallible tool dependency. Idempotency (a stable dedup key for actions with side effects, e.g. "place a call") is likewise entirely the bundle author's responsibility, carried inside `params` — the connector never inspects or generates one.
 
 ### Frame ordering rules (v1.4)
 
@@ -1481,15 +1481,27 @@ A pending call whose tunnel drops mid-flight is rejected immediately (not paused
 
 ### Examples (v1.4)
 
-Success:
+Success — memory injection is a **resolve-then-write** flow, so the common case is two round trips:
+
 ```json
-// →
-{ "type": "controller-call", "requestId": "3fbd...", "mcp": "agentic-memory", "action": "memory.append_event", "params": { "identity": { "channel": "sms", "value": "+15551234567" }, "event": "your flight is delayed" } }
+// → resolve the customer to an opaque handle
+{ "type": "controller-call", "requestId": "3fbd...", "mcp": "machine-api:client_abc", "action": "identity.find", "params": { "identifier": "+15551234567", "channel": "phone" } }
 // ←
-{ "type": "controller-call-response", "requestId": "3fbd...", "result": { "identityId": "id_789", "stored": true } }
+{ "type": "controller-call-response", "requestId": "3fbd...", "result": { "identity": { "identityId": "identity_9f2c1a04-7b3e-4d51-8a6f-2e0b9c4d7a13", "isTemp": false, "provider": "postgres", "externalRef": "identity_9f2c1a04-7b3e-4d51-8a6f-2e0b9c4d7a13", "aliases": [{ "channel": "phone", "value": "+15551234567" }], "lastEngagedAt": "2026-08-01T00:00:00Z", "sessionCount": 3 } } }
+
+// → write the fact against it
+{ "type": "controller-call", "requestId": "7a21...", "mcp": "machine-api:client_abc", "action": "memory.inject_context", "params": { "agentId": "agt_123", "identityId": "identity_9f2c1a04-7b3e-4d51-8a6f-2e0b9c4d7a13", "event": "your flight is delayed" } }
+// ←
+{ "type": "controller-call-response", "requestId": "7a21...", "result": { "stored": true, "expiresAt": "2026-08-12T10:10:00Z" } }
 ```
 
-Note `memory.append_event`'s `identity` is customer-scoped only — no `channelId`/`agentId` on this action's params, unlike the `outbound.*` family. Memory is cross-channel and cross-agent by design; there's no channel or agent to scope it to.
+Three things about this exchange are easy to get wrong:
+
+**`identity: null` is a successful result, not an error.** It means the controller has no record of that customer — a normal state, and the reason resolution was split out of the write at all. The write used to take the address and resolve it internally, but that resolve was find-or-**create**: a typo'd digit minted a phantom identity with a real working-memory row hanging off it, let an external caller grow the identity table at will, and failed *silently* — the mistyped write "succeeded" and nobody found out until the agent said nothing on the call. Lookup is now read-only. The correct handling of `null` is to place the outbound call with the fact in `callContext` instead, since there's no conversation history to prepend to.
+
+**`memory.inject_context` requires `agentId` — which reverses an earlier note here.** That note said the action carried no `agentId` "because memory is cross-channel and cross-agent by design." True of the *episodic* write this action originally performed (`identity_episodes` has no agent column); impossible for the working-memory write it performs now, which is keyed `(accountId, agentId, identityKey)`. Note the asymmetry: the write needs an `agentId`, the two `identity.*` actions do not — identity is per-account, not per-agent, so a customer can be well known to the account while never having used the agent being injected against.
+
+**Still no `channelId`, and no address of any kind on the write.** Working memory is wire-blind: one row serves voice and SMS for the same caller on the same agent, and a fact injected before an SMS is visible on a later voice call. `channel` appears only on `identity.find`, where it's REQUIRED and never derived (`phone` | `email` | `webchat-uid`) — the controller's normalisation is kind-aware, so an exact lookup is impossible without it, and being told the kind is exactly what makes opaque webchat UIDs reachable at all. Optional `ttlSeconds` on the write is **clamped** to 86400s rather than rejected; `expiresAt` on the result is the post-clamp truth. See [docs/MEMORY-EVENTS.md](MEMORY-EVENTS.md) §2–§3 for the params and the resolution split, and §6 for what `ttlSeconds` actually governs.
 
 Controller-side failure:
 ```json
@@ -1516,7 +1528,7 @@ Carried forward verbatim from the connector-side design review — these are loc
 
 1. **Transport**: dedicated `controller-call` / `controller-call-response` pair, not a reverse `rpc`.
 2. **Error shape**: `{ code, message }`; codes are controller-owned and passed through opaquely except the connector's own `timeout`.
-3. **Action naming**: `<family>.<verb>` (`outbound.place_call`, `memory.append_event`), controller-owned namespace — the connector treats `action` as an opaque string.
+3. **Action naming**: `<family>.<verb>` (`outbound.place_call`, `memory.inject_context`), controller-owned namespace — the connector treats `action` as an opaque string.
 4. **Scope**: Twilio-authored bundles only (`author === "twilio"`). Customer drop-ins get no access in this iteration — a possible future extension, not part of this version.
 5. **Two independent, mandatory gates**: connector-side code-trust (`isAuthorTwilio`) + controller-side account-scope (derived from the authenticated session, never from frame fields). Neither substitutes for the other.
 6. **Timeout**: per-call, connector-side only, default 8s, overridable by the calling bundle. Not carried on the wire frame — the controller doesn't need to know it.

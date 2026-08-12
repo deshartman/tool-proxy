@@ -47,14 +47,14 @@ describe("ControllerApiCoordinator", () => {
 
   it("resolves with the response's result when a matching controller-call-response arrives", async () => {
     const { coordinator, sent } = buildCoordinator();
-    const promise = coordinator.call("agentic-memory", undefined, "memory.append_event", { customerId: "CU123" });
+    const promise = coordinator.call("agentic-memory", undefined, "memory.inject_context", { customerId: "CU123" });
 
     expect(sent).toHaveLength(1);
     const frame = sent[0] as { type: string; requestId: string; mcp: string; mcpId?: string; action: string; params: unknown };
     expect(frame.type).toBe("controller-call");
     expect(frame.mcp).toBe("agentic-memory");
     expect(frame.mcpId).toBeUndefined();
-    expect(frame.action).toBe("memory.append_event");
+    expect(frame.action).toBe("memory.inject_context");
     expect(frame.params).toEqual({ customerId: "CU123" });
 
     const response: ControllerCallResponseFrame = {
@@ -81,17 +81,17 @@ describe("ControllerApiCoordinator", () => {
 
   it("rejects with the response's error when the controller reports a failure", async () => {
     const { coordinator, sent } = buildCoordinator();
-    const promise = coordinator.call("agentic-memory", undefined, "memory.append_event", {});
+    const promise = coordinator.call("agentic-memory", undefined, "memory.inject_context", {});
     const requestId = (sent[0] as { requestId: string }).requestId;
 
     coordinator.handleResponse({
       type: "controller-call-response",
       requestId,
-      error: { code: "unknown_action", message: "no handler registered for memory.append_event" },
+      error: { code: "unknown_action", message: "no handler registered for memory.inject_context" },
     });
 
     await expect(promise).rejects.toMatchObject({
-      message: "no handler registered for memory.append_event",
+      message: "no handler registered for memory.inject_context",
       code: "unknown_action",
     });
     expect(unhandledRejections).toEqual([]);
@@ -114,7 +114,7 @@ describe("ControllerApiCoordinator", () => {
 
   it("rejects every pending call on tunnel close instead of leaving them to time out", async () => {
     const { coordinator } = buildCoordinator({ timeoutMs: 5000 });
-    const p1 = coordinator.call("agentic-memory", undefined, "memory.append_event", {});
+    const p1 = coordinator.call("agentic-memory", undefined, "memory.inject_context", {});
     const p2 = coordinator.call("agentic-memory", undefined, "outbound.place_call", {});
 
     coordinator.onTunnelClose();

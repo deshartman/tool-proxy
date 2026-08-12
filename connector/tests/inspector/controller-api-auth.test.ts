@@ -98,7 +98,7 @@ describe("Controller API call auth gate (v1.4)", () => {
     const res = await fetch(`http://127.0.0.1:${port}/internal/controller-api/call`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "memory.append_event", params: {} }),
+      body: JSON.stringify({ action: "memory.inject_context", params: {} }),
     });
     expect(res.status).toBe(403);
     const body = await res.json();
@@ -110,7 +110,7 @@ describe("Controller API call auth gate (v1.4)", () => {
     const res = await fetch(`http://127.0.0.1:${port}/internal/controller-api/call`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${customerToken}` },
-      body: JSON.stringify({ action: "memory.append_event", params: {} }),
+      body: JSON.stringify({ action: "memory.inject_context", params: {} }),
     });
     expect(res.status).toBe(403);
     const body = await res.json();
@@ -122,12 +122,12 @@ describe("Controller API call auth gate (v1.4)", () => {
     const res = await fetch(`http://127.0.0.1:${port}/internal/controller-api/call`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${twilioToken}` },
-      body: JSON.stringify({ action: "memory.append_event", params: { customerId: "CU123" } }),
+      body: JSON.stringify({ action: "memory.inject_context", params: { customerId: "CU123" } }),
     });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.result).toEqual({ eventId: "evt_789" });
-    expect(coordinatorCall).toHaveBeenCalledWith("agentic-memory", "memory.append_event", { customerId: "CU123" });
+    expect(coordinatorCall).toHaveBeenCalledWith("agentic-memory", "memory.inject_context", { customerId: "CU123" });
   });
 
   it("a tunnel_unavailable failure from the coordinator surfaces as 503, other failures as 502", async () => {
@@ -135,7 +135,7 @@ describe("Controller API call auth gate (v1.4)", () => {
     const unavailable = await fetch(`http://127.0.0.1:${port}/internal/controller-api/call`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${twilioToken}` },
-      body: JSON.stringify({ action: "memory.append_event", params: {} }),
+      body: JSON.stringify({ action: "memory.inject_context", params: {} }),
     });
     expect(unavailable.status).toBe(503);
     expect((await unavailable.json()).error.code).toBe("tunnel_unavailable");
@@ -144,7 +144,7 @@ describe("Controller API call auth gate (v1.4)", () => {
     const failed = await fetch(`http://127.0.0.1:${port}/internal/controller-api/call`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${twilioToken}` },
-      body: JSON.stringify({ action: "memory.append_event", params: {} }),
+      body: JSON.stringify({ action: "memory.inject_context", params: {} }),
     });
     expect(failed.status).toBe(502);
     expect((await failed.json()).error.code).toBe("timeout");

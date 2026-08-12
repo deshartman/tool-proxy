@@ -16,6 +16,16 @@ import type { ControllerApiCoordinator } from "../../src/tunnel/controller-api-c
 // outbound-calls-route.test.ts and tests/auth/federated-jwt.test.ts. This file
 // covers what's specific to this route: its body validation, its refusal to
 // mint an idempotencyKey, and its lack of a timeout override.
+//
+// Wire contract per the controller's memory.inject_context (see
+// architectural-plans/MEMORY-INJECTION-CONTRACT-CHANGE.md): the write targets
+// WORKING memory, keyed (accountId, agentId, identityKey), so agentId is
+// required. It takes an OPAQUE identityId resolved beforehand via
+// POST /v1/identity/find — never an address. Two earlier shapes are retired and
+// both are pinned as rejected below: a nested identity: { channel, value } pair,
+// and a flat `customer` string. There is no memory-tier selector — the `type`
+// field was cancelled outright, and the controller's schema is .strict(), so
+// this route mirrors that strictness rather than silently dropping stray keys.
 
 describe("POST /v1/memory/events", () => {
   let server: Server;
@@ -55,7 +65,13 @@ describe("POST /v1/memory/events", () => {
     });
   }
 
-  const validBody = { identity: { channel: "sms", value: "+15555550123" }, event: "your flight is delayed" };
+  const validBody = {
+    agentId: "agt_1",
+    identityId: "idn_123",
+    event: "your flight is delayed",
+  };
+
+  const ok = { stored: true, expiresAt: "2026-08-12T10:10:00Z" };
 
   it("no Authorization header → 401, coordinator never called", async () => {
     const res = await post(validBody);
@@ -87,22 +103,30 @@ describe("POST /v1/memory/events", () => {
 
   // Body validation — presence + type only. Each case must 400 BEFORE the
   // coordinator is touched.
+  const core = { agentId: "agt_1", identityId: "idn_123", event: "e" };
   const badBodies: Array<[string, unknown]> = [
-    ["missing identity", { event: "e" }],
-    ["identity not an object", { identity: "sms:+1555", event: "e" }],
-    ["identity.channel non-string", { identity: { channel: 7, value: "+1555" }, event: "e" }],
-    ["identity.channel empty string", { identity: { channel: "", value: "+1555" }, event: "e" }],
-    ["identity.channel whitespace only", { identity: { channel: "   ", value: "+1555" }, event: "e" }],
-    ["identity.value missing", { identity: { channel: "sms" }, event: "e" }],
-    ["identity.value empty string", { identity: { channel: "sms", value: "" }, event: "e" }],
-    ["missing event", { identity: { channel: "sms", value: "+1555" } }],
-    ["event empty string", { identity: { channel: "sms", value: "+1555" }, event: "" }],
-    ["event whitespace only", { identity: { channel: "sms", value: "+1555" }, event: "  " }],
-    ["occurredAt non-string", { ...{ identity: { channel: "sms", value: "+1555" }, event: "e" }, occurredAt: 12345 }],
-    ["idempotencyKey non-string", { ...{ identity: { channel: "sms", value: "+1555" }, event: "e" }, idempotencyKey: 99 }],
-    ["type not a known memory store", { ...{ identity: { channel: "sms", value: "+1555" }, event: "e" }, type: "procedural" }],
-    ["type misspelled", { ...{ identity: { channel: "sms", value: "+1555" }, event: "e" }, type: "semmantic" }],
-    ["type non-string", { ...{ identity: { channel: "sms", value: "+1555" }, event: "e" }, type: 3 }],
+    ["missing agentId", { identityId: core.identityId, event: "e" }],
+    ["agentId non-string", { ...core, agentId: 7 }],
+    ["agentId empty string", { ...core, agentId: "" }],
+    ["agentId whitespace only", { ...core, agentId: "   " }],
+    ["missing identityId", { agentId: "agt_1", event: "e" }],
+    ["identityId non-string", { ...core, identityId: 123 }],
+    ["identityId empty string", { ...core, identityId: "" }],
+    ["identityId whitespace only", { ...core, identityId: "   " }],
+    ["missing event", { agentId: "agt_1", identityId: core.identityId }],
+    ["event empty string", { ...core, event: "" }],
+    ["event whitespace only", { ...core, event: "  " }],
+    ["occurredAt non-string", { ...core, occurredAt: 12345 }],
+    ["ttlSeconds non-number", { ...core, ttlSeconds: "600" }],
+    ["idempotencyKey non-string", { ...core, idempotencyKey: 99 }],
+    // Stray keys are rejected, not silently dropped — the controller's schema is
+    // .strict() for the same reason. Each of these was considered and refused
+    // for this action, and a caller still sending one should be told rather than
+    // handed a 200 that ignored it.
+    ["cancelled type field", { ...core, type: "working" }],
+    ["channelId, which this action never takes", { ...core, channelId: "chn_1" }],
+    ["retired identity pair", { ...core, identity: { channel: "sms", value: "+15555550123" } }],
+    ["a typo'd field name", { ...core, evnet: "oops" }],
   ];
 
   it.each(badBodies)("%s → 400 bad_request, coordinator never called", async (_label, body) => {
@@ -112,52 +136,37 @@ describe("POST /v1/memory/events", () => {
     expect(coordinatorCall).not.toHaveBeenCalled();
   });
 
-  // The inverse of the cases above, and the one that pins the
-  // single-source-of-truth decision: the 9-value IDENTITY_CHANNEL_KINDS enum
-  // lives on the CONTROLLER. A well-formed body with a nonsense channel must
-  // pass this route's gate and reach the tunnel, where the controller answers
-  // invalid_params. If this test ever fails, someone copied the enum into the
-  // connector and created a second copy to keep in sync.
-  it("unknown identity.channel is NOT rejected locally — it reaches the coordinator", async () => {
-    coordinatorCall.mockResolvedValueOnce({ identityId: "id_1", stored: true });
-    const body = { identity: { channel: "telepathy", value: "brainwave-7" }, event: "a fact" };
+  // THE regression guard for the 2026-08-12 contract change. This route used to
+  // take an address and let the controller resolve it, and that resolve was
+  // find-or-CREATE — so a typo minted a phantom identity, silently. Address
+  // input is gone; a caller still on the old contract must be told, loudly,
+  // rather than have `customer` dropped and the write attempted without it.
+  it.each([
+    ["retired flat customer string", { ...core, customer: "+15555550123" }],
+    ["customer INSTEAD of identityId", { agentId: "agt_1", customer: "+15555550123", event: "e" }],
+    ["customer as an email", { ...core, customer: "someone@example.com" }],
+  ])("%s → 400, never forwarded", async (_label, body) => {
     const res = await post(body, { authorization: `Bearer ${validToken()}` });
-    expect(res.status).toBe(200);
-    expect(coordinatorCall).toHaveBeenCalledTimes(1);
-    expect(coordinatorCall.mock.calls[0][3].identity).toEqual({ channel: "telepathy", value: "brainwave-7" });
+    expect(res.status).toBe(400);
+    const { error } = await res.json();
+    expect(error.code).toBe("bad_request");
+    expect(coordinatorCall).not.toHaveBeenCalled();
   });
 
-  // Memory types. Unlike identity.channel, `type` IS enumerated
-  // connector-side — a bad channel fails loudly downstream (identity won't
-  // resolve, nothing is written) while a bad type could write into the wrong
-  // store and be noticed only when a recall comes back missing the fact. The
-  // 400 cases above pin the enum; these pin the accepted values and the
-  // omitted-by-default behavior.
-  describe("memory types", () => {
-    it.each(["episodic", "semantic", "working"])("type=%s forwards verbatim", async (type) => {
-      coordinatorCall.mockResolvedValueOnce({ identityId: "idn_1", stored: true });
-      const res = await post({ ...validBody, type }, { authorization: `Bearer ${validToken()}` });
+  // The inverse: identityId is an OPAQUE controller handle, so this route must
+  // not pattern-check it. If the controller's id format changes, valid handles
+  // must keep flowing. A value that happens to look like a phone number is not
+  // special-cased either — it's just a (wrong) id, and the controller answers.
+  it.each(["idn_123", "01J8ZQ7YB4", "+15555550123", "someone@example.com", "any-opaque-string"])(
+    "identityId=%s is forwarded verbatim, never shape-checked",
+    async (identityId) => {
+      coordinatorCall.mockResolvedValueOnce(ok);
+      const res = await post({ ...validBody, identityId }, { authorization: `Bearer ${validToken()}` });
       expect(res.status).toBe(200);
-      expect(coordinatorCall.mock.calls[0][3].type).toBe(type);
-    });
-
-    // Back-compat with a controller that predates memory-type support: the
-    // default case must send the exact params it always did, with no `type`
-    // key at all — not `type: undefined`, and not a connector-side
-    // "episodic" default. If this fails, an older controller with a strict
-    // params schema starts rejecting every default-path call.
-    it("omitted type is absent from the forwarded params, not defaulted to episodic", async () => {
-      coordinatorCall.mockResolvedValueOnce({ identityId: "idn_1", stored: true });
-      await post(validBody, { authorization: `Bearer ${validToken()}` });
-      expect(Object.hasOwn(coordinatorCall.mock.calls[0][3], "type")).toBe(false);
-    });
-
-    it("the action is the same single wire action regardless of type", async () => {
-      coordinatorCall.mockResolvedValueOnce({ identityId: "idn_1", stored: true });
-      await post({ ...validBody, type: "semantic" }, { authorization: `Bearer ${validToken()}` });
-      expect(coordinatorCall.mock.calls[0][2]).toBe("memory.append_event");
-    });
-  });
+      expect(coordinatorCall).toHaveBeenCalledTimes(1);
+      expect(coordinatorCall.mock.calls[0][3].identityId).toBe(identityId);
+    },
+  );
 
   it("valid bearer, no live tunnel → 503 tunnel_unavailable", async () => {
     coordinator = undefined;
@@ -168,44 +177,91 @@ describe("POST /v1/memory/events", () => {
   });
 
   it("valid bearer + coordinator resolves → 200 with the controller result", async () => {
-    coordinatorCall.mockResolvedValueOnce({ identityId: "idn_123", stored: true });
+    coordinatorCall.mockResolvedValueOnce(ok);
     const res = await post(validBody, { authorization: `Bearer ${validToken("client_abc")}` });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ result: { identityId: "idn_123", stored: true } });
+    // The result no longer echoes identityId — the caller supplied it. expiresAt
+    // replaces it, because a clamped ttlSeconds has to be visible.
+    expect(await res.json()).toEqual({ result: ok });
     const [mcp, mcpId, action, params] = coordinatorCall.mock.calls[0];
     expect(mcp).toBe("machine-api:client_abc");
     expect(mcpId).toBeUndefined();
-    expect(action).toBe("memory.append_event");
-    expect(params).toEqual({ identity: { channel: "sms", value: "+15555550123" }, event: "your flight is delayed" });
+    expect(action).toBe("memory.inject_context");
+    expect(params).toEqual({ agentId: "agt_1", identityId: "idn_123", event: "your flight is delayed" });
   });
 
-  // Delta #2 — unlike /v1/outbound/calls, this route NEVER mints an
-  // idempotencyKey. The controller doesn't dedup memory writes in v1 and a
-  // duplicate fact is low-harm, so an absent key stays absent on the wire.
-  it("omitted idempotencyKey is absent from the forwarded params, not minted", async () => {
-    coordinatorCall.mockResolvedValueOnce({ identityId: "idn_1", stored: true });
+  // Unlike /v1/outbound/calls, this route NEVER mints an idempotencyKey. The
+  // controller doesn't dedup memory writes in v1 and a duplicate fact is
+  // low-harm, so an absent key stays absent on the wire.
+  it("omitted optional fields are absent from the forwarded params, not minted or nulled", async () => {
+    coordinatorCall.mockResolvedValueOnce(ok);
     await post(validBody, { authorization: `Bearer ${validToken()}` });
     const params = coordinatorCall.mock.calls[0][3];
     expect(Object.hasOwn(params, "idempotencyKey")).toBe(false);
     expect(Object.hasOwn(params, "occurredAt")).toBe(false);
+    // Omitting ttlSeconds is how a caller asks for the controller's 600s
+    // default, which equals its quietFlushMs — i.e. the pre-TTL behavior.
+    expect(Object.hasOwn(params, "ttlSeconds")).toBe(false);
   });
 
-  it("caller-supplied idempotencyKey and occurredAt pass through verbatim", async () => {
-    coordinatorCall.mockResolvedValueOnce({ identityId: "idn_1", stored: true });
+  it("caller-supplied idempotencyKey, occurredAt and ttlSeconds pass through verbatim", async () => {
+    coordinatorCall.mockResolvedValueOnce(ok);
     await post(
-      { ...validBody, idempotencyKey: "k-123", occurredAt: "2026-08-11T10:00:00Z" },
+      { ...validBody, idempotencyKey: "k-123", occurredAt: "2026-08-12T10:00:00Z", ttlSeconds: 3600 },
       { authorization: `Bearer ${validToken()}` },
     );
     const params = coordinatorCall.mock.calls[0][3];
     expect(params.idempotencyKey).toBe("k-123");
-    expect(params.occurredAt).toBe("2026-08-11T10:00:00Z");
+    expect(params.occurredAt).toBe("2026-08-12T10:00:00Z");
+    expect(params.ttlSeconds).toBe(3600);
   });
 
-  // Delta #3 — no explicit timeout: memory.append_event is a fast
-  // identity-resolve + episodic write, so it inherits the coordinator's 8s
-  // default instead of outbound.*'s 30s LLM-turn ceiling.
+  // ttlSeconds is guarded on `!== undefined`, NOT truthiness, and that
+  // distinction is load-bearing: the controller REJECTS 0 with invalid_params.
+  // A truthiness guard would drop the 0 and silently substitute the 600s
+  // default, so the caller would never learn they asked for something invalid.
+  it("ttlSeconds: 0 is forwarded, not dropped as falsy — the controller rejects it, and the caller must find out", async () => {
+    coordinatorCall.mockResolvedValueOnce(ok);
+    await post({ ...validBody, ttlSeconds: 0 }, { authorization: `Bearer ${validToken()}` });
+    const params = coordinatorCall.mock.calls[0][3];
+    expect(Object.hasOwn(params, "ttlSeconds")).toBe(true);
+    expect(params.ttlSeconds).toBe(0);
+  });
+
+  // Range is entirely the controller's rule, and it's ASYMMETRIC: above 86400
+  // is clamped (200 + a corrected expiresAt), while 0 / negative / fractional
+  // are rejected with invalid_params. This route forwards all of them unchanged
+  // and predicts neither outcome — duplicating the rule would 400 values the
+  // controller would have clamped, and give a second copy to drift.
+  //
+  // So this test asserts FORWARDING, not acceptance. A 200 here is the mocked
+  // coordinator answering, not a claim that the controller accepts the value.
+  it.each([
+    [86_401, "clamped controller-side"],
+    [999_999, "clamped controller-side"],
+    [-5, "rejected controller-side as invalid_params"],
+    [0.5, "rejected controller-side as invalid_params"],
+  ])("ttlSeconds=%s is forwarded verbatim (%s), never range-checked locally", async (ttlSeconds) => {
+    coordinatorCall.mockResolvedValueOnce(ok);
+    const res = await post({ ...validBody, ttlSeconds }, { authorization: `Bearer ${validToken()}` });
+    expect(res.status).toBe(200);
+    expect(coordinatorCall.mock.calls[0][3].ttlSeconds).toBe(ttlSeconds);
+  });
+
+  // ... and when the controller does reject one, the connector passes the code
+  // straight through rather than reinterpreting it.
+  it("an out-of-range ttlSeconds rejected by the controller surfaces as 502 invalid_params", async () => {
+    coordinatorCall.mockRejectedValueOnce(Object.assign(new Error("ttlSeconds must be a positive integer"), { code: "invalid_params" }));
+    const res = await post({ ...validBody, ttlSeconds: 0 }, { authorization: `Bearer ${validToken()}` });
+    expect(res.status).toBe(502);
+    expect((await res.json()).error.code).toBe("invalid_params");
+  });
+
+  // memory.inject_context is a fast identity-resolve plus row write with no LLM
+  // turn, so it inherits the coordinator's 8s default instead of
+  // outbound.*'s 30s LLM-turn ceiling.
   it("passes no timeoutMs override — inherits the coordinator default", async () => {
-    coordinatorCall.mockResolvedValueOnce({ identityId: "idn_1", stored: true });
+    coordinatorCall.mockResolvedValueOnce(ok);
     await post(validBody, { authorization: `Bearer ${validToken()}` });
     expect(coordinatorCall.mock.calls[0][4]).toBeUndefined();
   });
@@ -218,10 +274,20 @@ describe("POST /v1/memory/events", () => {
   });
 
   it("an invalid_params rejection from the controller surfaces as 502 passthrough", async () => {
-    coordinatorCall.mockRejectedValueOnce(Object.assign(new Error("unknown channel"), { code: "invalid_params" }));
+    coordinatorCall.mockRejectedValueOnce(Object.assign(new Error("bad params"), { code: "invalid_params" }));
     const res = await post(validBody, { authorization: `Bearer ${validToken()}` });
     expect(res.status).toBe(502);
     expect((await res.json()).error.code).toBe("invalid_params");
+  });
+
+  // Both agentId and identityId are checked against the tunnel session's
+  // account, and a merged (dead) identity handle is refused the same way — so
+  // cross_account is the expected code for a foreign id, NOT invalid_params.
+  it("a cross_account rejection surfaces as 502 passthrough", async () => {
+    coordinatorCall.mockRejectedValueOnce(Object.assign(new Error("agent not in account"), { code: "cross_account" }));
+    const res = await post(validBody, { authorization: `Bearer ${validToken()}` });
+    expect(res.status).toBe(502);
+    expect((await res.json()).error.code).toBe("cross_account");
   });
 
   it("a tunnel_unavailable rejection from the coordinator itself (raced tunnel close) surfaces as 503", async () => {

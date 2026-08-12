@@ -233,6 +233,21 @@ export class Inspector {
     this.memoryEventsHandler = handler;
   }
 
+  // MEMORY-INJECTION — POST /v1/identity/find + /v1/identity/list, the resolve
+  // half of memory injection's resolve-then-write flow (memoryEventsHandler
+  // above is the write half). Wired as a pair because neither is useful alone
+  // and both share one deps object; same optional-until-wired convention.
+  identityFindHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  identityListHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+
+  wireIdentityRoutes(handlers: {
+    handleFind: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+    handleList: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  }): void {
+    this.identityFindHandler = handlers.handleFind;
+    this.identityListHandler = handlers.handleList;
+  }
+
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
   private readonly frames: FrameTap[] = []
   private readonly current: InspectorState;
@@ -946,13 +961,21 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
 // things a non-loopback caller can ever reach are the machine API's
 // /oauth/token (self-authenticated via client_id/client_secret in the
 // body) and the JWT-bearer-gated /v1/* routes (/v1/outbound/calls, see
-// outbound-calls-route.ts; /v1/memory/events, see memory-events-route.ts)
-// — all of which do their own auth check inline, mirroring how
-// authorizeWebhookMcp() works today.
+// outbound-calls-route.ts; /v1/memory/events, see memory-events-route.ts;
+// /v1/identity/{find,list}, see identity-routes.ts) — all of which do
+// their own auth check inline, mirroring how authorizeWebhookMcp() works
+// today.
+//
+// /v1/identity/list is the first entry here that returns bulk customer PII
+// rather than performing one targeted action; see identity-routes.ts's
+// header for why that's an accepted widening and what it means for the
+// blast radius of a leaked bearer.
 const NON_LOOPBACK_ALLOWED_PATHS = new Set([
   "/oauth/token",
   "/v1/outbound/calls",
   "/v1/memory/events",
+  "/v1/identity/find",
+  "/v1/identity/list",
 ]);
 
 // One check point for the whole dispatch table. Loopback callers pass
@@ -1112,6 +1135,14 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     }
     if (path === "/v1/memory/events" && req.method === "POST") {
       if (inspector.memoryEventsHandler) { void inspector.memoryEventsHandler(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/v1/identity/find" && req.method === "POST") {
+      if (inspector.identityFindHandler) { void inspector.identityFindHandler(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/v1/identity/list" && req.method === "POST") {
+      if (inspector.identityListHandler) { void inspector.identityListHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
 

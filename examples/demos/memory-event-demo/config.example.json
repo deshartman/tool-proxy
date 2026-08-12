@@ -1,5 +1,3 @@
 {
-  "channel": "sms",
-  "value": "+15555550123",
-  "event": "your flight is delayed"
+  "agentId": "REPLACE_WITH_REAL_AGENT_ID"
 }

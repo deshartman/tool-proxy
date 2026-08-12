@@ -1,7 +1,7 @@
 // MEMORY-INJECTION — POST /v1/memory/events. The machine-API sibling of
 // POST /v1/outbound/calls (outbound-calls-route.ts): same JWT bearer gate,
 // same ControllerApiCoordinator dependency, same machine-api:<clientId>
-// audit identity, different controller action (memory.append_event). Closes
+// audit identity, different controller action (memory.inject_context). Closes
 // the asymmetry where an enterprise system could trigger a real outbound
 // call with nothing but a bearer token but could not inject a memory fact
 // the same way — see docs/MEMORY-EVENTS.md.
@@ -11,15 +11,32 @@
 //   2. idempotencyKey is pass-through only, never minted. A memory write is
 //      low-harm and the controller does not dedup in v1 (docs/MEMORY-EVENTS.md
 //      §"Idempotency"), unlike dialing/texting twice.
-//   3. No timeout override — memory.append_event is a fast identity-resolve
-//      plus memory write, so it inherits the coordinator's 8s default rather
-//      than outbound.*'s explicit 30s LLM-turn ceiling.
+//   3. No timeout override — memory.inject_context is a fast identity-resolve
+//      plus row write with no LLM turn, so it inherits the coordinator's 8s
+//      default rather than outbound.*'s explicit 30s LLM-turn ceiling.
 //
-// The optional `type` field selects which memory store the fact lands in
-// (episodic / semantic / working). It is forwarded only when the caller asks
-// for one — see the note in validateMemoryEventBody for why it isn't defaulted
-// connector-side. REQUIRES controller-side support for anything but the
-// default; see docs/MEMORY-EVENTS.md §"Memory types".
+// The write lands in the agent's WORKING memory, which is keyed
+// (accountId, agentId, identityKey) — hence `agentId` is required alongside
+// `identityId`. There is no memory-tier selector: working is the only tier this
+// action writes (episodic rows are authored by the controller's summariser at
+// flush time, not hand-written; the semantic tier was retired controller-side).
+// A `type` field existed briefly here and was cancelled outright, not deferred.
+//
+// THIS ROUTE DOES NOT ACCEPT AN ADDRESS. `identityId` is an opaque controller
+// handle obtained from POST /v1/identity/find (identity-routes.ts) — injection
+// is the second half of a resolve-then-write flow. Two earlier shapes are both
+// retired: a nested `identity: { channel, value }` pair, then a flat `customer`
+// string the controller resolved internally. That internal resolve was
+// find-or-CREATE, so a typo'd digit minted a phantom identity with a real
+// working-memory row hanging off it, let an external caller grow the identity
+// table at will, and failed silently — the mistyped write "succeeded" and
+// nobody learned otherwise until the agent said nothing on the call. Splitting
+// resolution out makes lookup read-only and an unknown customer a `null` answer
+// up front. Do NOT reintroduce address-shaped input here as a convenience.
+//
+// Still no `channelId`: working memory is wire-blind, one row per
+// (agent, identity) regardless of channel, so a fact injected before an SMS is
+// visible on a later voice call for free.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BodyTooLargeError, readJsonBody } from "./read-body.js";
@@ -39,29 +56,14 @@ export interface MemoryEventsRouteDeps {
   getCoordinator: () => ControllerApiCoordinator | undefined;
 }
 
-const WIRE_ACTION = "memory.append_event";
-
-// The three memory stores a caller can target. Unlike identity.channel (whose
-// 9-value enum stays the controller's single source of truth — see
-// validateMemoryEventBody), this one IS enumerated connector-side, and the
-// asymmetry is deliberate:
-//
-//   - A bad `channel` fails LOUDLY downstream — the identity simply won't
-//     resolve, and the controller answers invalid_params. Nothing is written.
-//   - A bad `type` could fail QUIETLY — the write still happens, just into the
-//     wrong store (or whatever the controller defaults to), and nobody notices
-//     until a recall comes back missing the fact. A local 400 is strictly
-//     better than a silently mis-routed write.
-//
-// Cost of enumerating: a fourth memory type needs a connector release. That's
-// the accepted trade for catching a typo'd store name before it writes.
-const MEMORY_TYPES = ["episodic", "semantic", "working"] as const;
+const WIRE_ACTION = "memory.inject_context";
 
 interface MemoryEventsBody {
-  identity?: unknown;
-  type?: unknown;
+  agentId?: unknown;
+  identityId?: unknown;
   event?: unknown;
   occurredAt?: unknown;
+  ttlSeconds?: unknown;
   idempotencyKey?: unknown;
 }
 
@@ -92,13 +94,13 @@ async function authenticate(
   return verified.claims.sub;
 }
 
-// Presence + type validation only — deliberately NOT the 9-value channel
-// enum. `IDENTITY_CHANNEL_KINDS` is the controller's single source of truth;
-// duplicating it here would create a second copy to keep in sync, so an
-// unknown channel surfaces as the controller's `invalid_params` rather than a
-// connector-side `bad_request`. Same thin-connector precedent as
-// outbound-calls-route.ts's validateBody, which checks to/agentId/channelId
-// for presence only and never their semantics.
+// Presence + type validation only. `identityId` and `agentId` are checked for
+// being non-empty strings and nothing more — whether either resolves, and
+// whether both belong to this tunnel session's account, is the controller's
+// call (it answers `cross_account`, not `invalid_params`, for a foreign or
+// merged handle). Same thin-connector precedent as outbound-calls-route.ts's
+// validateBody, which checks to/agentId/channelId for presence only and never
+// their semantics.
 //
 // Returns the coordinator call's action + params on success. On a bad body it
 // writes the 400 itself and returns undefined — same signal shape as the
@@ -107,13 +109,18 @@ async function authenticate(
 // Two shape decisions worth knowing before editing:
 //   - Strings are trimmed, and the TRIMMED value is what's forwarded. Checking
 //     one value and sending another would be the worse of the two options, and
-//     edge whitespace isn't meaningful in a channel address or a stored fact.
+//     edge whitespace isn't meaningful in an opaque id or in a fact.
 //     ("stored verbatim" in the contract is about not summarizing/rewriting the
 //     fact, not about preserving padding.)
 //   - `params` is built field by field rather than spread from the body, so a
-//     caller's typo'd or unknown field is dropped here instead of reaching the
-//     controller. The cost is that a future controller-side param needs a
-//     connector change; that's the intended trade for a validated surface.
+//     caller's typo'd or unknown field never reaches the controller. The cost is
+//     that a future controller-side param needs a connector change; that's the
+//     intended trade for a validated surface. Because of that, unknown top-level
+//     keys are REJECTED here rather than silently dropped — the controller's own
+//     schema is `.strict()` for the same reason, and silently swallowing a key
+//     the caller believes is doing something is the failure mode both sides are
+//     trying to avoid. Concretely: a caller still sending the cancelled `type`
+//     field gets told so, instead of a 200 that ignored it.
 // Optional fields follow the repo-wide "empty string == not set" convention
 // (see src/env.ts) and are OMITTED entirely when absent — for idempotencyKey
 // that's load-bearing, not cosmetic (delta #2: never minted, never sent as a
@@ -127,31 +134,47 @@ function validateMemoryEventBody(
     return undefined;
   };
 
-  const identity = body.identity && typeof body.identity === "object" ? body.identity as Record<string, unknown> : undefined;
-  const channel = typeof identity?.channel === "string" ? identity.channel.trim() : "";
-  const value = typeof identity?.value === "string" ? identity.value.trim() : "";
-  if (!channel || !value) {
-    return bad('"identity" must be an object with non-empty string "channel" and "value"');
+  const KNOWN_FIELDS = ["agentId", "identityId", "event", "occurredAt", "ttlSeconds", "idempotencyKey"];
+  const unknown = Object.keys(body).filter((k) => !KNOWN_FIELDS.includes(k));
+  if (unknown.length > 0) {
+    return bad(`unknown field(s): ${unknown.join(", ")} — allowed: ${KNOWN_FIELDS.join(", ")}`);
+  }
+
+  // Presence only, never semantics — the controller resolves the agent through
+  // an account-scoped lookup and answers `cross_account` if it belongs to
+  // another account. Same treatment outbound-calls-route.ts gives its own
+  // agentId. Required, not optional: working memory is keyed
+  // (accountId, agentId, identityKey), so there is no way to write it without
+  // naming an agent.
+  const agentId = typeof body.agentId === "string" ? body.agentId.trim() : "";
+  if (!agentId) return bad('"agentId" must be a non-empty string');
+
+  // An opaque controller handle from POST /v1/identity/find, NOT an address.
+  // Deliberately not pattern-checked: the format is the controller's to change,
+  // and a connector-side guess at what an id looks like would reject valid
+  // handles the day that format moves.
+  const identityId = typeof body.identityId === "string" ? body.identityId.trim() : "";
+  if (!identityId) {
+    return bad('"identityId" must be a non-empty string — resolve one via POST /v1/identity/find (this route does not accept a phone number or email address)');
   }
 
   const event = typeof body.event === "string" ? body.event.trim() : "";
   if (!event) return bad('"event" must be a non-empty string');
 
-  // Omitted entirely when the caller doesn't ask for one, rather than defaulted
-  // to "episodic" here. That keeps this route working against a controller that
-  // predates memory-type support: the default case sends the exact same params
-  // it always did, and only a caller who explicitly asks for a type sends the
-  // new field. The controller owns what "no type" means (episodic today).
-  let type: string | undefined;
-  if (body.type !== undefined) {
-    if (typeof body.type !== "string" || !MEMORY_TYPES.includes(body.type as typeof MEMORY_TYPES[number])) {
-      return bad(`"type" must be one of ${MEMORY_TYPES.join(", ")} when present`);
-    }
-    type = body.type;
-  }
-
   if (body.occurredAt !== undefined && typeof body.occurredAt !== "string") {
     return bad('"occurredAt" must be an ISO 8601 string when present');
+  }
+  // Type-only, deliberately NOT range-checked here — but note that "forwarded"
+  // does NOT mean "accepted". The controller owns the whole range policy and it
+  // is asymmetric: it defaults 600s, CLAMPS anything above 86400s (reporting the
+  // post-clamp truth as `expiresAt`), and REJECTS 0, negatives, and fractional
+  // values outright with `invalid_params`. This route can't usefully predict
+  // which of those three a given number will hit, and duplicating the rule would
+  // mean a connector-side 400 for values the controller would have clamped, plus
+  // a second copy to drift. Same reason this route never validated address
+  // shapes: one owner per rule.
+  if (body.ttlSeconds !== undefined && (typeof body.ttlSeconds !== "number" || !Number.isFinite(body.ttlSeconds))) {
+    return bad('"ttlSeconds" must be a finite number when present');
   }
   if (body.idempotencyKey !== undefined && typeof body.idempotencyKey !== "string") {
     return bad('"idempotencyKey" must be a string when present');
@@ -160,10 +183,16 @@ function validateMemoryEventBody(
   return {
     action: WIRE_ACTION,
     params: {
-      identity: { channel, value },
+      agentId,
+      identityId,
       event,
-      ...(type ? { type } : {}),
       ...(body.occurredAt ? { occurredAt: body.occurredAt } : {}),
+      // Guarded on `!== undefined`, not truthiness — and that distinction is
+      // load-bearing. The controller REJECTS `ttlSeconds: 0` with
+      // `invalid_params`; a truthiness guard would drop the 0, silently
+      // substituting the 600s default and telling the caller nothing. Forwarding
+      // it is what makes them find out they asked for something invalid.
+      ...(body.ttlSeconds !== undefined ? { ttlSeconds: body.ttlSeconds } : {}),
       ...(body.idempotencyKey ? { idempotencyKey: body.idempotencyKey } : {}),
     },
   };

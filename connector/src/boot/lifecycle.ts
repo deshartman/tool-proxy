@@ -28,6 +28,7 @@ import { createNetworkAccessRoutes } from "../inspector/network-access-routes.js
 import { handleOauthToken } from "../inspector/oauth-token-route.js";
 import { handleOutboundCalls } from "../inspector/outbound-calls-route.js";
 import { handleMemoryEvents } from "../inspector/memory-events-route.js";
+import { createIdentityRoutes } from "../inspector/identity-routes.js";
 import { deriveJwtSigningKey } from "../auth/jwt.js";
 import { createLogger } from "../logger.js";
 import { WebhookRegistry } from "../tunnel/webhook-registry.js";
@@ -209,6 +210,18 @@ async function bootFromDb(): Promise<void> {
       }),
       getCoordinator: () => controllerApi,
     }));
+
+    // MEMORY-INJECTION — POST /v1/identity/{find,list}, the resolve half of the
+    // flow /v1/memory/events completes. Identical deps to both routes above,
+    // and wired ABOVE the empty-DB `if (!row) return` for the same TDZ reason.
+    const identityRoutes = createIdentityRoutes({
+      getVerifierConfig: async () => ({
+        selfIssuedSigningKey: deriveJwtSigningKey(masterKey.bytes),
+        trustedIssuer: await store.getTrustedIssuerConfig(),
+      }),
+      getCoordinator: () => controllerApi,
+    });
+    inspector.wireIdentityRoutes(identityRoutes);
 
     // Wire tunnel routes for DB mode — allows inspector UI to configure tunnel
     inspector.wireTunnelRoutes(createTunnelRoutes({
