@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Thin wrapper around invoke.mjs — see README.md for setup + usage.
-# Forwards all args, so both usage modes still work:
-#   ./run-memory-event.sh
-#   ./run-memory-event.sh --channel=sms --value=+1... --event="..."
+# One mode = one tool call. Forwards all args:
+#   ./run-memory-event.sh --list                      [--identifier --channel --limit]
+#   ./run-memory-event.sh --inject  --agentId=agt_123 --identityId=identity_... --event="..."
 
 set -euo pipefail
 

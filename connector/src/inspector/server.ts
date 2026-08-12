@@ -224,6 +224,30 @@ export class Inspector {
     this.outboundCallsHandler = handler;
   }
 
+  // MEMORY-INJECTION — POST /v1/memory/events handler, the machine-API
+  // sibling of outboundCallsHandler above. Same optional-until-wired
+  // convention: unwired boot paths fall through to 404.
+  memoryEventsHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+
+  wireMemoryEvents(handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>): void {
+    this.memoryEventsHandler = handler;
+  }
+
+  // MEMORY-INJECTION — POST /v1/identity/list, the resolve half of memory
+  // injection's resolve-then-write flow (memoryEventsHandler above is the write
+  // half). A sibling /v1/identity/find was wired here until the controller merged
+  // the two: its exact lookup is subsumed by list's substring `identifier`, since
+  // an exact address is a substring of itself. Same optional-until-wired
+  // convention; kept as an object arg so a second identity route can rejoin
+  // without changing the call site.
+  identityListHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+
+  wireIdentityRoutes(handlers: {
+    handleList: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  }): void {
+    this.identityListHandler = handlers.handleList;
+  }
+
   private readonly listeners = new Set<(e: InspectorEvent) => void>();
   private readonly frames: FrameTap[] = []
   private readonly current: InspectorState;
@@ -936,12 +960,24 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
 // dispatch table) is loopback-only, unconditionally, forever. The ONLY
 // things a non-loopback caller can ever reach are the machine API's
 // /oauth/token (self-authenticated via client_id/client_secret in the
-// body) and /v1/outbound/calls (JWT-bearer-gated, see
-// outbound-calls-route.ts) — both do their own auth check inline,
-// mirroring how authorizeWebhookMcp() works today.
+// body) and the JWT-bearer-gated /v1/* routes (/v1/outbound/calls, see
+// outbound-calls-route.ts; /v1/memory/events, see memory-events-route.ts;
+// /v1/identity/list, see identity-routes.ts) — all of which do their own
+// auth check inline, mirroring how authorizeWebhookMcp() works today.
+//
+// /v1/identity/list is the first entry here that returns bulk customer PII
+// rather than performing one targeted action; see identity-routes.ts's
+// header for why that's an accepted widening and what it means for the
+// blast radius of a leaked bearer.
+//
+// /v1/identity/find was briefly a member and is deliberately NOT here any
+// more — the controller deleted the action, so it must fall through to the
+// non-loopback rejection like any other unknown path.
 const NON_LOOPBACK_ALLOWED_PATHS = new Set([
   "/oauth/token",
   "/v1/outbound/calls",
+  "/v1/memory/events",
+  "/v1/identity/list",
 ]);
 
 // One check point for the whole dispatch table. Loopback callers pass
@@ -1097,6 +1133,14 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     }
     if (path === "/v1/outbound/calls" && req.method === "POST") {
       if (inspector.outboundCallsHandler) { void inspector.outboundCallsHandler(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/v1/memory/events" && req.method === "POST") {
+      if (inspector.memoryEventsHandler) { void inspector.memoryEventsHandler(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/v1/identity/list" && req.method === "POST") {
+      if (inspector.identityListHandler) { void inspector.identityListHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
 

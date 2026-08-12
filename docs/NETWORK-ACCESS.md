@@ -117,31 +117,93 @@ None of the three are secret (they're public IdP metadata), so they're shown
 verbatim, not redacted. Click **Save**. Just like adding your first API
 client, **setting a trusted issuer for the first time also flips on
 non-loopback reachability** for the machine API — so a customer who only ever
-uses federated mode (and never mints a self-issued client) still gets
-`/v1/outbound/calls` reachable from the rest of their network. **Clear**
+uses federated mode (and never mints a self-issued client) still gets the
+`/v1/*` routes reachable from the rest of their network. **Clear**
 removes the config; like every widening in this feature it does not re-narrow
 the bind.
 
 ## Machine API routes
 
-Today there's one protected route beyond `/oauth/token` itself:
-**`POST /v1/outbound/calls`** — triggers a real outbound Twilio call or
-message through the tunnel. Attach the bearer token from step 4 above:
+There are three protected routes beyond `/oauth/token` itself:
+
+| Route | What it does | Reference |
+|---|---|---|
+| `POST /v1/outbound/calls` | Trigger a real outbound Twilio call or message through the tunnel. | [`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) |
+| `POST /v1/identity/list` | Browse, search, **and resolve** the account's identities. **Returns bulk PII** — see the note below. | [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §5 |
+| `POST /v1/memory/events` | Tell an agent something out of band — one note into its working memory for a given identity. | [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) |
+
+A fourth, `POST /v1/identity/find`, existed briefly and is **gone**: the
+controller merged it into `identity.list`, whose `identifier` is a substring, and
+an exact address is a substring of itself. Its path is no longer allowlisted, so a
+non-loopback call to it now gets a `403` like any other unknown path.
+
+Attach the bearer token from step 4 above to any of them:
 
 ```bash
 curl -s -X POST https://<connector-address>:9090/v1/outbound/calls \
   -H "authorization: Bearer $ACCESS_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"action":"place_call","to":"+15551234567","agentId":"agt_123","channelId":"chn_456"}'
+
+# Memory injection is two calls: resolve, then write.
+curl -s -X POST https://<connector-address>:9090/v1/identity/list \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"identifier":"+15551234567"}'
+# -> {"result":{"identities":[{"identityId":"identity_9f2c1a04-...","aliases":[...],...}]}}   or   {"identities":[]}
+
+curl -s -X POST https://<connector-address>:9090/v1/memory/events \
+  -H "authorization: Bearer $ACCESS_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"agentId":"agt_123","identityId":"identity_9f2c1a04-7b3e-4d51-8a6f-2e0b9c4d7a13","event":"your flight is delayed"}'
 ```
 
-`action` is `"place_call"` or `"send_message"`; full request/response shape,
-error codes, and the `machine-api:<clientId>` audit-trail identity this
-route uses are documented in [`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) §7.
-The bearer can be either a self-issued (HS256) token from `/oauth/token` or
-a federated (RS256) token from your own IdP once you've configured a trusted
-issuer above — the route accepts both, and the caller doesn't need to know
-or care which one this route verified.
+For outbound, `action` is `"place_call"` or `"send_message"`; full
+request/response shape and error codes are in
+[`OUTBOUND-CALLS.md`](OUTBOUND-CALLS.md) §3/§5.
+
+For memory, the write body is
+`{agentId, identityId, event, occurredAt?, ttlSeconds?, idempotencyKey?}` — see
+[`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §2/§10. Two things to know: **it takes an
+`identityId`, not an address** (resolution is a separate lookup-only call, so a
+typo can't mint a phantom customer), and **`agentId` is required** because
+working memory is keyed per agent.
+
+On `list`, `channel` is optional — it only narrows. **`identifier` is a
+case-insensitive substring, so a full address can match several identities**
+(`des@example.com` also matches `des@example.com.au`). Don't take
+`identities[0]`; compare against each result's `aliases` and pick the exact one —
+see [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §2.
+
+An empty `identities: []` is a normal `200`, not an error: it means you have a
+customer this account has never interacted with. Put your fact in the outbound
+call's `callContext` instead — see [`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §4.
+
+All three routes use the same `machine-api:<clientId>` audit-trail identity on the
+wire, and **the same bearer works on all of them**: either a self-issued (HS256)
+token from `/oauth/token` or a federated (RS256) token from your own IdP once
+you've configured a trusted issuer above. Each route accepts both, and the
+caller doesn't need to know or care which one was verified.
+
+**`/v1/identity/list` deserves a second look before you hand out a
+credential.** It's the only route here that returns bulk customer PII — every
+alias value on every identity in the account — rather than performing one
+targeted action, and it has no server-side cap (omit `limit` and you get the
+whole set). The gate is the same as the others and account scoping is enforced
+controller-side, but the blast radius of a leaked bearer is now "enumerate the
+customer base", not just "dial or inject". If a given integration only ever needs
+to write, it never needs to call this route — credential scoping is the lever
+here, since bearers are per-API-client and revocable.
+
+Enumeration isn't silent, either: the controller's audit rows record the number
+of identities each call returned, so a credential sweeping the account leaves a
+visible trail rather than looking like ordinary lookups.
+
+One operational note if you call `list` over a large account: raise `timeoutMs`
+rather than retrying. A timeout returns nothing (never a partial), and there's no
+way to cancel the query already running on the controller — so a retry loop
+stacks abandoned full-account scans while you see only failures. See
+[`MEMORY-EVENTS.md`](MEMORY-EVENTS.md) §5.
 
 ## Troubleshooting
 

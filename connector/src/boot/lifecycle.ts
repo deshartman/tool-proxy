@@ -27,6 +27,8 @@ import { Inspector, startInspector, rebindInspector } from "../inspector/server.
 import { createNetworkAccessRoutes } from "../inspector/network-access-routes.js";
 import { handleOauthToken } from "../inspector/oauth-token-route.js";
 import { handleOutboundCalls } from "../inspector/outbound-calls-route.js";
+import { handleMemoryEvents } from "../inspector/memory-events-route.js";
+import { createIdentityRoutes } from "../inspector/identity-routes.js";
 import { deriveJwtSigningKey } from "../auth/jwt.js";
 import { createLogger } from "../logger.js";
 import { WebhookRegistry } from "../tunnel/webhook-registry.js";
@@ -192,6 +194,34 @@ async function bootFromDb(): Promise<void> {
       }),
       getCoordinator: () => controllerApi,
     }));
+
+    // MEMORY-INJECTION — POST /v1/memory/events, the machine-API sibling of
+    // /v1/outbound/calls above. Same deps shape, same reasons: getVerifierConfig
+    // reads the trusted-issuer config fresh from Postgres per request so a live
+    // operator change needs no restart, and getCoordinator reads the outer
+    // hoisted `controllerApi` binding so it always reflects the live tunnel's
+    // coordinator (or undefined between reconnects). Also wired ABOVE the
+    // empty-DB `if (!row) return` below — see CLAUDE.md "TDZ discipline inside
+    // bootFromDb".
+    inspector.wireMemoryEvents((req, res) => handleMemoryEvents(req, res, {
+      getVerifierConfig: async () => ({
+        selfIssuedSigningKey: deriveJwtSigningKey(masterKey.bytes),
+        trustedIssuer: await store.getTrustedIssuerConfig(),
+      }),
+      getCoordinator: () => controllerApi,
+    }));
+
+    // MEMORY-INJECTION — POST /v1/identity/list, the resolve half of the flow
+    // /v1/memory/events completes. Identical deps to both routes above, and
+    // wired ABOVE the empty-DB `if (!row) return` for the same TDZ reason.
+    const identityRoutes = createIdentityRoutes({
+      getVerifierConfig: async () => ({
+        selfIssuedSigningKey: deriveJwtSigningKey(masterKey.bytes),
+        trustedIssuer: await store.getTrustedIssuerConfig(),
+      }),
+      getCoordinator: () => controllerApi,
+    });
+    inspector.wireIdentityRoutes(identityRoutes);
 
     // Wire tunnel routes for DB mode — allows inspector UI to configure tunnel
     inspector.wireTunnelRoutes(createTunnelRoutes({

@@ -11,7 +11,7 @@
 //
 //   import { callControllerApi } from "@mcp-shim/connector/sdk";
 //
-//   const result = await callControllerApi("memory.append_event", { identity: { channel, value }, event });
+//   const result = await callControllerApi("memory.inject_context", { agentId, identityId, event });
 //
 // Only Twilio-authored bundled MCPs may call this — the connector's
 // isAuthorTwilio gate rejects everything else with a "not_authorized"

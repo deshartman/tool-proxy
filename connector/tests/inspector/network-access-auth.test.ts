@@ -98,11 +98,39 @@ describe("Network-access request gate (CONNECTOR-NETWORK-EXPOSURE)", () => {
       expect(res.status).toBe(403);
     });
 
-    it("/oauth/token is the one path that reaches the route dispatch", async () => {
-      const res = await fetch(`http://127.0.0.1:${port}/oauth/token`, { method: "POST" });
-      // 404 (no oauthTokenHandler wired in this test) proves the gate let it
-      // through — a 403 would mean the allowlist check itself failed.
+    // The machine API is the ONLY thing here that reaches route dispatch: the
+    // token endpoint plus the JWT-bearer-gated /v1/* action routes. 404 (no
+    // handler wired in this test) proves the gate let the path through — a 403
+    // would mean the allowlist check itself rejected it.
+    //
+    // Keep this list exhaustive against NON_LOOPBACK_ALLOWED_PATHS in
+    // src/inspector/server.ts. Adding a path there without adding it here is
+    // how an operator-only route quietly becomes internet-reachable.
+    it.each([
+      "/oauth/token",
+      "/v1/outbound/calls",
+      "/v1/memory/events",
+      "/v1/identity/list",
+    ])("%s reaches the route dispatch", async (path) => {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: "POST" });
       expect(res.status).toBe(404);
     });
+
+    // The inverse, and the reason the list above is worth maintaining by hand:
+    // a plausible-looking /v1/* path that was never allowlisted is still 403.
+    // The gate is a deny-by-default exact-match set, not a /v1/ prefix rule.
+    //
+    // /v1/identity/find is in here DELIBERATELY. It was allowlisted until the
+    // controller deleted identity.find (list's substring `identifier` subsumes
+    // an exact lookup), so it must now be rejected like any other unknown path.
+    // A removed route silently staying reachable is exactly the drift the
+    // exhaustive list above exists to catch — in the other direction.
+    it.each(["/v1/identity/find", "/v1/identity", "/v1/identity/merge", "/v1/memory/read", "/v1/"])(
+      "%s is NOT allowlisted — 403, the gate is exact-match not prefix",
+      async (path) => {
+        const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: "POST" });
+        expect(res.status).toBe(403);
+      },
+    );
   });
 });
