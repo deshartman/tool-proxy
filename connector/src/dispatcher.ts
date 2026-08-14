@@ -186,7 +186,21 @@ export class Dispatcher {
         timeoutMs: this.deps.config.policy.tool_timeout_ms,
       });
       this.reply({ id, result });
-      this.log(`tools/call ${qualifiedName} ok`);
+      // Wire semantics are deliberately unchanged: an `isError: true` result is
+      // the spec-correct shape for a tool-level rejection (bad args, app-level
+      // refusal) and is relayed verbatim so the controller's model can read the
+      // message and adapt. Converting it to a JSON-RPC error would collapse the
+      // distinction between "the tool ran and rejected" and "the transport
+      // died". This is observability only — logging every such call as "ok" made
+      // a rejected call indistinguishable from a successful one after the fact,
+      // since the result payload lives only in the in-memory message tap.
+      // Detail is intentionally omitted: isError text often echoes the
+      // arguments, which policy.log_tool_args may have redacted above.
+      const toolError =
+        typeof result === "object" &&
+        result !== null &&
+        (result as { isError?: unknown }).isError === true;
+      this.log(`tools/call ${qualifiedName} ${toolError ? "tool-error" : "ok"}`);
     } catch (err) {
       const detail = (err as Error)?.message ?? String(err);
       // If the server disappeared from the map while we were awaiting a

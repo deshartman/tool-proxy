@@ -19,7 +19,8 @@ env-driven focal customer + hardcoded Alice / Bob / Carol / Pat. Retired
 in favour of a real Postgres store per the `MOCK-BACKEND-DB` plan:
 
 - No more fixtures. First-boot database is empty. Operator inserts via
-  the inspector's CRM panel (or a direct `POST /customers` if they must).
+  `POST /customers` on this service. (There is no inspector CRM panel —
+  the connector's inspector does not reach into this store.)
 - `DEMO_CUSTOMER_*` env vars retired. The `MOCK_POSTGRES_URL` secret is
   the only env the service reads at boot (plus optional `PORT` /
   `LOG_LEVEL`).

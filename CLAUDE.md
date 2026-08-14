@@ -95,6 +95,8 @@ Each `ServerDescriptor` in the manifest carries an `author: string` field — de
 
 Also on every dispatched `tools/call`: if the child MCP was closed under a live request (typical cause: supervisor restart triggered by `creds-update`), the dispatcher's catch block detects `!this.deps.servers.has(serverName)` and replies with `kind: "mcp_disconnected"` instead of the generic `tool_failed` — see [`connector/src/dispatcher.ts`](connector/src/dispatcher.ts). Lets the controller attribute the failure to a mid-flight restart rather than a genuine tool crash.
 
+**A tool-level rejection is not a dispatch failure, and must not be converted into one.** When a child MCP rejects its arguments, the MCP SDK catches the zod failure and returns a *successful* JSON-RPC result carrying `isError: true` — `callTool` does not throw, so the dispatcher's catch block never runs. The connector relays that result **verbatim**: tool-level errors are meant to reach the controller's model, which reads the message and adapts. Rewriting them as `-32010` / `tool_failed` would collapse the distinction between "the tool ran and rejected the input" and "the transport died" — don't. The dispatcher inspects `isError` for **logging only**, emitting `tools/call <name> tool-error` instead of `ok` so a rejected call is distinguishable in the one durable record the connector produces (the result payload itself lives only in the capped, restart-cleared in-memory message tap). Error detail is deliberately omitted from that line — `isError` text often echoes arguments that `policy.log_tool_args` redacted. Pinned by [`connector/tests/dispatcher/tool-error-result-log.test.ts`](connector/tests/dispatcher/tool-error-result-log.test.ts), which asserts the reply stays a `result` with `error` absent.
+
 ## Workspace shape
 
 npm workspaces, **one package**: `@mcp-shim/connector`. That's the only thing that ships.
@@ -183,7 +185,7 @@ There is also a **vitest** suite for defensive regression tests — regression-d
 
 ```bash
 cd connector
-npm test          # one-shot run; uses --root ../.. so it sees the root vitest.config.ts
+npm test          # one-shot run; uses --root .. so it sees the root vitest.config.ts
 npm run test:watch # watch mode for the active test file
 ```
 

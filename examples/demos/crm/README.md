@@ -116,35 +116,54 @@ The Fly deploy shape is private-only — no public IP, no `[[services]]`, no
 
 ## Demo data
 
-Seeded in [`../../mock-backend/data.ts`](../../mock-backend/data.ts):
+**There is none. The database is empty on first boot.**
 
-| `customer_phone` | Name | Notes |
-|---|---|---|
-| `${DEMO_CUSTOMER_PHONE}` — default `+15551239999` | `${DEMO_CUSTOMER_NAME} ${DEMO_CUSTOMER_SURNAME}` — default `Dana Demo` | 7 orders spanning the fulfillment states + timing edges |
-| `+14155550101` | Alice Anderson | `ord_42` — delivered, ~16d, refund-eligible |
-| `+14155550102` | Bob Brown | `ord_77` — delivered, ~47d, fails 30-day window |
-| `+14155550103` | Carol Chen | `ord_91` — pending, fails status gate |
-| (email `purchaser@example.com`) | Pat Purchaser | `ord_gift_5` — gift order edge case |
+The mock backend is Postgres-backed and ships schema only — no seeded
+customers, no seeded orders, no seeded appointments. The operator inserts
+whatever the demo needs. `DEMO_CUSTOMER_*` env vars no longer exist.
 
-The **focal customer** (first row) is env-driven so an operator can wire
-the demo to their own phone and name without editing tracked code:
+Insert a customer (and optionally their orders) via `POST /customers` on
+the mock backend:
 
 ```bash
-# in examples/mock-backend/.env  (gitignored — never lands in git)
-DEMO_CUSTOMER_NAME=Alex
-DEMO_CUSTOMER_SURNAME=Operator
-DEMO_CUSTOMER_PHONE=+15551234567
+curl -s -X POST http://localhost:7400/customers \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Dana","surname":"Demo","phone":"+15551239999",
+       "interactions":[{"orderId":"ord_1","placedAt":"2026-08-11T00:00:00Z",
+                        "status":"shipped","channel":"web",
+                        "amount":89.50,"currency":"AUD"}]}'
 ```
 
-See [`../../mock-backend/.env.example`](../../mock-backend/.env.example) for
-the full list. Alice / Bob / Carol / Pat stay hardcoded — they're
-behavior fixtures for the refund-eligibility procedure branches, not seed
-data an operator would want to swap.
+`interactions[]` is the orders list and is optional — absent or empty means
+a customer with no orders. Two things to know before you rely on it:
 
-Appointment calendar (seeded in [`../../mock-backend/calendar.ts`](../../mock-backend/calendar.ts))
-seeds one open appointment against the focal customer's phone — the env
-override for `DEMO_CUSTOMER_PHONE` also re-wires the calendar fixture, so
-the reschedule demo works against your own number the same way.
+- **`interactions[]` can only be supplied at create time.** There is no
+  `POST /orders` route, and `customers.phone` is `UNIQUE`, so re-posting an
+  existing customer returns `409 duplicate_phone`. Adding orders to a
+  customer that already exists means a direct insert into the
+  `interactions` table against their `customers.id`.
+- **Phone lookup is an exact string compare** after stripping whitespace,
+  parentheses and hyphens (`normalizePhone` in
+  [`../../mock-backend/data.ts`](../../mock-backend/data.ts)). There is no
+  E.164 canonicalisation, so `+61401277115`, `61401277115` and
+  `0401277115` are three distinct keys that never match each other. Insert
+  and look up in the same form.
+
+### `get_recent` cannot tell you the customer exists
+
+`get_recent` treats a backend 404 as a non-error, so an unknown phone
+returns a **successful** `{"orders": [], "customerId": "<whatever you passed>"}`
+— byte-identical to a real customer with zero orders. Only
+`get_customer`'s success proves the customer exists; it returns
+`isError: true` with `{"error":"no_customer"}` on a miss. Don't write a
+procedure that reads an empty `orders` array as "known customer, no
+orders".
+
+Appointments are also unseeded. Create one with `POST /appointments`
+(`{customerPhone, start}`), which 404s if the customer doesn't exist yet.
+Note that `check_availability` validates a **single** candidate slot and
+returns up to three nearby `suggestions[]` only when that slot is
+unavailable — nothing in this demo lists open slots.
 
 ## Wire-format tool names
 

@@ -427,7 +427,9 @@ primary_region = "iad"
 [env]
   PORT = "7400"
   NODE_ENV = "production"
-  # DEMO_CUSTOMER_NAME / _SURNAME / _PHONE via \`fly secrets set\`.
+  # MOCK_POSTGRES_URL via \`fly secrets set\` — REQUIRED, the service refuses
+  # to boot without it. There are no DEMO_CUSTOMER_* vars; the store is a
+  # real Postgres database, not in-memory fixtures.
 
 # No [[services]] — private only. Reached at:
 #   http://{{APP_NAME}}.internal:7400
@@ -576,13 +578,32 @@ The connector's crm drop-in reaches it at \`{{APP_NAME}}.internal:7400\`
 via Fly's WireGuard mesh — never publicly.
 
     fly apps create {{APP_NAME}}
-    fly secrets set DEMO_CUSTOMER_NAME=Alice DEMO_CUSTOMER_SURNAME=Demo \\
-                    DEMO_CUSTOMER_PHONE=+14155551234 \\
-                    --app {{APP_NAME}}
+
+\`MOCK_POSTGRES_URL\` is REQUIRED — the mock refuses to boot without it. Point
+it at the \`crm\` database on the connector's existing Postgres app (the
+connector owns \`mcp_connector\` on that same server; the mock owns \`crm\`).
+Create the database first if it doesn't exist.
+
+    fly secrets set \\
+      MOCK_POSTGRES_URL="postgres://postgres:<pw>@mcp-connector-{{NAME}}-db.flycast:5432/crm" \\
+      --app {{APP_NAME}}
     fly deploy --app {{APP_NAME}}
 
 Verify:
     fly ssh console -a {{APP_NAME}} -C "wget -qO- http://localhost:7400/healthz"
+
+The database is EMPTY after deploy — no seeded customers, orders, or
+appointments. Insert what the demo needs via \`POST /customers\` from inside
+the mesh (the app has no public IP):
+
+    fly ssh console -a {{APP_NAME}} -C "wget -qO- \\
+      --header='Content-Type: application/json' \\
+      --post-data='{\\"name\\":\\"Dana\\",\\"surname\\":\\"Demo\\",\\"phone\\":\\"+15551239999\\"}' \\
+      http://localhost:7400/customers"
+
+\`interactions[]\` on that body is the orders list and can only be supplied at
+create time — \`customers.phone\` is UNIQUE, so adding orders to an existing
+customer means a direct insert into the \`interactions\` table.
 
 In the connector's \`customer-mcps/crm/.env\`, before building the connector image:
 
