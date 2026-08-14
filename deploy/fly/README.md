@@ -17,7 +17,8 @@ Two Fly apps in the same Fly organization:
 ┌──────────────────────────────┐          ┌──────────────────────────────┐
 │ mcp-connector-<CUSTOMER>     │          │ mock-customers-<CUSTOMER>    │
 │  - dial-out WSS → controller │          │  - HTTP :7400                │
-│  - Fly Postgres attached     │  ← ─ ─ ─ │  - in-memory fixtures        │
+│  - Fly Postgres attached     │  ← ─ ─ ─ │  - `crm` db on that same     │
+│    (`mcp_connector` db)      │          │    Postgres app, empty       │
 │  - inspector 127.0.0.1:9090  │          │  - no public IP              │
 └──────────────────────────────┘          └──────────────────────────────┘
         (fly proxy 9090:9090)                 http://mock-customers-<CUSTOMER>.internal:7400
@@ -92,11 +93,16 @@ mcp-connector deploy init --target fly-mock --name acme-prod \
 #    .internal DNS.
 cd ./examples/mock-backend && fly launch --no-deploy --copy-config
 
-# 3. Set the demo customer identity.
+# 3. Point the mock at Postgres. This is the only env it reads at boot (plus
+#    optional PORT / LOG_LEVEL) and the service REFUSES TO BOOT without it.
+#    The DEMO_CUSTOMER_* secrets that used to live here are gone — the store
+#    is a real database now, not in-memory fixtures.
+#
+#    Note this is the SAME Fly Postgres app the connector uses, but a
+#    different database on it: the connector owns `mcp_connector`, the mock
+#    owns `crm`. Create the database first if it doesn't exist.
 fly secrets set \
-  DEMO_CUSTOMER_NAME=Alice \
-  DEMO_CUSTOMER_SURNAME=Demo \
-  DEMO_CUSTOMER_PHONE=+14155551234 \
+  MOCK_POSTGRES_URL="postgres://postgres:<pw>@mcp-connector-acme-prod-db.flycast:5432/crm" \
   --app mock-customers-acme-prod
 
 # 4. Deploy.
@@ -105,6 +111,24 @@ fly deploy --app mock-customers-acme-prod
 # 5. Verify (from your laptop, over Fly's WireGuard mesh).
 fly ssh console -a mock-customers-acme-prod -C "wget -qO- http://localhost:7400/healthz"
 ```
+
+**The database is empty after deploy.** There are no seeded customers,
+orders, or appointments — insert whatever the demo needs via
+`POST /customers`. The app is private-only, so drive it from inside the
+mesh:
+
+```bash
+fly ssh console -a mock-customers-acme-prod -C "wget -qO- \
+  --header='Content-Type: application/json' \
+  --post-data='{\"name\":\"Dana\",\"surname\":\"Demo\",\"phone\":\"+15551239999\"}' \
+  http://localhost:7400/customers"
+```
+
+`interactions[]` on that body is the orders list and can only be supplied at
+create time — `customers.phone` is `UNIQUE`, so adding orders to an existing
+customer means a direct insert into the `interactions` table. See
+[`../../examples/demos/crm/README.md`](../../examples/demos/crm/README.md)
+for the full body shape and the lookup gotchas.
 
 Then, in the connector repo before building the connector image, set the crm drop-in's URL to the private DNS name:
 

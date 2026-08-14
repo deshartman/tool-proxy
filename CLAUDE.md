@@ -185,7 +185,7 @@ There is also a **vitest** suite for defensive regression tests — regression-d
 
 ```bash
 cd connector
-npm test          # one-shot run; uses --root ../.. so it sees the root vitest.config.ts
+npm test          # one-shot run; uses --root .. so it sees the root vitest.config.ts
 npm run test:watch # watch mode for the active test file
 ```
 
