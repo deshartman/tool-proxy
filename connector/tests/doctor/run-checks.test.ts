@@ -302,7 +302,7 @@ describe("runChecks — common", () => {
     try {
       seedEnvFile(root);
       seedYaml(root);
-      mkdirSync(join(root, "mcp", "local"), { recursive: true });
+      mkdirSync(join(root, "customer-mcps"), { recursive: true });
 
       const results = await runChecks(
         {
@@ -323,3 +323,77 @@ describe("runChecks — common", () => {
   });
 });
 
+
+// Regression: checkMcpTree probed ./mcp/local and ./mcp/bundled, paths that
+// stopped existing at the customer-repo carve-out. A tree full of working
+// MCPs therefore reported "no MCP drop-in directory found", and the
+// remediation pointed developers at a directory that no longer exists.
+describe("runChecks — mcp-tree probes the paths the scanner actually reads", () => {
+  it("finds ./customer-mcps and ./bundled-mcps by default", async () => {
+    const { root, cleanup } = makeFixture();
+    try {
+      writeFileSync(join(root, "connector.yaml"), MIN_YAML);
+      mkdirSync(join(root, "customer-mcps"));
+      mkdirSync(join(root, "bundled-mcps"));
+
+      const results = await runChecks(
+        { CONNECTOR_CONFIG: join(root, "connector.yaml") },
+        { skipNetwork: true, cwd: root },
+      );
+      const tree = results.find((r) => r.name === "mcp-tree");
+      expect(tree?.status).toBe("ok");
+      expect(tree?.message).toContain(join(root, "customer-mcps"));
+      expect(tree?.message).toContain(join(root, "bundled-mcps"));
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("honours MCP_DROPIN_DIR / MCP_BUNDLED_DIR over the cwd defaults", async () => {
+    const { root, cleanup } = makeFixture();
+    try {
+      writeFileSync(join(root, "connector.yaml"), MIN_YAML);
+      const dropin = join(root, "elsewhere-dropin");
+      const bundled = join(root, "elsewhere-bundled");
+      mkdirSync(dropin);
+      mkdirSync(bundled);
+      // The cwd defaults exist too, so a passing assertion proves the env
+      // vars were consulted rather than coincidentally matching.
+      mkdirSync(join(root, "customer-mcps"));
+
+      const results = await runChecks(
+        {
+          CONNECTOR_CONFIG: join(root, "connector.yaml"),
+          MCP_DROPIN_DIR: dropin,
+          MCP_BUNDLED_DIR: bundled,
+        },
+        { skipNetwork: true, cwd: root },
+      );
+      const tree = results.find((r) => r.name === "mcp-tree");
+      expect(tree?.status).toBe("ok");
+      expect(tree?.message).toContain(dropin);
+      expect(tree?.message).toContain(bundled);
+      expect(tree?.message).not.toContain(join(root, "customer-mcps"));
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("still warns when no drop-in directory exists at all (Type 2-only deployment)", async () => {
+    const { root, cleanup } = makeFixture();
+    try {
+      writeFileSync(join(root, "connector.yaml"), MIN_YAML);
+      const results = await runChecks(
+        { CONNECTOR_CONFIG: join(root, "connector.yaml") },
+        { skipNetwork: true, cwd: root },
+      );
+      const tree = results.find((r) => r.name === "mcp-tree");
+      expect(tree?.status).toBe("warn");
+      // Remediation must name a path that exists in this layout.
+      expect(tree?.remediation).toContain("customer-mcps");
+      expect(tree?.remediation).not.toContain("mcp/local");
+    } finally {
+      cleanup();
+    }
+  });
+});
