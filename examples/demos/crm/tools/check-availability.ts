@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 
-// Validates a candidate slot. Returns whether the slot is free, plus three
-// nearby suggestions when it isn't. The procedure also reads daysFromNow /
+// Validates a candidate slot. Returns whether the slot is free, plus nearby
+// suggestions when it isn't — every free hourly slot across the next 3 working
+// days, which is up to ~24, NOT three. The procedure also reads daysFromNow /
 // isSameDay off the response to drive its edge-case branches (>30d-out
 // confirmation, same-day manager-approval escalation).
 const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
@@ -22,7 +23,7 @@ const OutputSchema = {
   daysFromNow: z.number().describe("Whole UTC days from today to the requested slot. 0 = today."),
   isSameDay: z.boolean().describe("Convenience flag: daysFromNow === 0."),
   technician: z.string().describe("Technician the availability is computed for."),
-  suggestions: z.array(z.string()).describe("Up to 3 nearby free slot start times (ISO 8601 UTC); empty when available=true."),
+  suggestions: z.array(z.string()).describe("Free slot start times (ISO 8601 UTC) across the next 3 working days from the requested slot — up to ~24 entries, not 3. Empty when available=true."),
 };
 
 interface AvailabilityResponse {
@@ -46,7 +47,9 @@ export const checkAvailability: Tool = {
           "Checks whether a 1-hour slot starting at the given UTC time is free for the " +
           "assigned technician. Returns { available, reason?, daysFromNow, isSameDay, " +
           "technician, suggestions[] } — `suggestions` is empty when available, otherwise " +
-          "carries 3 nearby free slots (same day first, then subsequent working days). " +
+          "carries EVERY free hourly slot across the next 3 working days (same day first, " +
+          "then subsequent working days), which can be ~24 entries. Offer the caller the " +
+          "first few rather than reading the whole list. " +
           "If `start` is omitted, the tool checks the current UTC time — expect " +
           "available=false with suggestions[] most of the time in that case.",
         inputSchema: {

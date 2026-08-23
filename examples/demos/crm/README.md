@@ -161,9 +161,17 @@ orders".
 
 Appointments are also unseeded. Create one with `POST /appointments`
 (`{customerPhone, start}`), which 404s if the customer doesn't exist yet.
-Note that `check_availability` validates a **single** candidate slot and
-returns up to three nearby `suggestions[]` only when that slot is
-unavailable — nothing in this demo lists open slots.
+Note that `check_availability` validates a **single** candidate slot —
+nothing in this demo lists open slots for a date range. It returns
+`suggestions[]` only when that slot is unavailable, and that list is every
+free hourly slot across the next 3 working days (**up to ~24 entries, not
+three**), so a voice procedure should offer the first few rather than read
+the whole list.
+
+With an empty calendar every in-hours slot is free, so `available` is always
+`true` and `suggestions[]` is always empty — the `slot_taken` branch needs a
+booked appointment before it can fire. `outside_working_hours` and
+`in_the_past` are pure computation and work with no data at all.
 
 ## Wire-format tool names
 
