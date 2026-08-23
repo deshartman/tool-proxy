@@ -92,14 +92,13 @@ fi
 if [ ! -f "$YAML_FILE" ]; then
   # Bare-minimum starter — the connector still loads yaml at boot, but with
   # every MCP coming from bundled-mcps/ + customer-mcps/ scanners + controller
-  # push, a customer-authored yaml can be near-empty. Users who want a Type 3
-  # bundled entry (e.g. enterprise-knowledge) or a hand-written Type 1 add
-  # entries under mcp_servers manually.
+  # push, a customer-authored yaml is normally empty. Only a hand-written
+  # Type 1 server (its own server.ts) needs an mcp_servers entry.
   cat >&2 <<EOF
 [start-connector] no $YAML_FILE — creating a minimal starter.
-To wire yaml-managed entries (Type 3 bundled MCPs like enterprise-knowledge,
-or legacy hand-written Type 1), edit this file. Otherwise leave it alone;
-bundled + customer-mcps/ auto-discovery covers most setups.
+Only a legacy hand-written Type 1 MCP needs a yaml entry; edit this file if
+you have one. Otherwise leave it alone — bundled + customer-mcps/
+auto-discovery covers every setup.
 EOF
   cat > "$YAML_FILE" <<'YAML_EOF'
 mcp_servers: []
@@ -172,37 +171,6 @@ if [ ! -f "$CONNECTOR_KEY_FILE" ]; then
   chmod 400 "$CONNECTOR_KEY_FILE"
 fi
 
-# Preflight: if EK_EMBEDDER is set (bundle enabled), ensure Ollama sidecar
-# is running. Cleaner failure than a mysterious first-query timeout.
-if [ "${EK_EMBEDDER:-}" = "ollama" ]; then
-  if ! docker compose -f "$ROOT/deploy/compose/docker-compose.dev.yml" ps embedding --status running --format json 2>/dev/null | grep -q "mcp-shim-embedding"; then
-    echo "[start-connector] ERROR: EK_EMBEDDER=ollama but the 'embedding' service is not running." >&2
-    echo "[start-connector] Start it with: docker compose -f deploy/compose/docker-compose.dev.yml up -d embedding" >&2
-    exit 1
-  fi
-  echo "[start-connector] Ollama embedding sidecar is running"
-fi
-
-# Type 3 bundles: when running on the host (not in the connector image), the
-# in-image path /opt/bundled-mcps/<name>/ doesn't exist. For each bundle
-# under bundled-mcps/<name>/source/ (where the source lives) that ships a
-# dev-launch.sh, auto-export BUNDLE_DEV_OVERRIDE_<UPPER_NAME> so the connector
-# spawns the local working tree's venv instead. Each bundle's README documents
-# creating that venv (`uv venv .venv` + `uv pip install -e .`); the launcher
-# requires it.
-for launcher in "$ROOT"/bundled-mcps/*/source/dev-launch.sh; do
-  [ -x "$launcher" ] || continue
-  # launcher = bundled-mcps/<name>/source/dev-launch.sh — <name> is TWO dirs up
-  bundle_name="$(basename "$(dirname "$(dirname "$launcher")")")"
-  upper_name="$(printf "%s" "$bundle_name" | tr 'a-z-' 'A-Z_')"
-  var="BUNDLE_DEV_OVERRIDE_${upper_name}"
-  # Don't clobber a user-supplied override.
-  if [ -z "${!var:-}" ]; then
-    export "$var=$launcher"
-    echo "[start-connector] dev-override $var=$launcher"
-  fi
-done
-
 # Drop-in MCP dir: in dev we point at customer-mcps/ so tools/*.ts folders
 # get auto-discovered by the connector (W-A1/A2 of MCP-LOADING). Production
 # images use the customer-mount path /var/lib/mcp-connector/customer-mcps/.
@@ -213,7 +181,7 @@ if [ -z "${MCP_DROPIN_DIR:-}" ]; then
 fi
 
 # Bundled MCP dir: in dev we point at bundled-mcps/ so Twilio-shipped MCPs
-# (agentic-memory, enterprise-knowledge stub) get auto-discovered. Production
+# (agentic-memory) get auto-discovered. Production
 # images bake this to /app/bundled-mcps via the Dockerfile's ENV directive.
 # D1 (always on) — no allowlist, no gate; every folder here registers.
 if [ -z "${MCP_BUNDLED_DIR:-}" ]; then
