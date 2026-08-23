@@ -8,7 +8,7 @@ CRM Insert panel.
 
 **Not** an MCP, **not** loaded by the connector as a drop-in, **not**
 in `connector.yaml`. Runs as its own private-only Fly app
-(`twilio-tool-sdk-mock` in production, sibling to `-db` and `-ollama`)
+(`twilio-tool-sdk-mock` in production, sibling to `-db`)
 and is reached by the CRM drop-in at `${MOCK_CUSTOMERS_URL}` (typically
 `http://twilio-tool-sdk-mock.internal:7400`).
 

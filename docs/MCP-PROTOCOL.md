@@ -251,13 +251,13 @@ When the controller has no value for an `envKeys`-requested key, the reply MUST 
 
 ## No local `.env` — creds-over-the-wire (rolling out)
 
-**Status: live on Type 2 controller-config MCPs as of 2026-06-30** (including the standalone `@deshartman/twilio-mcp` + `@deshartman/segment-mcp` packages that replaced the prior `mcp/bundled/twilio/` Type 1 bundle). Customer-authored drop-ins and Type 3 bundles still use the `dir/.env` fallback today; they will migrate to the same shape incrementally. The controller-side rules below apply per-MCP, not connector-wide.
+**Status: live on Type 2 controller-config MCPs as of 2026-06-30** (including the standalone `@deshartman/twilio-mcp` + `@deshartman/segment-mcp` packages that replaced the prior `mcp/bundled/twilio/` Type 1 bundle). Customer-authored drop-ins still use the `dir/.env` fallback today; they will migrate to the same shape incrementally. The controller-side rules below apply per-MCP, not connector-wide.
 
 Type 2 controller-config MCPs no longer rely on any on-disk `.env` for boot validation. All credentials reach the child *only* through the controller's `creds-response` / `creds-update` frames. Implications for controllers:
 
 - **First-boot path is "creds-request → empty reply → empty manifest → operator fills row → creds-update → restart → full manifest."** A controller MUST NOT assume creds are pre-populated by the connector image; it MUST be prepared to push `creds-update` to a child whose tool list is currently `[]`.
 - **An operator deleting a row MUST emit `creds-update` with `env: {}` and `source: "none"`.** That triggers the supervisor restart that empties the tool list — without the frame, the connector would keep using the stale env until next reconnect.
-- **Customer-authored drop-ins and Type 3 bundles still honour `dir/.env`.** The connector's per-spec env precedence (process.env ⊕ dir/.env ⊕ yaml inline ⊕ controllerEnv) is unchanged. Controllers SHOULD treat `dir/.env` as transitional and aim to source every credential through `creds-update` over time.
+- **Customer-authored drop-ins still honour `dir/.env`.** The connector's per-spec env precedence (process.env ⊕ dir/.env ⊕ yaml inline ⊕ controllerEnv) is unchanged. Controllers SHOULD treat `dir/.env` as transitional and aim to source every credential through `creds-update` over time.
 
 ## Backwards compat — older controllers
 
@@ -1131,7 +1131,7 @@ The connector itself stays a passthrough — it does NOT declare `sampling`, `el
 
 Through v1.2, customer-authored drop-in MCPs auto-enable the moment the connector sees the folder under `${MCP_DROPIN_DIR}`. The customer admin's gate is the filesystem (whoever has write access). The controller is informed via `manifest-delta`, but has no acceptance gesture between "connector spawned the child" and "LLM can call the tool."
 
-This asymmetric with 3rd-party (Type 2) MCPs, which require the operator to author them in the controller UI before they appear, AND with bundled (Type 3 + yaml-listed Type 1) MCPs, which require Twilio engineering to ship them in the connector image. Customer drop-ins were the only path with no operator-side acceptance.
+This asymmetric with 3rd-party (Type 2) MCPs, which require the operator to author them in the controller UI before they appear, AND with yaml-listed Type 1 MCPs, which require Twilio engineering to ship them in the connector image. Customer drop-ins were the only path with no operator-side acceptance.
 
 v1.3 closes that gap. The controller becomes the **acceptance authority** for customer drop-ins:
 
@@ -1149,7 +1149,6 @@ Approval state lives **controller-only**. After every `register-ack`, the contro
 |---|---|---|
 | Customer drop-in | `source: "local"` (`__dropin: true` marker) | **YES** — requires `mcp-enable` |
 | Yaml-listed Type 1 hand-written | `source: "yaml"` | NO — yaml IS the acceptance |
-| Bundled Type 3 (Twilio Python venvs) | `source: "yaml"` (with `bundled:` resolver) | NO — Twilio ships in image |
 | 3rd-party Type 2 (controller-pushed) | `source: "controller-config"` | NO — already operator-authored |
 
 The gate predicate on the connector side is exactly `author === "customer"` AND `source === "local"`. Anything else flows through unchanged.
@@ -1397,7 +1396,7 @@ The asymmetry favors the migration: a fresh connector against an old controller 
 
 ## v1.4 — Controller API calls (Twilio-bundled only)
 
-> **Status: shipped.** The frame pair, coordinator, author gate, and both call surfaces (in-process SDK for Type 1, inspector loopback for Type 3) are live. `examples/demos/memory-event-demo/` is the reference caller for the in-process-SDK shape — a demo drop-in invoking the two memory-injection actions (`identity.list`, `memory.inject_context` — see [docs/MEMORY-EVENTS.md](MEMORY-EVENTS.md)); it's reference material like `examples/demos/{sample,crm,salesforce}`, not auto-loaded. No bundle shipped in `bundled-mcps/` by default calls it yet. `outbound.place_call` / `outbound.send_message` are reachable two ways: from a Twilio-bundled MCP's own tool via this same `callControllerApi` mechanism (no reference demo exercises this for `outbound.*` specifically today — `memory-event-demo` demonstrates the identical shape for a different action), or externally via the machine-API `POST /v1/outbound/calls` route (see [docs/OUTBOUND-CALLS.md](OUTBOUND-CALLS.md)), which `examples/demos/outbound-demo/` exercises.
+> **Status: shipped.** The frame pair, coordinator, author gate, and both call surfaces (the in-process SDK helper, and the inspector loopback route it wraps) are live. `examples/demos/memory-event-demo/` is the reference caller for the in-process-SDK shape — a demo drop-in invoking the two memory-injection actions (`identity.list`, `memory.inject_context` — see [docs/MEMORY-EVENTS.md](MEMORY-EVENTS.md)); it's reference material like `examples/demos/{sample,crm,salesforce}`, not auto-loaded. No bundle shipped in `bundled-mcps/` by default calls it yet. `outbound.place_call` / `outbound.send_message` are reachable two ways: from a Twilio-bundled MCP's own tool via this same `callControllerApi` mechanism (no reference demo exercises this for `outbound.*` specifically today — `memory-event-demo` demonstrates the identical shape for a different action), or externally via the machine-API `POST /v1/outbound/calls` route (see [docs/OUTBOUND-CALLS.md](OUTBOUND-CALLS.md)), which `examples/demos/outbound-demo/` exercises.
 
 ### Why
 
@@ -1537,8 +1536,8 @@ Carried forward verbatim from the connector-side design review — these are loc
 7. **Idempotency**: entirely controller/action-schema-owned (an `idempotencyKey` inside `params` where an action needs one); the connector's coordinator never auto-retries — retry policy is the calling bundle's call.
 8. **Advertisement**: `capabilities.extensions.<bundle>.controllerActions` is optional/advisory metadata only, never a security boundary. The controller is free to enforce a stricter per-action allowlist against this list at its own discretion.
 9. **Audit/observability**: every `controller-call` / `controller-call-response` is captured automatically by the connector's existing generic frame tap (its inspector's Frames panel) — no per-frame-type opt-in exists or is needed on the connector side. On the controller side: whatever the existing per-connector activity log already does with `creds-request` / `mcp-enable` should apply its identical code path to `controller-call` — no new category of thing, just a new member of an established pattern.
-10. **Type 3 (Python) bundle access**: via the connector's inspector loopback route, reusing the same per-MCP `MCP_WEBHOOK_TOKEN` already minted for webhook ingress — no second token.
-11. **Type 1 (Node) bundle access**: via an in-process SDK helper (`callControllerApi`) that wraps the same loopback route.
+10. **Transport**: the connector's inspector loopback route, reusing the same per-MCP `MCP_WEBHOOK_TOKEN` already minted for webhook ingress — no second token. Separately addressable so a bundle with no in-process SDK path can still reach it.
+11. **Type 1 (Node) bundle access**: via an in-process SDK helper (`callControllerApi`) that wraps that loopback route.
 
 ## Versioning
 

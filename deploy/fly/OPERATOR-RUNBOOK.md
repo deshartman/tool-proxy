@@ -176,8 +176,9 @@ fly ssh console -a mcp-connector-acme-prod -C "mcp-connector doctor"
 
 You should also see in the inspector:
 
-- **MCP Server panel** — every Type 1 / Type 3 MCP from `connector.yaml` with
-  "Ready" verdicts
+- **MCP Server panel** — every discovered MCP (the Twilio-authored drop-ins
+  from `/app/bundled-mcps/`, plus anything the customer mounted) with "Ready"
+  verdicts
 - **Frames panel** — heartbeats flowing every ~1.5s
 - **Webhooks panel** — allocated URLs per MCP that called `createWebhookEndpoint`
 

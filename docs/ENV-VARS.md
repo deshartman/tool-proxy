@@ -56,19 +56,6 @@ When you pass a port arg to the dev launcher, three of the above variables are a
 Populated via the controller creds UI in production, or the inspector's
 session-creds paste in dev. These bundles do not ship a `.env.example`.
 
-### enterprise-knowledge
-
-| Variable | Purpose |
-|---|---|
-| `EK_EMBEDDER` | Must be `ollama` (only supported embedder). |
-| `EK_PGVECTOR_DSN` | Postgres connection string for the vector store. |
-| `OLLAMA_URL` | Ollama sidecar URL. Default: `http://embedding:11434`. |
-| `EK_OLLAMA_MODEL` | Embedding model. Default: `nomic-embed-text` (768-dim). |
-| `EK_GDRIVE_AUTH` | GDrive auth mode. `service_account` (headless) or `oauth_user` (browser flow). |
-| `EK_GDRIVE_TOKEN_PATH` | Path to the pre-minted OAuth token JSON. Required when `EK_GDRIVE_AUTH=oauth_user`. |
-| `EK_GDRIVE_SERVICE_ACCOUNT_KEY` | Inline JSON service-account key. Required when `EK_GDRIVE_AUTH=service_account`. |
-| `EK_LOCAL_ROOTS` | Colon-separated list of allowed root directories for local-file source indexing (e.g. `/var/lib/documents:/opt/data`). Unset or empty **disables local file indexing entirely** — `sources_register file://...` returns a refusal. Prevents arbitrary file read via crafted `file://` URIs. |
-
 ### agentic-memory
 
 No required env vars. State persists in `bundled-mcps/agentic-memory/.state.json`

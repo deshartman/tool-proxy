@@ -195,7 +195,7 @@ Customer-authored drop-ins do NOT auto-enable. After the connector spawns the ch
 
 The approved-set lives **controller-only** — after every connector restart, the controller automatically re-replays `mcp-enable` for every previously-approved MCP. The connector keeps no approval state across restarts. Disable via the controller UI is a manifest-visibility toggle: the child stays running, re-enable is sub-second.
 
-This gate applies only to drop-ins (folders under `${MCP_DROPIN_DIR}` that auto-discovered). Yaml-listed Type 1 hand-written MCPs and Twilio-bundled (Type 3) MCPs auto-enable as before — yaml is the existing acceptance for those. 3rd-party MCPs added via the controller UI's New 3rd Party MCP button are also unaffected — they're already operator-authored.
+This gate applies only to customer drop-ins (folders auto-discovered under `${MCP_DROPIN_DIR}`). Yaml-listed Type 1 hand-written MCPs auto-enable as before — yaml is the existing acceptance for those, as is discovery under `${MCP_BUNDLED_DIR}`. 3rd-party MCPs added via the controller UI's New 3rd Party MCP button are also unaffected — they're already operator-authored.
 
 #### Per-MCP creds from the controller
 
@@ -225,7 +225,7 @@ Keep individual tool files **unaware** of creds gating — register them or don'
 
 #### `outputSchema` + `structuredContent` — six rules
 
-Every Type 1 / Type 3 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 / Type 3 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker.
+Every Type 1 tool advertises an `outputSchema` so controller-side procedure authors can write `{{ hydrate:<server>.<tool>.<field> }}` and have the field type-checked. The connector logs `error` per offending tool at boot if a Type 1 tool ships without one — the connector keeps booting (the tool just won't support hydration), but treat the log line as a release-blocker.
 
 1. **Plain object of zod fields, NOT `z.object({...})`.** SDK convention — wrapping in `z.object` changes the inferred argument type and breaks the handler signature. See [`examples/demos/sample/tools/weather.ts`](../examples/demos/sample/tools/weather.ts) for the canonical shape.
 2. **Every field gets `.describe(...)`.** This is the contract authors read in the controller UI.
@@ -304,8 +304,7 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 | `package.json` | metadata + the `bin` entry |
 | `node_modules/` (production only) | `npm prune --omit=dev` in the build stage; includes `tsx` (used by the spawner) |
 | `/var/lib/mcp-connector/customer-mcps/` | Type 1 source folders; the spawner runs `tsx /var/lib/mcp-connector/customer-mcps/<name>/server.ts` for entries with `dir:` set |
-| `/app/bundled-mcps/` | Type 3 stubs (per-bundle `.env.example`); customer mounts a `.env` next to it for credentials |
-| `/opt/bundled-mcps/<name>/.venv/` | Pre-installed Python venv per Type 3 bundle; the connector spawns `<entrypoint>` from `BUNDLED_MCPS` |
+| `/app/bundled-mcps/` | Twilio-authored Type 1 drop-in folders, auto-discovered at boot |
 
 ## Run standalone
 
