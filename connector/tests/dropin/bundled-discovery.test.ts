@@ -34,15 +34,15 @@ describe("discoverBundled", () => {
 
   it("returns every valid folder under MCP_BUNDLED_DIR (no allowlist)", () => {
     bundleTree.addBundle("agentic-memory");
-    bundleTree.addBundle("enterprise-knowledge");
+    bundleTree.addBundle("some-other-bundle");
     bundleTree.addBundle("some-future-bundle");
 
     const specs = discoverBundled({ bundledDir: bundleTree.dir, yamlNames: new Set() });
 
     expect(specs.map((s) => s.name).sort()).toEqual([
       "agentic-memory",
-      "enterprise-knowledge",
       "some-future-bundle",
+      "some-other-bundle",
     ]);
   });
 
@@ -66,11 +66,11 @@ describe("discoverBundled", () => {
 
   it("skips folders whose name is already declared in the yaml (yaml wins)", () => {
     bundleTree.addBundle("agentic-memory");
-    bundleTree.addBundle("enterprise-knowledge");
+    bundleTree.addBundle("some-other-bundle");
 
     const specs = discoverBundled({
       bundledDir: bundleTree.dir,
-      yamlNames: new Set(["enterprise-knowledge"]),
+      yamlNames: new Set(["some-other-bundle"]),
     });
 
     expect(specs.map((s) => s.name)).toEqual(["agentic-memory"]);
