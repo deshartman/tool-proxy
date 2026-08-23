@@ -130,9 +130,9 @@ export function isType1Spawn(spec: McpServerSpec): spec is z.infer<typeof HttpSe
 //
 // Two earlier classifier branches were retired: a `dir:` → `mcp/bundled/`
 // path sniff (with the bundled-twilio MCP, 2026-06-30) and a stdio +
-// `bundled:` check (with the Type 3 mechanism, 2026-08-23). Third-party
-// MCPs arrive as Type 2 controller-config entries which the controller
-// already tags author-side, so no path-sniffing is required.
+// `bundled:` check (with the Python-venv bundle mechanism, 2026-08-23).
+// Third-party MCPs arrive as Type 2 controller-config entries which the
+// controller already tags author-side, so no path-sniffing is required.
 export function authorOf(spec: McpServerSpec): string {
   if ((spec as { __author?: string }).__author === "twilio") return "twilio";
   return "customer";

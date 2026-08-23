@@ -548,10 +548,10 @@ interface ControllerApiCallBody {
 // per-MCP bearer token (MCP_WEBHOOK_TOKEN) rather than minting a second
 // token — same identity proof as /internal/webhook/*, via
 // resolveMcpByWebhookToken. Layers the code-trust gate (isAuthorTwilio) on
-// top before the call ever reaches the tunnel. Primarily for Type 3
-// (Python) bundles, which have no in-process SDK path; Type 1 (Node)
-// bundles get the nicer callControllerApi SDK helper, which is itself a
-// thin wrapper around this same route.
+// top before the call ever reaches the tunnel. This route is the transport;
+// Twilio-authored Node bundles reach it through the nicer callControllerApi
+// SDK helper, which is a thin wrapper around it. The route stays separately
+// addressable so a bundle with no in-process SDK path can still call it.
 async function handleControllerApiCall(
   req: IncomingMessage,
   res: ServerResponse,

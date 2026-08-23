@@ -5,14 +5,15 @@
 // name only (no field-projection) and that may be all an MCP author ever
 // wants. This module just informs the operator what's available where.
 //
-// Scope: we only check MCPs we ship in this image (customer-authored
-// Type 1 sources under `mcp/local/`, Twilio bundles under `mcp/bundled/`).
-// External MCPs reached via `endpoint:` / `command:` advertise whatever
-// their upstream tools/list returns; the controller handles them as-is.
+// Scope: we only check Type 1 MCPs whose source we ship or spawn —
+// customer-authored drop-ins under `customer-mcps/` and Twilio-authored
+// ones under `bundled-mcps/`. External MCPs reached via `endpoint:` /
+// `command:` advertise whatever their upstream tools/list returns; the
+// controller handles them as-is.
 
 import type { ToolManifest } from "../tunnel/frames.js";
 import type { ConnectorConfig } from "../config.js";
-import { isType1Spawn, isType3Bundled } from "../config.js";
+import { isType1Spawn } from "../config.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("manifest-validate");
@@ -22,10 +23,10 @@ export function validateManifestSchemas(manifest: ToolManifest, config: Connecto
 
   for (const server of manifest.servers) {
     const spec = specByName.get(server.name);
-    // Only check MCPs whose source we ship (Type 1 / Type 3). External
+    // Only check Type 1 MCPs, whose source we ship or spawn. External
     // upstream MCPs advertise whatever their tools/list returns — pass
     // through verbatim.
-    const weShipIt = !!spec && (isType1Spawn(spec) || isType3Bundled(spec));
+    const weShipIt = !!spec && isType1Spawn(spec);
     if (!weShipIt) continue;
 
     const missing = server.tools.filter((tool) => tool.outputSchema === undefined).map((tool) => tool.name);
