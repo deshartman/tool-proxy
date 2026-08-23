@@ -83,7 +83,7 @@ export class Dispatcher {
     //     namespacing existing tools/call uses).
     //   * URI scheme/host for resources/{read,subscribe,unsubscribe} —
     //     the URI itself carries the namespace via the scheme component
-    //     (e.g. `ek://sources/abc` → server "ek"). We use the URI's host
+    //     (e.g. `kb://sources/abc` → server "kb"). We use the URI's host
     //     position as the server name — see splitResourceServer().
     //   * `params.serverName` opt-in for {prompts,resources}/list,
     //     resources/templates/list, completion/complete, logging/setLevel
@@ -462,8 +462,8 @@ export class Dispatcher {
   // Resource methods (read / subscribe / unsubscribe) need to pick a single
   // upstream MCP. The controller passes `params.serverName` explicitly when
   // it knows the routing (most common case — the controller already grouped
-  // resources by server). As a fallback we try the URI scheme: `ek://...`
-  // → server "ek". Either path must succeed unambiguously; otherwise we
+  // resources by server). As a fallback we try the URI scheme: `kb://...`
+  // → server "kb". Either path must succeed unambiguously; otherwise we
   // return an error string for the caller to relay.
   private serverForResource(uri: string, rawParams: unknown): { server?: McpServerConnection; error: string } {
     const params = (rawParams ?? {}) as { serverName?: unknown };

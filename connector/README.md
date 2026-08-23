@@ -266,7 +266,7 @@ The split mirrors what the protocol expects:
 
 - **Tools** = side-effecting operations the procedure runtime invokes (`messages_create`, `issue_refund`, `voice_say`).
 - **Prompts** = parameterised templates the controller's procedure-author UI consumes (`compose_compliant_sms_campaign`, `refund_eligibility_check`). Authored once per MCP, version-controlled.
-- **Resources** = read-only canonical state surfaced as named, citeable artefacts (`twilio://content-templates`, `ek://sources/{source_id}`). Procedures read them via `resources/read` instead of burning a tool call. Authors that need server-pushed freshness signal `subscribe: true` on the underlying SDK call so the connector forwards `notifications/resources/updated` as `mcp-notification`.
+- **Resources** = read-only canonical state surfaced as named, citeable artefacts (`twilio://content-templates`, `kb://sources/{source_id}`). Procedures read them via `resources/read` instead of burning a tool call. Authors that need server-pushed freshness signal `subscribe: true` on the underlying SDK call so the connector forwards `notifications/resources/updated` as `mcp-notification`.
 
 The connector forwards the full server-method surface (`prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `completion/complete`, `logging/setLevel`) and wraps server-initiated notifications as the `mcp-notification` frame. See [`docs/MCP-PROTOCOL.md`](../docs/MCP-PROTOCOL.md) §"v1.2 — MCP server-method extension" for the wire contract.
 

@@ -13,10 +13,10 @@ import type { McpServerSpec } from "../../src/config.js";
 import type { McpServerConnection } from "../../src/servers/index.js";
 
 // Pins: startAll must LOG AND CONTINUE when one entry fails, not throw.
-// Regression scenario: fly deploy with EK in the yaml but no reachable
-// Postgres — EK's stdio child dies at import, connectServer throws
+// Regression scenario: a yaml-listed stdio MCP with no reachable backing
+// service — its child dies at import, connectServer throws
 // ECONNREFUSED, and prior behavior was that agentic-memory (registered
-// after EK) never got its turn. See fix/supervisor-continue-on-fail.
+// after it) never got its turn. See fix/supervisor-continue-on-fail.
 
 function buildLog(): {
   log: Parameters<typeof McpSupervisor.prototype.constructor>[0]["log"];

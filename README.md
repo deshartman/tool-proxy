@@ -118,13 +118,36 @@ port-forward.
 from your derived image or unmount it. Creds arrive via the controller UI
 (production) or the inspector's session-creds paste (dev).
 
-The connector ships **no knowledge base**. A customer builds their own and
-exposes it as an ordinary MCP against the contract in
-[docs/ENTERPRISE-KNOWLEDGE-INTERFACE.md](docs/ENTERPRISE-KNOWLEDGE-INTERFACE.md).
-
 Third-party MCPs (Twilio, Segment, etc.) live outside this repo as standalone
 npm packages loaded as Type 2 controller-config entries — added via the
 controller UI, no code change.
+
+## How MCPs reach the connector
+
+Two patterns, and only two. Which one you want depends on who runs the process.
+
+| | **Type 1 — drop-in** | **Type 2 — external** |
+|---|---|---|
+| Who runs it | The connector spawns it | You already run it |
+| Language | Node/TypeScript | Any |
+| You provide | A folder of `tools/*.ts` | A URL or command, plus an auth shape |
+| Registered by | Dropping the folder in `/var/lib/mcp-connector/customer-mcps/` | The controller UI |
+| Transport | HTTP child on a localhost port the connector assigns | streamable-http, SSE, or stdio |
+| Credentials | Controller pushes them; declare key *names* via `envKeys` | Request headers, or env for stdio |
+| Operator approval | **Required** — tools stay off the manifest until approved | Not needed; adding it in the UI *is* the approval |
+
+Everything the connector can talk to is one of these. A retrieval system, an
+inference server, a database-backed service, an internal API — each runs in its
+own process as an MCP, and the connector dispatches to it. Nothing heavy is ever
+compiled into the connector itself.
+
+Anything non-Node is Type 2. That is not a limitation to work around — it is the
+supported path, and it costs you nothing beyond running your own process, which
+you were doing anyway.
+
+If what you need is retrieval over your own documents, the tool contract to
+implement is in
+[docs/KNOWLEDGE-MCP-INTERFACE.md](docs/KNOWLEDGE-MCP-INTERFACE.md).
 
 ## Docs
 
@@ -135,8 +158,8 @@ Architecture + protocol:
 - [docs/INSPECTOR.md](docs/INSPECTOR.md) — inspector UI walkthrough.
 - [docs/ENV-VARS.md](docs/ENV-VARS.md) — every env var the connector reads.
 - [docs/AUTHOR-LOCAL-MCP.md](docs/AUTHOR-LOCAL-MCP.md) — how to write a drop-in.
-- [docs/ENTERPRISE-KNOWLEDGE-INTERFACE.md](docs/ENTERPRISE-KNOWLEDGE-INTERFACE.md)
-  — the MCP contract a customer-built knowledge base implements.
+- [docs/KNOWLEDGE-MCP-INTERFACE.md](docs/KNOWLEDGE-MCP-INTERFACE.md) — the MCP
+  contract to implement if you need retrieval over your own documents.
 
 Machine API (the JWT-bearer-gated routes an external system calls directly):
 - [docs/NETWORK-ACCESS.md](docs/NETWORK-ACCESS.md) — minting credentials,

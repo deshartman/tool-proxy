@@ -122,7 +122,7 @@ Zero-config from a fresh clone:
 ```
 
 The script auto-starts the dev Postgres container
-(`mcp-shim-ek-postgres` via `deploy/compose/docker-compose.dev.yml`),
+(`mcp-shim-postgres` via `deploy/compose/docker-compose.dev.yml`),
 idempotently creates the `crm` database, defaults `MOCK_POSTGRES_URL`
 to the container's DSN, and boots the service on port `7400`. Sources
 `examples/mock-backend/.env` if present (wins over auto-provisioning).

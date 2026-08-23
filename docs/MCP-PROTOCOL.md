@@ -1049,7 +1049,7 @@ interface PromptDescriptor {
 }
 
 interface ResourceDescriptor {
-  uri: string;                   // e.g. "ek://sources/abc"
+  uri: string;                   // e.g. "kb://sources/abc"
   name: string;
   description?: string;
   mimeType?: string;

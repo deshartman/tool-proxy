@@ -198,5 +198,5 @@ A credential shape for non-human callers — no browser, no redirects, `client_c
 
 - [`AUTHOR-LOCAL-MCP.md`](AUTHOR-LOCAL-MCP.md) — write a Type 1 drop-in MCP and smoke-test it with session creds.
 - [`MCP-PROTOCOL.md`](MCP-PROTOCOL.md) — wire-format contract between connector and controller.
-- [`ENTERPRISE-KNOWLEDGE-INTERFACE.md`](ENTERPRISE-KNOWLEDGE-INTERFACE.md) — the tool contract a customer-built knowledge base implements.
+- [`KNOWLEDGE-MCP-INTERFACE.md`](KNOWLEDGE-MCP-INTERFACE.md) — the tool contract to implement if your deployment needs retrieval over its own documents.
 - [`../CLAUDE.md`](../CLAUDE.md) — connector architecture overview, including the load-bearing trust boundary that makes the inspector loopback-only.
