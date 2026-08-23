@@ -266,8 +266,7 @@ Postgres store. The design lives in `MOCK-BACKEND-DB` (design record).
 
 Three pieces to stand up:
 
-1. **`crm` database on the connector's Fly Postgres.** Same pattern the
-   EK bundle uses (§Optional above):
+1. **`crm` database on the connector's Fly Postgres.**
 
    ```bash
    fly ssh console -a <DB-APP> -C 'sh -c "PGPASSWORD=\$OPERATOR_PASSWORD psql -h localhost -U postgres -c \"CREATE DATABASE crm;\""'

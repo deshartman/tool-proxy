@@ -5,7 +5,7 @@
 # template to copy, no manual pre-boot step.
 #
 # Overrides (all optional):
-#   POSTGRES_URL              — dev-Postgres DSN (default: docker-compose ek-postgres)
+#   POSTGRES_URL              — dev-Postgres DSN (default: docker-compose postgres)
 #   CONNECTOR_KEY_FILE        — libsodium master key path (default: .local/master.key, auto-minted)
 #   MCP_DROPIN_DIR            — customer drop-ins (default: ./customer-mcps)
 #   MCP_BUNDLED_DIR           — Twilio-shipped MCPs (default: ./bundled-mcps)
@@ -56,8 +56,8 @@ CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
 ENV_FILE="$ROOT/.env"
 YAML_FILE="$ROOT/connector.yaml"
 COMPOSE_FILE="$ROOT/deploy/compose/docker-compose.dev.yml"
-DEV_PG_CONTAINER="mcp-shim-ek-postgres"
-DEV_PG_URL="postgres://ek:ek-dev-password@localhost:5433/enterprise_knowledge"
+DEV_PG_CONTAINER="mcp-shim-postgres"
+DEV_PG_URL="postgres://mcp:mcp-dev-password@localhost:5433/mcp_connector"
 DEV_MASTER_KEY="$ROOT/.local/master.key"
 
 # Rebuild if dist/ is missing OR stale relative to source. Without this, a
@@ -132,7 +132,7 @@ done
 #   1. .env at repo root (optional) — sourced if present. Lets devs override
 #      the auto-provisioned defaults or wire in additional vars.
 #   2. Auto-provisioned defaults for anything still unset:
-#      - POSTGRES_URL → docker-compose ek-postgres (auto-started if not up)
+#      - POSTGRES_URL → docker-compose postgres (auto-started if not up)
 #      - CONNECTOR_KEY_FILE → .local/master.key (auto-minted if missing)
 # No .env template to copy, no manual pre-boot step. First-run on a fresh
 # clone works.
@@ -145,10 +145,10 @@ fi
 if [ -z "${POSTGRES_URL:-}" ]; then
   if ! docker ps --filter "name=$DEV_PG_CONTAINER" --format '{{.Names}}' | grep -q .; then
     echo "[start-connector] starting dev Postgres ($DEV_PG_CONTAINER)..."
-    docker compose -f "$COMPOSE_FILE" up -d ek-postgres
+    docker compose -f "$COMPOSE_FILE" up -d postgres
     echo -n "[start-connector] waiting for Postgres readiness"
     for _ in $(seq 1 30); do
-      if docker exec "$DEV_PG_CONTAINER" pg_isready -U ek -d enterprise_knowledge >/dev/null 2>&1; then
+      if docker exec "$DEV_PG_CONTAINER" pg_isready -U mcp -d mcp_connector >/dev/null 2>&1; then
         echo " — ready"
         break
       fi

@@ -91,10 +91,6 @@ __pycache__
 *.egg-info
 **/*.egg-info
 
-# Ollama model cache — hundreds of MB of dev model weights. Nothing in this
-# repo runs Ollama any more, but a customer developing their own knowledge
-# MCP against a local one would produce this; it must never ship.
-.ollama-cache
 
 # graphify output — knowledge graph artifacts for tooling on the dev
 # machine. Not shipped.

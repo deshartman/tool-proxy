@@ -1,10 +1,14 @@
-# Enterprise Knowledge — the MCP interface to implement
+# Knowledge base — the MCP interface to implement
+
+Read this if your deployment needs retrieval: a corpus of documents, tickets,
+policies or transcripts that a procedure should be able to search.
 
 Three things to know before reading further:
 
 1. **The connector does not ship a knowledge base.** There is no retrieval
-   stack, no vector store, no embedding model inside it. Earlier versions
-   bundled one; it was removed deliberately.
+   stack, no vector store, and no embedding model inside it, by design — see
+   the "no LLM, no agent loop, no document handling" invariant in
+   [`CLAUDE.md`](../CLAUDE.md).
 2. **You build the knowledge base and expose it as an ordinary MCP.** Your
    corpus, embedding model, chunking strategy, access-control rules and
    retention policy are yours. The connector dispatches tool calls to it the
@@ -308,12 +312,10 @@ callable from a procedure.
 
 ## What is deliberately not here
 
-**No reference implementation.** The removed bundle was ~2,900 lines of
-LlamaIndex + pgvector + Ollama, and reproducing it here would re-introduce
-exactly the opinions this interface exists to avoid — plus it would rot, since
-nothing in this repo would exercise it. If you want to read it, it is in git
-history: `git log --diff-filter=D -- 'bundled-mcps/enterprise-knowledge/**'`
-will find the commit that removed it.
+**No reference implementation.** Shipping one would mean shipping an opinion
+about embedding model, vector store and chunking — the opinions this interface
+exists to avoid — and it would rot, because nothing in this repo would exercise
+it. The ~90-line example above is the whole reference.
 
 **No mandated storage, model, or chunking.** Whether `source_id` is a hash or
 a UUID, whether registration is synchronous, how you authenticate to your own

@@ -30,14 +30,14 @@ export interface PromptDescriptor {
 }
 
 export interface ResourceDescriptor {
-  uri: string;                // e.g. "ek://sources/abc123"
+  uri: string;                // e.g. "kb://sources/abc123"
   name: string;
   description?: string;
   mimeType?: string;
 }
 
 export interface ResourceTemplateDescriptor {
-  uriTemplate: string;        // RFC 6570, e.g. "ek://sources/{source_id}/chunks/{chunk_id}"
+  uriTemplate: string;        // RFC 6570, e.g. "kb://sources/{source_id}/chunks/{chunk_id}"
   name: string;
   description?: string;
   mimeType?: string;

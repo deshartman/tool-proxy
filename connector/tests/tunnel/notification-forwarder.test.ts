@@ -58,7 +58,7 @@ describe("NotificationForwarder (router)", () => {
     fwd.bind({ onListChanged: () => { refreshes++; } });
 
     const { conn, emit } = makeFakeConnection();
-    fwd.attachToConnection("ek", conn);
+    fwd.attachToConnection("kb", conn);
 
     emit({ method: "notifications/tools/list_changed" });
     expect(refreshes).toBe(0);       // debounced — not synchronous
@@ -73,7 +73,7 @@ describe("NotificationForwarder (router)", () => {
     fwd.bind({ onListChanged: () => { refreshes++; } });
 
     const { conn, emit } = makeFakeConnection();
-    fwd.attachToConnection("ek", conn);
+    fwd.attachToConnection("kb", conn);
 
     emit({ method: "notifications/tools/list_changed" });
     emit({ method: "notifications/prompts/list_changed" });
@@ -90,10 +90,10 @@ describe("NotificationForwarder (router)", () => {
     fwd.bind({ onListChanged: () => { refreshes++; } });
 
     const { conn, emit } = makeFakeConnection();
-    fwd.attachToConnection("ek", conn);
+    fwd.attachToConnection("kb", conn);
 
     emit({ method: "notifications/progress", params: { progressToken: "t1", progress: 1, total: 4 } });
-    emit({ method: "notifications/resources/updated", params: { uri: "ek://sources/abc" } });
+    emit({ method: "notifications/resources/updated", params: { uri: "kb://sources/abc" } });
     emit({ method: "notifications/message", params: { level: "info", logger: "demo", data: "hi" } });
     emit({ method: "notifications/cancelled", params: { requestId: 7 } });
     vi.runAllTimers();
@@ -108,7 +108,7 @@ describe("NotificationForwarder (router)", () => {
     // Note: NO bind() yet.
 
     const { conn, emit } = makeFakeConnection();
-    fwd.attachToConnection("ek", conn);
+    fwd.attachToConnection("kb", conn);
 
     emit({ method: "notifications/tools/list_changed" });
     vi.runAllTimers();
@@ -127,7 +127,7 @@ describe("NotificationForwarder (router)", () => {
     fwd.bind({ onListChanged: () => { refreshes++; } });
 
     const { conn, emit } = makeFakeConnection();
-    fwd.attachToConnection("ek", conn);
+    fwd.attachToConnection("kb", conn);
 
     emit({ method: "notifications/tools/list_changed" });
     vi.runAllTimers();
@@ -153,7 +153,7 @@ describe("NotificationForwarder (router)", () => {
     fwd.bind({ onListChanged: () => { refreshes++; } });
 
     const { conn, emit } = makeFakeConnection();
-    fwd.attachToConnection("ek", conn);
+    fwd.attachToConnection("kb", conn);
 
     emit({ method: "notifications/tools/list_changed" });  // schedule
     fwd.unbind();                                          // cancel before it fires
@@ -167,7 +167,7 @@ describe("NotificationForwarder (router)", () => {
     fwd.bind({ onListChanged: () => { throw new Error("refresh blew up"); } });
 
     const { conn, emit } = makeFakeConnection();
-    fwd.attachToConnection("ek", conn);
+    fwd.attachToConnection("kb", conn);
 
     // The upstream MCP client must not be poisoned by a connector-side hiccup.
     // The throw happens inside the debounced timer callback.

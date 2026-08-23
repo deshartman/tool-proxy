@@ -3,9 +3,8 @@ dist
 *.log
 *.tsbuildinfo
 
-# Python artifacts. The connector image ships no Python since the
-# enterprise-knowledge bundle was removed, but a customer MCP or a local
-# experiment can still leave these in the working tree.
+# Python artifacts. The connector image ships no Python, but a customer MCP
+# or a local experiment can still leave these in the working tree.
 __pycache__/
 *.pyc
 *.pyo
@@ -47,14 +46,6 @@ __pycache__/
 !**/fly.toml.example
 !deploy/fly/fly.toml
 
-# EK bundle's declarative source list — legacy customer-authored yaml.
-# Retiring in EK-SOURCES-CONSUMER-UI.md (persistence moves to Postgres +
-# controller UI). Keep the gitignore rules for now so any local dev copy
-# doesn't accidentally land in git; the referenced .example was retired
-# in the customer-repo carve-out.
-**/sources.yaml
-!**/sources.yaml.example
-
 # Per-bundle secrets directory. Holds service-account JSON keys, OAuth
 # token caches, etc. — anything credential-shaped that the bundle's
 # .env points at. Gitignored unconditionally; secrets never ship in
@@ -92,11 +83,6 @@ architectural-plans/
 # the inspector through the Playwright browser MCP during verification).
 .playwright-mcp/
 
-# Ollama model cache (dev only). Nothing in this repo runs Ollama since the
-# enterprise-knowledge bundle was removed, but a developer building their own
-# knowledge MCP against a local one will produce this — hundreds of MB of
-# model weights that must never enter a commit or a build context.
-.ollama-cache/
 
 .local/
 

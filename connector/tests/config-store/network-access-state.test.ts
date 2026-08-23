@@ -19,7 +19,7 @@ describe("ConfigStore — network access state + API clients", () => {
     const url = process.env.POSTGRES_URL;
     if (!url) {
       throw new Error(
-        "POSTGRES_URL must be set for this integration test. Example: postgres://ek:{PASSWORD}@localhost:5433/enterprise_knowledge"
+        "POSTGRES_URL must be set for this integration test. Example: postgres://mcp:{PASSWORD}@localhost:5433/mcp_connector"
       );
     }
 
