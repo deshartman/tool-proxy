@@ -8,7 +8,7 @@ import { loadConfig } from "../../src/config.js";
 // mcp_servers: [] is a legitimate posture — the customer uses ONLY drop-ins
 // (auto-discovered under MCP_DROPIN_DIR) and/or controller-pushed Type 2
 // MCPs (roster arrives over the WS at register-ack). The yaml only owns
-// hand-written Type 1 + Type 3 bundles; either can be empty.
+// hand-written Type 1 servers, which most deployments don't use.
 //
 // Pinned here so a future schema tightening (like the .min(1) that once
 // blocked the first Fly.io deploy) trips a red build instead of a silent

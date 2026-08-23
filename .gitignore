@@ -3,9 +3,9 @@ dist
 *.log
 *.tsbuildinfo
 
-# Python artifacts (Type 3 bundle source lives at bundles/<name>/ and uses
-# pip + venv during dev; in production the connector image ships only the
-# installed venv, not the source tree).
+# Python artifacts. The connector image ships no Python since the
+# enterprise-knowledge bundle was removed, but a customer MCP or a local
+# experiment can still leave these in the working tree.
 __pycache__/
 *.pyc
 *.pyo

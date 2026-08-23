@@ -3,7 +3,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { randomBytes } from "node:crypto";
 
 // v1.4 — Controller API calls (Twilio-bundled only). Two gates stand
-// between a Type 3 bundle's loopback POST and the tunnel: (1) the same
+// between a bundled MCP's loopback POST and the tunnel: (1) the same
 // per-MCP bearer token webhook ingress reuses (resolveMcpByWebhookToken),
 // (2) isAuthorTwilio — only Twilio-authored bundled MCPs may call this
 // route, never a customer drop-in. Small route harness that mirrors
