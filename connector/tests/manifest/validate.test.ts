@@ -49,16 +49,6 @@ function specType1(name: string): McpServerSpec {
   };
 }
 
-function specType3(name: string): McpServerSpec {
-  return {
-    name,
-    transport: "stdio",
-    command: [`/opt/bundled-mcps/${name}/.venv/bin/${name}`],
-    bundled: name,
-    timeout_ms: 30_000,
-  };
-}
-
 function specType2Http(name: string): McpServerSpec {
   return {
     name,
@@ -109,10 +99,9 @@ function warnOutput(): string {
 
 describe("validateManifestSchemas", () => {
   it("logs nothing when every shipped tool has an outputSchema", () => {
-    const config = makeConfig([specType1("crm"), specType3("enterprise-knowledge")]);
+    const config = makeConfig([specType1("crm")]);
     const manifest = makeManifest([
       { name: "crm", tools: [tool("get_recent", true), tool("get_customer", true)] },
-      { name: "enterprise-knowledge", tools: [tool("knowledge_query", true)] },
     ]);
     expect(() => validateManifestSchemas(manifest, config)).not.toThrow();
     expect(warnSpy).not.toHaveBeenCalled();
@@ -136,28 +125,21 @@ describe("validateManifestSchemas", () => {
   });
 
   it("aggregates one WARN per server even when multiple tools on that server are missing", () => {
-    const config = makeConfig([
-      specType1("crm"),
-      specType1("sample"),
-      specType3("enterprise-knowledge"),
-    ]);
+    const config = makeConfig([specType1("crm"), specType1("sample")]);
     const manifest = makeManifest([
       { name: "crm", tools: [tool("get_customer", false), tool("issue_refund", false)] },
       { name: "sample", tools: [tool("uuid", false)] },
-      { name: "enterprise-knowledge", tools: [tool("knowledge_query", false)] },
     ]);
     validateManifestSchemas(manifest, config);
-    // Three servers with missing tools → exactly three WARN lines (not four
-    // — crm aggregates its two missing tools into a single line). One
-    // line per server is the whole point of the new shape.
-    expect(warnSpy).toHaveBeenCalledTimes(3);
+    // Two servers with missing tools → exactly two WARN lines (not three —
+    // crm aggregates its two missing tools into a single line). One line
+    // per server is the whole point of the new shape.
+    expect(warnSpy).toHaveBeenCalledTimes(2);
     const out = warnOutput();
     expect(out).toContain("get_customer");
     expect(out).toContain("issue_refund");
     expect(out).toContain("sample");
     expect(out).toContain("uuid");
-    expect(out).toContain("enterprise-knowledge");
-    expect(out).toContain("knowledge_query");
   });
 
   it("logs nothing for an empty manifest", () => {

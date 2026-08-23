@@ -176,8 +176,9 @@ fly ssh console -a mcp-connector-acme-prod -C "mcp-connector doctor"
 
 You should also see in the inspector:
 
-- **MCP Server panel** — every Type 1 / Type 3 MCP from `connector.yaml` with
-  "Ready" verdicts
+- **MCP Server panel** — every discovered MCP (the Twilio-authored drop-ins
+  from `/app/bundled-mcps/`, plus anything the customer mounted) with "Ready"
+  verdicts
 - **Frames panel** — heartbeats flowing every ~1.5s
 - **Webhooks panel** — allocated URLs per MCP that called `createWebhookEndpoint`
 
@@ -254,68 +255,6 @@ the pickup:
 ```bash
 fly machine restart --app mcp-connector-acme-prod $(fly machines list -a mcp-connector-acme-prod -j | jq -r '.[0].id')
 ```
-
-### Optional: `enterprise_knowledge` bundle (pgvector + Ollama sidecar)
-
-The EK bundle needs two things beyond the base connector:
-
-1. **pgvector on the connector's Fly Postgres** (or a separate app — see
-   `EK-ON-FLY` design doc for the trust-boundary trade-off). To reuse the
-   connector's Postgres, run:
-
-   ```bash
-   # Create the DB (skip if already done):
-   fly ssh console -a <DB-APP> -C 'sh -c "PGPASSWORD=\$OPERATOR_PASSWORD psql -h localhost -U postgres -c \"CREATE DATABASE enterprise_knowledge;\""'
-
-   # Install the extension package. On the default 256 MB Fly Postgres,
-   # apt-get resolves deps in >200 MB of RAM and OOM-kills. Scale to 512 MB
-   # first (brief DB restart, connector auto-reconnects):
-   fly machine update $(fly machines list -a <DB-APP> -j | jq -r '.[0].id') \
-     --memory 512 --app <DB-APP> --yes
-
-   fly ssh console -a <DB-APP> -C 'sh -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-18-pgvector"'
-
-   fly ssh console -a <DB-APP> -C 'sh -c "PGPASSWORD=\$OPERATOR_PASSWORD psql -h localhost -U postgres -d enterprise_knowledge -c \"CREATE EXTENSION IF NOT EXISTS vector;\""'
-   ```
-
-   `apt-get install` modifies the container filesystem, which is ephemeral on
-   Fly Postgres. A future machine restart from an image update will drop the
-   extension package (the extension row in `pg_extension` survives — it's in
-   the data volume — but the on-disk `vector.so` / `vector.control` files
-   are gone, so `SELECT * FROM tbl_with_vector_col` fails). If you plan to
-   restart or upgrade the DB machine, expect to re-run the `apt-get install`
-   step. For durable pgvector, either graduate to a managed Postgres that
-   ships pgvector, or run a separate Fly Postgres app with pgvector baked
-   into a custom image.
-
-2. **Ollama sidecar** — separate private-only Fly app. See
-   [`bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md`](../../bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md) §"Fly.io" for the walkthrough
-   (uses [`deploy/fly/ollama/fly.toml.example`](ollama/fly.toml.example)).
-
-Then set the four EK secrets on the connector app:
-
-```bash
-OP_PW=$(fly ssh console -a <DB-APP> -C 'sh -c "echo \$OPERATOR_PASSWORD"' | tail -1 | tr -d '\r')
-
-fly secrets set --app <CONNECTOR-APP> --stage \
-  EK_PGVECTOR_DSN="postgres://postgres:${OP_PW}@<DB-APP>.flycast:5432/enterprise_knowledge" \
-  EK_EMBEDDER=ollama \
-  OLLAMA_URL="http://<OLLAMA-APP>.internal:11434" \
-  EK_OLLAMA_MODEL=nomic-embed-text
-
-fly deploy --app <CONNECTOR-APP> --config deploy/fly/fly.toml
-```
-
-Use `--stage` so the deploy in the next line picks up the secrets in a single
-Machine restart. Confirm via the inspector's MCP Server panel — the
-`enterprise_knowledge` server should list its five tools (`local_register`,
-`gdrive_register`, `knowledge_query`, `sources_refresh`, `sources_fetch`)
-with "Ready" verdicts.
-
-Note: `.flycast` on the DSN works because Fly Postgres apps get a `.flycast`
-address allocated automatically. The Ollama sidecar uses `.internal`
-because a plain private Fly app doesn't get `.flycast` without a
-`[[services]]` block (see EMBEDDING-SIDECAR.md for why we avoid one).
 
 ### Optional: `crm` drop-in + mock-backend Postgres store
 

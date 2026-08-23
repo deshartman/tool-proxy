@@ -82,13 +82,8 @@ export function discoverDropins(opts: DropinDiscoveryOpts): DropinSpec[] {
 // Discover Twilio-shipped bundled MCPs. D1 (always on): every valid folder
 // under MCP_BUNDLED_DIR registers unconditionally — no allowlist parameter,
 // no env-var gate. Customers who explicitly don't want a bundled MCP remove
-// its folder from their derived image or unmount it. Type 3 (Python venv)
-// bundles put source under bundled-mcps/<name>/source/; the Node-side spec
-// only carries dir: <folder> for per-entry .env merging, so the scanner
-// picks them up only if the folder itself has a tools/ subdir (Node bundle).
-// Type 3 bundles opt in via BUNDLED_MCPS in config.ts + a yaml entry
-// (transitional) or a future auto-registration path, not through this
-// scanner.
+// its folder from their derived image or unmount it. A folder is picked up
+// only if it has a tools/ subdir, i.e. it is a Node drop-in.
 export function discoverBundled(opts: { bundledDir?: string; yamlNames: Set<string> }): DropinSpec[] {
   const dir = resolveBundledDir(opts);
   return scanFolder(dir, opts.yamlNames, "twilio");

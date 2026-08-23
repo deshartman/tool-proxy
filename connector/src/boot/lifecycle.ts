@@ -889,11 +889,7 @@ function sameStdioInvocation(
 ): boolean {
   if (live.command.length !== fresh.command.length) return false;
   if (live.command.some((arg, index) => arg !== fresh.command[index])) return false;
-  // `bundled` carries the user-facing Type 3 identifier even after we've
-  // resolved it to a synthetic stdio spec. Compared so an edit from
-  // `bundled: a` to `bundled: b` is detected even if both happen to
-  // resolve to identical commands (or both resolve via dev override).
-  return live.bundled === fresh.bundled;
+  return true;
 }
 
 function sameStringMap(live?: Record<string, string>, fresh?: Record<string, string>): boolean {

@@ -38,8 +38,6 @@ connector is a daemon, not a library.
 |--------------------------------------------|------------------------------------------------------------------------------------------------------------|
 | `/app/connector/`                          | Compiled connector runtime (Node)                                                                          |
 | `/app/bundled-mcps/agentic-memory/`        | Type 1 Node bundle — mock memory + identity provider                                                       |
-| `/app/bundled-mcps/enterprise-knowledge/`  | Type 3 config stub (Python venv installed under `/opt/bundled-mcps/enterprise-knowledge/.venv/`)           |
-| `/opt/bundled-mcps/<name>/.venv/`          | Pre-installed Python venvs for Type 3 bundles                                                              |
 | `/var/lib/mcp-connector/customer-mcps/`    | Runtime drop-zone for customer-authored Type 1 MCPs (via derived-image `COPY` or volume mount)             |
 | `/etc/mcp-connector/connector.key`         | libsodium master key (mounted from your platform's secret store)                                           |
 
@@ -115,11 +113,14 @@ port-forward.
 | Name                    | Kind          | Status                          |
 |-------------------------|---------------|---------------------------------|
 | `agentic-memory`        | Type 1 (Node) | Mock memory + identity provider |
-| `enterprise-knowledge`  | Type 3 (Python venv) | LlamaIndex-backed RAG    |
 
-Both are **always on** — no allowlist, no env-var gate. To disable, remove
-the folder from your derived image or unmount it. Creds arrive via the
-controller UI (production) or the inspector's session-creds paste (dev).
+**Always on** — no allowlist, no env-var gate. To disable, remove the folder
+from your derived image or unmount it. Creds arrive via the controller UI
+(production) or the inspector's session-creds paste (dev).
+
+The connector ships **no knowledge base**. A customer builds their own and
+exposes it as an ordinary MCP against the contract in
+[docs/ENTERPRISE-KNOWLEDGE-INTERFACE.md](docs/ENTERPRISE-KNOWLEDGE-INTERFACE.md).
 
 Third-party MCPs (Twilio, Segment, etc.) live outside this repo as standalone
 npm packages loaded as Type 2 controller-config entries — added via the
@@ -133,8 +134,9 @@ Architecture + protocol:
 - [docs/MCP-PROTOCOL.md](docs/MCP-PROTOCOL.md) — wire-format reference.
 - [docs/INSPECTOR.md](docs/INSPECTOR.md) — inspector UI walkthrough.
 - [docs/ENV-VARS.md](docs/ENV-VARS.md) — every env var the connector reads.
-- [docs/BUNDLES.md](docs/BUNDLES.md) — Twilio-shipped MCP inventory.
 - [docs/AUTHOR-LOCAL-MCP.md](docs/AUTHOR-LOCAL-MCP.md) — how to write a drop-in.
+- [docs/ENTERPRISE-KNOWLEDGE-INTERFACE.md](docs/ENTERPRISE-KNOWLEDGE-INTERFACE.md)
+  — the MCP contract a customer-built knowledge base implements.
 
 Machine API (the JWT-bearer-gated routes an external system calls directly):
 - [docs/NETWORK-ACCESS.md](docs/NETWORK-ACCESS.md) — minting credentials,

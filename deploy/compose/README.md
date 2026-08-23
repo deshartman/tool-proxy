@@ -7,9 +7,11 @@ Two compose files ship here:
   master key. Bind the inspector to `127.0.0.1:9090` only. Never expose it
   to a public interface — the Webhooks panel surfaces bcrypt-protected
   URLs by design.
-- **`docker-compose.dev.yml`** — dev-time overrides (Ollama embedding
-  sidecar for the Enterprise Knowledge bundle, hot-reload knobs). Pair
-  with the prod file: `docker compose -f docker-compose.prod.yml -f
+- **`docker-compose.dev.yml`** — the dev-time Postgres the connector uses as
+  its own config store (sealed `controllers` row), on host port 5433 so it
+  doesn't collide with another local Postgres. `scripts/start-connector.sh`
+  starts it for you; you rarely invoke this file directly. Pair with the prod
+  file if you do: `docker compose -f docker-compose.prod.yml -f
   docker-compose.dev.yml up`.
 
 Copy `.env.example` → `.env` and fill in `POSTGRES_URL`, `CONNECTOR_KEY_FILE`
@@ -54,4 +56,3 @@ this way. See `docs/NETWORK-ACCESS.md`.
 ## See also
 
 - Umbrella: [`deploy/README.md`](../README.md).
-- Enterprise-Knowledge sidecar wiring: [`bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md`](../../bundled-mcps/enterprise-knowledge/EMBEDDING-SIDECAR.md).

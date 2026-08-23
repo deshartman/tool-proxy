@@ -15,8 +15,8 @@ build-and-push cycle — use [VOLUME-MOUNT.md](./VOLUME-MOUNT.md) for that.
 
 ## How it works
 
-The base image `twilio/mcp-connector:<tag>` bakes the connector, `tsx`,
-`mcp/` tree, and Python venvs for Type 3 bundles into a runtime layer.
+The base image `twilio/mcp-connector:<tag>` bakes the connector, `tsx`, and
+the Twilio-authored `bundled-mcps/` tree into a runtime layer.
 Your derived image copies your Type 1 MCPs into the well-known drop-in
 path — the same path the volume-mount path bind-mounts into — and the
 connector's drop-in scanner picks them up at boot with **zero connector
@@ -53,8 +53,8 @@ Approve before the tools land on the manifest.
 
 ### Optional: bake a curated `connector.yaml`
 
-Only useful if you're pinning yaml-listed Type 3 bundles or legacy
-hand-written Type 1 entries. Customer creds should still come from the
+Only useful if you're pinning a legacy hand-written Type 1 entry (an MCP
+shipping its own `server.ts`). Customer creds should still come from the
 controller, not build-time env.
 
 ```dockerfile

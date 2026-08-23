@@ -386,7 +386,7 @@ export interface McpNotificationFrame {
 // Approval state lives on the controller. After every register-ack the
 // controller replays `mcp-enable` for every previously-approved MCP — the
 // connector keeps the approved set in RAM only (no .connector-state.json
-// persistence). Yaml-listed Type 1 / Type 3 / 3rd-party MCPs are NOT gated.
+// persistence). Yaml-listed Type 1 and 3rd-party MCPs are NOT gated.
 //
 // See docs/MCP-PROTOCOL.md §"v1.3 — Customer drop-in approval gate" and
 // .claude/plans/MCP-CUSTOM-APPROVAL.md for the full contract.

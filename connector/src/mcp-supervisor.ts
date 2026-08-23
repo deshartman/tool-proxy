@@ -6,7 +6,6 @@
 //     dropin-runner against the folder
 //   * Type 2 stdio — connect via the existing servers/connect path
 //   * Type 2 http (external endpoint) — connect via the existing path
-//   * Type 3 bundled — same as Type 2 stdio (the spec is already synthetic)
 //
 // At boot the supervisor takes the resolved spec list, spawns/connects each,
 // and surfaces an McpServerConnection map the dispatcher consumes. It also

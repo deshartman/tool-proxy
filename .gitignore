@@ -92,9 +92,10 @@ architectural-plans/
 # the inspector through the Playwright browser MCP during verification).
 .playwright-mcp/
 
-# Ollama embedding sidecar model cache (dev only). Mount this as a volume
-# in docker-compose.dev.yml so the ~274MB model weights survive container
-# restarts. Production deployments pre-populate or use baked images.
+# Ollama model cache (dev only). Nothing in this repo runs Ollama since the
+# enterprise-knowledge bundle was removed, but a developer building their own
+# knowledge MCP against a local one will produce this — hundreds of MB of
+# model weights that must never enter a commit or a build context.
 .ollama-cache/
 
 .local/
