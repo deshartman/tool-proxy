@@ -114,6 +114,29 @@ function computeDropinNodePath(): string {
 }
 const DROPIN_NODE_PATH = computeDropinNodePath();
 
+// Connector-only secrets that must NOT reach a spawned child by inheritance
+// (MCP-AUDIT #2). boot/require-env.ts requires exactly two env vars and both
+// are secrets or paths to secrets: POSTGRES_URL is the DSN *with the password*
+// for the database holding the sealed `controllers` row, and CONNECTOR_KEY_FILE
+// points at the 32-byte libsodium master key that seals it. Children run as the
+// SAME uid as the connector (the entrypoint drops privileges once, before any
+// spawn), so a mode-0400 key file is readable by any child that learns its
+// path — enough to decrypt the tunnel bearer and registration token.
+//
+// SCOPE: this filters the `process.env` INHERITANCE layer only. The later
+// layers (spec.env / dir/.env, sessionEnv, controllerEnv) may still set these
+// keys, because there a value is a deliberate act by the operator — a customer
+// MCP that genuinely wants its own `POSTGRES_URL` must keep working. What we
+// refuse is the silent hand-me-down.
+const CONNECTOR_ONLY_ENV: ReadonlySet<string> = new Set([
+  "POSTGRES_URL",
+  "POSTGRES_URL_TEMPLATE",
+  "POSTGRES_PW_FILE",
+  "POSTGRES_SCHEMA",
+  "CONNECTOR_KEY_FILE",
+  "CONNECTOR_KEY_B64",
+]);
+
 // Spec union the supervisor accepts. Dropin specs are an internal extension
 // of Type 1 (transport: http + dir) carrying a marker; the rest is plain
 // McpServerSpec.
@@ -837,6 +860,10 @@ export class McpSupervisor {
   ): NodeJS.ProcessEnv {
     const out: NodeJS.ProcessEnv = {};
     for (const [key, value] of Object.entries(process.env)) {
+      // MCP-AUDIT #2: never hand the connector's own secrets down by
+      // inheritance. Deliberate later layers can still set these — see the
+      // SCOPE note on CONNECTOR_ONLY_ENV.
+      if (CONNECTOR_ONLY_ENV.has(key)) continue;
       if (typeof value === "string") {
         out[key] = value;
         sources[key] = "process.env";
