@@ -45,11 +45,30 @@ export interface CreateMcpHttpServerOptions {
 
 export interface McpHttpServerHandle {
   port: number;
+  // Bound address, as reported by the listening socket. Always LOOPBACK_BIND in
+  // practice; surfaced so the MCP-AUDIT #1 test can assert the real bind rather
+  // than infer it from OS bind semantics (which differ between Linux and BSD
+  // once SO_REUSEADDR is in play, and so cannot discriminate portably).
+  address: string;
   close(): Promise<void>;
 }
 
+// See the bind-address note on createMcpHttpServer below. Named rather than
+// inlined so the hardening test can assert against the same constant.
+export const LOOPBACK_BIND = "127.0.0.1";
+
 // Customer-authored Type 1 MCP servers call this from their `server.ts`, and
 // every drop-in / bundled MCP reaches it through the drop-in runner.
+//
+// BIND ADDRESS IS LOOPBACK-ONLY, DELIBERATELY (MCP-AUDIT #1). `/mcp` carries the
+// MCP's entire tool surface with no authentication of any kind — including write
+// tools running under real customer credentials — and `/envkeys` names the creds
+// it wants. Omitting the host argument makes Node bind `::`/`0.0.0.0`, which put
+// that surface on every interface: the LAN in dev, and every sibling in the
+// container's network namespace in production. Nothing needs the wider bind —
+// the connector always dials `http://127.0.0.1:<port>/mcp` (the endpoint
+// mcp-supervisor's spawnChild stamps onto the spec) and reaches /envkeys through
+// that same URL. Don't drop the host argument, and don't make it configurable.
 //
 // Serves MCP `2026-07-28` and — via createMcpHandler's default
 // `legacy: 'stateless'` — the 2025-era protocol too: one endpoint, both eras,
@@ -142,9 +161,10 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
     });
 
     http.once("error", rejectListen);
-    http.listen(requestedPort, () => {
+    http.listen(requestedPort, LOOPBACK_BIND, () => {
       const addr = http.address();
       const port = typeof addr === "object" && addr ? addr.port : requestedPort;
+      const address = typeof addr === "object" && addr ? addr.address : LOOPBACK_BIND;
       const log = createLogger(opts.name);
       log.info({
         port,
@@ -155,6 +175,7 @@ export async function createMcpHttpServer(opts: CreateMcpHttpServerOptions): Pro
       }, `listening`);
       resolveListen({
         port,
+        address,
         close: () =>
           new Promise<void>((res) => {
             http.close(() => {

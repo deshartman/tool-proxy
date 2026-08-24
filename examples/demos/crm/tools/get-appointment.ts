@@ -1,11 +1,10 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
+import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 
 // Returns the customer's next upcoming appointment keyed by phone. The
 // reschedule procedure calls this to find the appointment to move; if there
 // is none the procedure short-circuits.
-const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
-const REQ_TIMEOUT_MS = 4000;
 
 // Mirrors mock/customers/calendar.ts Appointment shape. Reschedule
 // procedures project these fields directly (e.g. {{ get_appointment.start }}
@@ -37,6 +36,7 @@ interface AppointmentResponse {
 
 export const getAppointment: Tool = {
   name: "get_appointment",
+  envKeys: ["MOCK_CUSTOMERS_URL"],
   register(server) {
     server.registerTool(
       "get_appointment",

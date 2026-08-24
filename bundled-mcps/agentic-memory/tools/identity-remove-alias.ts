@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { ChannelSchema } from "../schemas.js";
+import { ChannelSchema, ExternalIdSchema } from "../schemas.js";
 import { NormalizationError, normalizeChannelValue } from "../normalize.js";
-import { aliasKey, store } from "../state.js";
+import { aliasKey, commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
   channel: ChannelSchema,
   value: z.string(),
 };
@@ -57,7 +57,10 @@ export const identityRemoveAlias: Tool = {
         if (wasPresent && store.state.aliasIndex[key] === externalId) {
           delete store.state.aliasIndex[key];
         }
-        if (wasPresent) store.commit();
+        if (wasPresent) {
+          const failed = commitOrError();
+          if (failed) return failed;
+        }
         const data = { success: true, wasPresent };
         return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }] };
       },

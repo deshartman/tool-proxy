@@ -61,6 +61,8 @@ __pycache__/
 # identity + memory data. Deterministic externalIds mean deleting this
 # file rehydrates cleanly on next call; safe to gitignore.
 bundled-mcps/agentic-memory/.state.json
+# ...and the atomic-write temp file, which a crash mid-write can leave behind.
+bundled-mcps/agentic-memory/.state.json.tmp
 
 # customer-mcps/ is the runtime drop-zone for customer-authored Type 1 MCPs.
 # Its README ships (tracked below) so a customer clone shows the shape; every

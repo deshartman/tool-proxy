@@ -1,13 +1,16 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { ChannelSchema, ISO_DATETIME } from "../schemas.js";
+import { ChannelSchema, ExternalIdSchema, ISO_DATETIME, MAX_EPISODES_PER_IDENTITY, SummarySchema } from "../schemas.js";
+import { createLogger } from "@mcp-shim/connector/sdk";
 import { episodeId } from "../id.js";
-import { store } from "../state.js";
+import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
+const log = createLogger("agentic-memory");
+
 const InputSchema = {
-  externalId: z.string(),
-  summary: z.string(),
+  externalId: ExternalIdSchema,
+  summary: SummarySchema,
   metadata: z.object({
     channelKind: ChannelSchema,
     sessionKey: z.string(),
@@ -53,8 +56,19 @@ export const memoryEpisodicAppend: Tool = {
         };
         const list = store.state.episodes[externalId] ?? [];
         list.push(episode);
+        // Retention trim (MCP-AUDIT #18), oldest-first. Not a caller error — the
+        // append is valid — so it is logged rather than returned. Bounds both the
+        // state file and the per-commit re-serialize cost.
+        if (list.length > MAX_EPISODES_PER_IDENTITY) {
+          const dropped = list.splice(0, list.length - MAX_EPISODES_PER_IDENTITY);
+          log.warn(
+            { externalId, dropped: dropped.length, cap: MAX_EPISODES_PER_IDENTITY },
+            "episode retention cap reached; dropped oldest",
+          );
+        }
         store.state.episodes[externalId] = list;
-        store.commit();
+        const failed = commitOrError();
+        if (failed) return failed;
         const data = { success: true, episodeId: id };
         return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }] };
       },

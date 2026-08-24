@@ -3,6 +3,8 @@
 // README.md "Auth model" for why this bundle rolls its own client instead of
 // the official @salesforce/mcp package.
 
+import { envString } from "@mcp-shim/connector/sdk";
+
 const API_VERSION = "v62.0";
 // Client Credentials token responses may omit expires_in, so this is a
 // conservative proactive-refresh heuristic. The 401 → forced refresh → retry
@@ -18,7 +20,10 @@ interface TokenState {
 let cached: TokenState | undefined;
 
 function loginUrl(): string {
-  return process.env.SF_LOGIN_URL ?? "https://login.salesforce.com";
+  // envString, not `??` (MCP-AUDIT #21): SF_LOGIN_URL="" is how an operator
+  // says "use the default", but `??` treats "" as set and fetch() then throws
+  // "Failed to parse URL" on the bare /services/oauth2/token path.
+  return envString("SF_LOGIN_URL", "https://login.salesforce.com");
 }
 
 async function fetchToken(): Promise<TokenState> {
@@ -80,6 +85,21 @@ export async function sfFetch(path: string, init: RequestInit = {}): Promise<SfF
     return { status: 204, ok: true, body: undefined };
   }
   const text = await res.text();
-  const body = text.length > 0 ? JSON.parse(text) : undefined;
-  return { status: res.status, ok: res.ok, body };
+  // MCP-AUDIT #19: a non-JSON body — a proxy's HTML error page, a WAF block, a
+  // maintenance interstitial — used to throw a raw SyntaxError, surfacing as an
+  // opaque tool failure instead of the structured envelope every other path in
+  // this module produces. Fall back to the raw text so salesforceError can still
+  // report something useful.
+  return { status: res.status, ok: res.ok, body: parseJsonOrRaw(text) };
+}
+
+function parseJsonOrRaw(text: string): unknown {
+  if (text.length === 0) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Cap it: an HTML error page can be large, and this reaches the controller's
+    // model as tool output.
+    return { raw: text.length > 2000 ? `${text.slice(0, 2000)}… [truncated]` : text };
+  }
 }

@@ -19,9 +19,9 @@ const CSRF_HEADERS = { "content-type": "application/json", "x-inspector-request"
 describe("POST /internal/network-access/clients — auto-enable on first add", () => {
   const TEST_SCHEMA = "test_mcp_connector_addclient_" + Date.now();
   let store: ConfigStore;
-  let pool: pg.Pool;
+  let pool: pg.Pool | undefined;
   let masterKey: { bytes: Buffer; fingerprint: string };
-  let server: Server;
+  let server: Server | undefined;
   let port: number;
   let rebindCallCount: number;
 
@@ -45,10 +45,13 @@ describe("POST /internal/network-access/clients — auto-enable on first add", (
   });
 
   afterAll(async () => {
+    // MCP-AUDIT #22: beforeAll throws on its first line when POSTGRES_URL is
+    // unset, so nothing below is assigned yet. Every handle is optional-guarded
+    // so this teardown is a no-op rather than a TypeError masking the real cause.
     await store?.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await pool.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
-    await pool.end();
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    await pool?.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
+    await pool?.end();
     delete process.env.POSTGRES_SCHEMA;
   });
 

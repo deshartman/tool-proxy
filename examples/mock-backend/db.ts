@@ -18,8 +18,13 @@ import { pino } from "pino";
 
 const { Pool } = pg;
 
+// LOG_LEVEL="" == unset (MCP-AUDIT #21). pino throws on an empty level, so a
+// blank line in the environment stops the service booting — the same guard
+// server.ts applies. Note the DSN read below already gets this right (`?.trim()`
+// plus an explicit "empty string counts as unset" message); this line did not.
+const logLevel = process.env.LOG_LEVEL;
 const log = pino({
-  level: process.env.LOG_LEVEL ?? "info",
+  level: logLevel === undefined || logLevel === "" ? "info" : logLevel,
 }).child({ component: "mock-customers-db" });
 
 const DSN = process.env.MOCK_POSTGRES_URL?.trim();

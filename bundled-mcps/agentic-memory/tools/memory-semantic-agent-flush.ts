@@ -1,11 +1,11 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { ISO_DATETIME } from "../schemas.js";
-import { store } from "../state.js";
+import { ExternalIdSchema, ISO_DATETIME } from "../schemas.js";
+import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
   flushedAt: ISO_DATETIME,
 };
 
@@ -43,7 +43,8 @@ export const memorySemanticAgentFlush: Tool = {
         }
         cache.sourceRefs = [];
         cache.lastEngagedAt = flushedAt;
-        store.commit();
+        const failed = commitOrError();
+        if (failed) return failed;
         const data = { flushed: true };
         return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }] };
       },

@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { HydrationReferenceSchema, ISO_DATETIME } from "../schemas.js";
+import { ExternalIdSchema, HydrationReferenceSchema, ISO_DATETIME, MAX_SOURCE_REFS } from "../schemas.js";
 import type { HydrationReference } from "../state.js";
-import { store } from "../state.js";
+import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
   additionalRefs: z.array(HydrationReferenceSchema),
   now: ISO_DATETIME,
 };
@@ -49,6 +49,21 @@ export const memorySemanticUpsertRefs: Tool = {
           hydratedAt: now,
         };
         const seen = new Set(cache.sourceRefs.map(refKey));
+        // Count what this call would actually ADD — the merge is dedup-by-key, so
+        // re-sending refs already held must not count against the cap.
+        const wouldAdd = new Set(
+          additionalRefs.map(refKey).filter((k) => !seen.has(k)),
+        ).size;
+        // MCP-AUDIT #18: capabilities.ts advertises maxSourceRefs, so exceeding it
+        // is the caller's error and is reported as one. Accepting the write and
+        // silently dropping the overflow would make the advertised number a lie,
+        // and the caller could not tell a full cache from a successful append.
+        if (cache.sourceRefs.length + wouldAdd > MAX_SOURCE_REFS) {
+          return toolError(
+            "storage_full",
+            `sourceRefs cap reached: ${cache.sourceRefs.length} held + ${wouldAdd} new exceeds maxSourceRefs ${MAX_SOURCE_REFS}. Prune with memory_semantic_prune_refs.`,
+          );
+        }
         for (const ref of additionalRefs) {
           const k = refKey(ref);
           if (!seen.has(k)) {
@@ -59,7 +74,8 @@ export const memorySemanticUpsertRefs: Tool = {
         cache.hydratedAt = cache.hydratedAt ?? now;
         cache.lastEngagedAt = now;
         store.state.semanticCache[externalId] = cache;
-        store.commit();
+        const failed = commitOrError();
+        if (failed) return failed;
         const data = {
           resolved: cache.resolved,
           sourceRefs: cache.sourceRefs,

@@ -3,7 +3,7 @@ import type { Tool } from "@mcp-shim/connector/sdk";
 import { AliasEntrySchema, ChannelSchema } from "../schemas.js";
 import { NormalizationError, normalizeChannelValue } from "../normalize.js";
 import { externalIdFor } from "../id.js";
-import { aliasKey, store } from "../state.js";
+import { aliasKey, commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
@@ -70,7 +70,8 @@ export const identityResolve: Tool = {
           createdAt: now,
         };
         store.state.aliasIndex[key] = externalId;
-        store.commit();
+        const failed = commitOrError();
+        if (failed) return failed;
 
         const data = { externalId, isNew: true, aliases: [alias] };
         return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }] };

@@ -1,13 +1,12 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { recordLookup } from "../resources/recent-lookups.js";
+import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 
 // Identity lookup against the mock customer service. Returns name, surname,
 // phone, email — no order history (callers that need that go to get_recent).
 // On success, pushes the phone onto the recent-lookups resource for the
 // procedure to read back at `crm://lookups/recent`.
-const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
-const REQ_TIMEOUT_MS = 4000;
 
 interface CustomerLookupResponse {
   customer: { name: string; surname: string; phone?: string; email?: string };
@@ -27,6 +26,7 @@ const OutputSchema = {
 
 export const getCustomer: Tool = {
   name: "get_customer",
+  envKeys: ["MOCK_CUSTOMERS_URL"],
   register(server) {
     server.registerTool(
       "get_customer",

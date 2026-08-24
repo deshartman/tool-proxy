@@ -1,13 +1,12 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
+import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 
 // Validates a candidate slot. Returns whether the slot is free, plus nearby
 // suggestions when it isn't — every free hourly slot across the next 3 working
 // days, which is up to ~24, NOT three. The procedure also reads daysFromNow /
 // isSameDay off the response to drive its edge-case branches (>30d-out
 // confirmation, same-day manager-approval escalation).
-const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
-const REQ_TIMEOUT_MS = 4000;
 
 // Mirrors mock/customers/calendar.ts AvailabilityResult. The mock service
 // always returns 200 with this body shape — `available` distinguishes the
@@ -38,6 +37,7 @@ interface AvailabilityResponse {
 
 export const checkAvailability: Tool = {
   name: "check_availability",
+  envKeys: ["MOCK_CUSTOMERS_URL"],
   register(server) {
     server.registerTool(
       "check_availability",

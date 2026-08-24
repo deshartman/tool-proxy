@@ -80,6 +80,20 @@ RUN apk add --no-cache su-exec \
  && mkdir -p /etc/mcp-connector /var/lib/mcp-connector/customer-mcps \
  && chown -R mcp:mcp /app /etc/mcp-connector /var/lib/mcp-connector
 # DO NOT set USER mcp — entrypoint needs root for chown, drops via su-exec
+#
+# NOTE on ownership (MCP-AUDIT #3): the chown above runs BEFORE the COPY lines
+# below, and COPY defaults to 0:0 — so /app/node_modules, /app/connector/dist and
+# /app/bundled-mcps ship ROOT-OWNED while the process runs as mcp. That is
+# deliberate and must stay: an immutable code tree means a compromised child
+# (which runs as the same uid as the connector) cannot rewrite the connector's
+# own dist/ or a sibling MCP's tools to persist across a restart. Do NOT "fix"
+# this by adding --chown=mcp:mcp to the COPY lines.
+#
+# The corollary is that nothing may write inside /app at runtime. The one thing
+# that tried to — the agentic-memory mock's state file, which resolved relative
+# to its own module — now writes under /var/lib/mcp-connector instead (see the
+# AGENTIC_MEMORY_STATE_PATH ENV below). Anything else needing persistence
+# belongs on that volume too, not next to the code.
 
 # Connector + its prod deps (incl. tsx, which the spawner needs to run
 # Type 1 children). npm workspaces hoist MOST deps to the root node_modules
@@ -128,6 +142,14 @@ ENV CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key
 # to auto-register Twilio-shipped MCPs. Override at deploy time only when
 # extending the image via volume mount rather than derived-image COPY.
 ENV MCP_BUNDLED_DIR=/app/bundled-mcps
+# agentic-memory's JSON state file (MCP-AUDIT #3 / #30). Without this it resolves
+# relative to its own module — /app/bundled-mcps/agentic-memory/.state.json —
+# which is root-owned per the ownership note above, so every mutating tool in the
+# bundle failed EACCES in the image while working fine in dev where the developer
+# owns the tree. /var/lib/mcp-connector IS created and chowned to mcp above, and
+# is the volume mount point in every deploy target, so state survives a restart.
+# state.ts creates the parent dir on first write and chmods the file to 0600.
+ENV AGENTIC_MEMORY_STATE_PATH=/var/lib/mcp-connector/agentic-memory/.state.json
 
 EXPOSE 9090
 ENTRYPOINT ["/usr/local/bin/mcp-connector-entrypoint.sh"]

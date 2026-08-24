@@ -14,16 +14,19 @@
 //     volume mount (K8s ConfigMap / PVC, Fly volume, AWS EFS, Azure
 //     Files, docker-compose bind mount). See deploy/DERIVED-IMAGE.md
 //     and deploy/VOLUME-MOUNT.md.
-//   * Local dev: defaults to mcp/local/ relative to the connector package
-//     so the bundled `sample` drop-in works without a new mount.
+//   * Local dev: scripts/start-connector.sh exports MCP_DROPIN_DIR pointing at
+//     the working tree's customer-mcps/. There is no implicit local-dev
+//     fallback — resolveDropinDir returns DROPIN_PROD_DEFAULT when the env var
+//     is unset.
 
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseDotenv } from "dotenv";
 import { readFileSync } from "node:fs";
 import type { McpServerSpec } from "./config.js";
 import { envOptional } from "./env.js";
+import { createLogger } from "./logger.js";
 
 // ESM equivalent of CJS `__dirname`. At runtime this resolves to the
 // compiled `dist/` directory because tsc preserves file structure under
@@ -37,10 +40,6 @@ export interface DropinDiscoveryOpts {
   // Override the resolved dropin dir (tests). Defaults to
   // process.env.MCP_DROPIN_DIR or the platform default below.
   dropinDir?: string;
-  // Where mcp/local/ lives, used for the local-dev default. Tests pass an
-  // absolute path; production callers pass the connector package root so
-  // dist/ can resolve up two levels to the repo root.
-  localDevRoot?: string;
 }
 
 // Drop-in specs are an internal extension of Type 1 (http + dir + no
@@ -52,6 +51,42 @@ export type DropinSpec = Extract<McpServerSpec, { transport: "http" }> & {
   __dropin: true;
   __author?: "twilio" | "customer";
 };
+
+const log = createLogger("dropin");
+
+// MCP-AUDIT #31 — discovery must not leave the directory it was pointed at.
+// statSync/existsSync follow symlinks, so a directory symlink inside the drop-in
+// dir is followed transparently and any tools/*.{ts,js} beneath it gets imported
+// and spawned.
+//
+// The threat is a PRIVILEGE SPLIT, not an attacker who can already write here
+// (they would just drop a .ts file directly): a read-only mount — a ConfigMap, a
+// baked derived image — is treated as reviewed, but a symlink committed into it
+// points at a writable path (/tmp, a scratch volume, a log dir). The reviewed
+// artifact then runs unreviewed code, and no diff of the mount shows it.
+//
+// Enforced by default. The escape hatch exists because the documented dev
+// workflow symlinks examples/demos/<name> into customer-mcps/<name>, which is
+// legitimately outside the drop-in root; scripts/start-connector.sh sets it.
+// Do NOT set it in a deployed container.
+const ALLOW_SYMLINK_ESCAPE_ENV = "MCP_DROPIN_ALLOW_SYMLINK_ESCAPE";
+
+function symlinkEscapeAllowed(): boolean {
+  return envOptional(ALLOW_SYMLINK_ESCAPE_ENV) === "1";
+}
+
+// MCP-AUDIT #16 — the folder name becomes the MCP name verbatim, and the
+// dispatcher routes on the FIRST dot: `qualifiedName.indexOf(".")` splits
+// `${server}.${tool}`. So a folder named `acme.crm` yields `acme.crm.get_customer`,
+// which splits to server `acme` / tool `crm.get_customer` — `tool_not_found` for
+// every tool in the folder, with nothing anywhere explaining why. Whitespace and
+// non-ASCII names were accepted just as silently.
+//
+// Deliberately conservative: alphanumeric start, then alphanumerics, dash, or
+// underscore. Covers every name we ship (agentic-memory, crm, salesforce, sample)
+// and rejects the shapes that break routing. Widening this means re-checking the
+// dispatcher's split.
+const MCP_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/i;
 
 const DROPIN_PROD_DEFAULT = "/var/lib/mcp-connector/customer-mcps";
 const BUNDLED_PROD_DEFAULT = "/app/bundled-mcps";
@@ -99,9 +134,56 @@ function scanFolder(
 ): DropinSpec[] {
   if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) return [];
   const out: DropinSpec[] = [];
+  // Real path of the root, for the containment check below. A symlinked root is
+  // fine — it is the operator's own choice of where to point us.
+  let root: string;
+  try {
+    root = realpathSync(dir);
+  } catch (err) {
+    log.error({ dir, err: err as Error }, `cannot resolve drop-in dir — skipping discovery`);
+    return [];
+  }
+  const allowEscape = symlinkEscapeAllowed();
   for (const name of readdirSync(dir)) {
     const folder = resolve(dir, name);
-    if (!statSync(folder).isDirectory()) continue;
+    // MCP-AUDIT #7: statSync follows symlinks and THROWS on a dangling one. This
+    // was unguarded, and neither call site wraps the function — so one broken
+    // symlink meant ZERO MCPs discovered (at boot and on rescan), surfacing as a
+    // boot crash rather than "your drop-ins are missing". Skip the entry, not the
+    // scan — and say so, because a dangling link is a misconfiguration the
+    // operator wants to know about, not something to swallow silently.
+    let real: string;
+    let isDir = false;
+    try {
+      real = realpathSync(folder);
+      isDir = statSync(folder).isDirectory();
+    } catch (err) {
+      log.warn(
+        { folder, err: (err as Error).message },
+        `drop-in entry could not be resolved (dangling symlink or raced deletion) — skipping this entry`,
+      );
+      continue;
+    }
+    if (!isDir) continue;
+    // MCP-AUDIT #31: containment. See ALLOW_SYMLINK_ESCAPE_ENV above.
+    if (real !== root && !real.startsWith(root + sep)) {
+      if (!allowEscape) {
+        log.warn(
+          { folder, resolvedTo: real, root, allowVia: ALLOW_SYMLINK_ESCAPE_ENV },
+          `drop-in folder resolves OUTSIDE the drop-in dir — skipping (set ${ALLOW_SYMLINK_ESCAPE_ENV}=1 for the symlink-based dev workflow)`,
+        );
+        continue;
+      }
+      log.debug({ folder, resolvedTo: real }, `drop-in folder resolves outside the drop-in dir — allowed by ${ALLOW_SYMLINK_ESCAPE_ENV}`);
+    }
+    // MCP-AUDIT #16: reject unroutable names before they become MCP names.
+    if (!MCP_NAME_RE.test(name)) {
+      log.warn(
+        { folder, name },
+        `drop-in folder name is not a valid MCP name (letters, digits, dash, underscore; no dots) — skipping`,
+      );
+      continue;
+    }
     if (yamlNames.has(name)) continue;          // yaml entry wins
     if (existsSync(resolve(folder, "server.ts"))) continue; // hand-written Type 1 wins
     const toolsDir = resolve(folder, "tools");
@@ -148,14 +230,4 @@ export function isDropinSpec(spec: McpServerSpec | DropinSpec): spec is DropinSp
 export function dropinRunnerPath(): string {
   // `here` at runtime is dist/; the runner sits at dist/sdk/dropin-runner.js.
   return resolve(here, "sdk", "dropin-runner.js");
-}
-
-// Helper for callers that need to feed the supervisor a uniform list:
-// returns the directory the connector package itself lives in. Used as
-// the dev-only fallback when MCP_DROPIN_DIR is unset; production
-// customers always either set MCP_DROPIN_DIR or land MCPs at
-// PROD_DEFAULT (see resolution comment above).
-export function connectorPackageRoot(): string {
-  // `here` at runtime is dist/; up one to connector/.
-  return dirname(here);
 }

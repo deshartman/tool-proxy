@@ -1,13 +1,13 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { ISO_DATETIME } from "../schemas.js";
+import { ExternalIdSchema, ISO_DATETIME } from "../schemas.js";
 import type { HydrationReference } from "../state.js";
-import { store } from "../state.js";
+import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  winner: z.string(),
-  loser: z.string(),
+  winner: ExternalIdSchema,
+  loser: ExternalIdSchema,
   mergedAt: ISO_DATETIME,
 };
 
@@ -60,7 +60,8 @@ export const memorySemanticMergeIdentities: Tool = {
         winnerCache.lastEngagedAt = mergedAt;
         store.state.semanticCache[winner] = winnerCache;
         delete store.state.semanticCache[loser];
-        store.commit();
+        const failed = commitOrError();
+        if (failed) return failed;
         const data = { success: true };
         return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }] };
       },

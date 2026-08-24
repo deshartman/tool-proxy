@@ -59,6 +59,14 @@ One row per MCP, with:
   - **Restart** — re-spawn the child with current env. Resets the consecutive-failure counter. Also clears the message-history log.
   - **Clear** — wipes the message-history log only, without touching the child process.
 
+> **Tool arguments are visible here regardless of `policy.log_tool_args`**. The dispatcher's *log line* for a call renders its arguments through that policy, whose default is `redacted` — this pane does not, and shows the payload verbatim. That is deliberate: the pane exists so a developer can see what actually went into a tool, and the two surfaces have different exposure. The log stream is durable and leaves the box; this pane is in-memory, capped, cleared on restart or **Clear**, and served loopback-only.
+>
+> The one setting it does honour is `log_tool_args: none` — nobody arrives at that by accident, so it is read as "do not record tool arguments anywhere" and request payloads show as `<args hidden by policy.log_tool_args=none>`. Results are still shown: the knob is named after arguments and makes no claim about them.
+>
+> Practical consequence: **a credential passed as a tool argument is legible in this pane** at the default setting. Set `log_tool_args: none` if that matters for your deployment.
+>
+> Each entry's payload is capped at 32 KB; a larger one is replaced with `<elided: N bytes …>` naming its real size. The ring holds 500 entries per MCP, so the pane's memory is bounded at roughly 16 MB per MCP rather than by whatever the biggest response happened to be.
+
 ### Webhooks
 
 One row per MCP that called `createWebhookEndpoint`. Shows the bcrypt-protected public URL with a **copy** button — operators paste it into Twilio configs (statusCallback, recording callbacks, etc.). The URL prefix is stable across reconnects; the random tail re-mints on every `webhook-allocate`.
@@ -98,7 +106,7 @@ Click the **purple `<name>`** on any MCP server card to open the creds view in t
 
 ### What session creds are for
 
-Session creds are the **developer's local feedback loop**. After dropping a folder under `mcp/local/<name>/` you'd otherwise have to wait for an admin to paste creds in the controller UI before you could smoke-test your tool. Session creds let you paste your own dev creds directly into the inspector — values live in connector RAM only, expire after 12 hours, and never persist to disk or cross to the controller.
+Session creds are the **developer's local feedback loop**. After dropping a folder under `${MCP_DROPIN_DIR}/<name>/` you'd otherwise have to wait for an admin to paste creds in the controller UI before you could smoke-test your tool. Session creds let you paste your own dev creds directly into the inspector — values live in connector RAM only, expire after 12 hours, and never persist to disk or cross to the controller.
 
 ### Precedence
 
