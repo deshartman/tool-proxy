@@ -146,11 +146,33 @@ describe("render — variable substitution", () => {
     expect(toml.content).toContain(`guest_path = "/etc/mcp-connector/config.yaml"`);
     expect(toml.content).toContain(`local_path = "deploy/fly/connector.yaml"`);
 
-    // Post-merge tweak: demo convenience — point drop-in scanner at the
-    // in-image tree so sample MCPs auto-appear. Load-bearing for the
-    // out-of-box demo experience; commented instructions tell real
-    // customers when to remove it.
-    expect(toml.content).toMatch(/^\s*MCP_DROPIN_DIR\s*=\s*"\/app\/mcp\/local"/m);
+    // MCP_DROPIN_DIR must NOT be set, and this assertion was inverted
+    // deliberately. It once pointed the CUSTOMER drop-in scanner at an
+    // in-image /app/mcp/local tree so demo MCPs auto-appeared. That tree was
+    // renamed to bundled-mcps/ and is now discovered via MCP_BUNDLED_DIR
+    // (always-on), so the var became vestigial — and then actively harmful:
+    // it aimed the scanner at a path that no longer exists, silently
+    // disabling customer drop-in discovery AND the "Refresh local MCPs"
+    // rescan on every Fly deployment. Nothing broke visibly because the
+    // demos still arrived via the bundled path. Unset means the default
+    // (/var/lib/mcp-connector/customer-mcps/) applies, which is inside the
+    // [[mounts]] volume. Matched at line-start so the file may still
+    // explain itself in a comment.
+    expect(toml.content).not.toMatch(/^\s*MCP_DROPIN_DIR\s*=/m);
+
+    // The image bundles four Type 1 demo MCPs, and tsx spawns THREE processes
+    // per child (wrapper node + real node + a resident esbuild service), so
+    // each child costs ~118 MB RSS. Measured on a live 512 MB machine:
+    // connector 72 MB + 3 children + Fly hallpass = 442 of 459 MB usable,
+    // 30 MB free, zero swap — the FOURTH child could not allocate, stalled
+    // without ever binding or logging, and was SIGTERMed by the readiness
+    // probe (exit 143). Raising MCP_READINESS_TIMEOUT_MS does NOT fix that:
+    // the memory is absent, not late. 512 MB cannot run the shipped image.
+    // Pinned as a lower bound, not an exact string, so sizing up is free.
+    const mem = /^\s*memory\s*=\s*"(\d+)(mb|gb)"/m.exec(toml.content);
+    expect(mem, "fly.toml must declare [[vm]] memory").not.toBeNull();
+    const mib = mem[2] === "gb" ? Number(mem[1]) * 1024 : Number(mem[1]);
+    expect(mib, "512 MB cannot boot the 4 bundled MCPs — see comment above").toBeGreaterThanOrEqual(1024);
 
     // Volume mount for state — belt-and-braces per D3.
     expect(toml.content).toContain(`source = "state"`);

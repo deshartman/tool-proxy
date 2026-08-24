@@ -364,12 +364,14 @@ primary_region = "iad"
   # C4 (security hardening) — acknowledge non-loopback bind explicitly.
   # The connector refuses to start otherwise. Requires \`fly ips list -a {{APP_NAME}}\` empty.
   INSPECTOR_ALLOW_NONLOOPBACK = "1"
-  # Demo convenience — points the drop-in scanner at the mcp/local/ tree
-  # baked into the image by the Dockerfile's \`COPY mcp mcp\`. DELETE this
-  # line for a real customer deployment; the default
-  # (/var/lib/mcp-connector/customer-mcps/) expects customer-authored MCPs
-  # to be mounted as a Fly volume at that path instead.
-  MCP_DROPIN_DIR = "/app/mcp/local"
+  # No MCP_DROPIN_DIR here on purpose. The bundled demo MCPs live at
+  # /app/bundled-mcps and are discovered via MCP_BUNDLED_DIR (always-on),
+  # so pointing the CUSTOMER drop-in scanner at an in-image tree is
+  # redundant — and the old /app/mcp/local tree no longer exists, so setting
+  # it silently disabled customer drop-in discovery and the "Refresh local
+  # MCPs" rescan. Leaving it unset uses the default
+  # (/var/lib/mcp-connector/customer-mcps/), which is inside the [[mounts]]
+  # volume below — where customer-authored MCPs actually belong.
   # POSTGRES_URL, CONNECTOR_KEY_B64 are set by \`mcp-connector deploy apply --target fly\`.
 
 [[mounts]]
@@ -390,7 +392,7 @@ primary_region = "iad"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory = "512mb"
+  memory = "1gb"
 
 [deploy]
   strategy = "immediate"

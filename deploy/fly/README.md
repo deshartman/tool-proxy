@@ -27,6 +27,30 @@ Two Fly apps in the same Fly organization:
 
 The mock app is optional — a stand-in for a customer's real CRM backend. In a real deployment, only the connector app exists; the crm drop-in points at the customer's actual API.
 
+## Machine sizing
+
+`[[vm]] memory` in `fly.toml` is **1 GB**, not Fly's 512 MB default, and that is load-bearing.
+
+Each Type 1 MCP costs ~118 MB RSS, because `tsx` spawns **three** processes per drop-in — a wrapper `node`, the real `node`, and a resident esbuild service. The shipped image bundles four demo MCPs (`agentic-memory`, `crm`, `salesforce`, `sample`):
+
+| | RSS |
+|---|---|
+| connector | ~72 MB |
+| 4 x Type 1 child | ~470 MB |
+| Fly `hallpass` (SSH) | ~16 MB |
+| kernel + buffers | ~50 MB |
+| **total** | **~610 MB** |
+
+On a 512 MB machine (459 MB usable, and **no swap**) the fourth child cannot allocate. It stalls before reaching the code that binds its port or logs its first line, so the readiness probe kills it at 15s and you get exactly one clue:
+
+```
+MCP child "sample" did not become ready on port 7103 within 15000ms
+```
+
+**That message misleads here.** It reads like a slow or broken MCP, and the natural response — raising `MCP_READINESS_TIMEOUT_MS` — does nothing, because the memory is absent rather than late. A larger timeout only moves the SIGTERM. Run `fly ssh console -a <app> -C "free -m"` first: if `available` is near zero, size the machine up.
+
+Trimming the bundle is the other lever — drop demo MCPs from the Dockerfile's `COPY` lines and the remainder fit in less.
+
 ## Prereqs
 
 Beyond the [common prereqs](README.md#prereqs-every-cloud):
