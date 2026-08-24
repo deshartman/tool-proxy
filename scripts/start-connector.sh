@@ -158,6 +158,12 @@ if [ -z "${POSTGRES_URL:-}" ]; then
   fi
   export POSTGRES_URL="$DEV_PG_URL"
   echo "[start-connector] POSTGRES_URL auto-set: $POSTGRES_URL"
+else
+  # Diagnostic only — the caller's DSN always wins. Printed with the password
+  # masked so an unexpected inherited value (e.g. injected by a VS Code
+  # terminal env collection) is visible instead of failing later as 28P01.
+  echo "[start-connector] POSTGRES_URL inherited from environment: $(printf '%s' "$POSTGRES_URL" | sed -E 's#://([^:/@]+):[^/]*@#://\1:***@#')"
+  echo "[start-connector]   (unset POSTGRES_URL to use the dev default instead)"
 fi
 
 # Auto-mint the 32-byte libsodium master key on first run.
