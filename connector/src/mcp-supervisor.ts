@@ -209,9 +209,9 @@ export interface McpStatus {
   mcpId?: string;
   // v1.4: who authored this MCP ("twilio" | "customer") — mirrors
   // Entry.author (the source of truth isAuthorTwilio reads). Surfaced here
-  // for inspector-facing consumers; source and author are orthogonal (a
-  // customer yaml Type 2 entry has source: "yaml" same as a Twilio
-  // `bundled:` entry).
+  // for inspector-facing consumers; source and author are orthogonal — a
+  // Twilio bundled MCP is discovered by the same scanner as a customer
+  // drop-in, so it carries source: "local" with author: "twilio".
   author: string;
 }
 
@@ -1166,6 +1166,11 @@ function computeCredsSource(entry: { spec: SupervisedSpec; controllerEnv: Record
   return entry.spec.env ? "dir/.env" : "none";
 }
 
+// Pre-spawn port probe. The host here MUST match the host the child actually
+// binds — sdk/http-server.ts's LOOPBACK_BIND (MCP-AUDIT #14). It didn't before
+// #1: the probe tested 127.0.0.1 while the child bound all interfaces, so a
+// process holding 192.168.x.x:7100 left the probe reporting free and the child
+// then failed EADDRINUSE at listen. Widening either side alone reopens that gap.
 function canBind(port: number): Promise<boolean> {
   return new Promise((res) => {
     const srv = createServer();

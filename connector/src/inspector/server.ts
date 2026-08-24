@@ -344,6 +344,14 @@ export class Inspector {
 
   private readonly mcpMessages = new Map<string, McpMessageTap[]>();
   private static readonly MCP_MESSAGE_RING_SIZE = 500;
+  // Per-entry payload ceiling (MCP-AUDIT #10, secondary). The ring caps ENTRIES,
+  // not bytes — one `salesforce.query` returning a few thousand records is a
+  // single entry, so 500 of those is unbounded memory in a process that is meant
+  // to run for months. Truncating each payload instead of running a byte budget
+  // with eviction keeps the bound deterministic (500 x 32 KB) and the code short.
+  // Costs one JSON.stringify per tap, only when an inspector is attached; the
+  // SSE listeners were already going to serialize the same value.
+  private static readonly MCP_MESSAGE_MAX_PAYLOAD_BYTES = 32 * 1024;
 
   // Record one tap and broadcast it live. Called from the `record` callback
   // wrapWithMessageTap() is given, wired in boot/lifecycle.ts's onConnect.
@@ -352,13 +360,33 @@ export class Inspector {
   // most of whom never open this pane. Fetched on demand via GET
   // /mcp/messages instead (see getMcpMessages).
   recordMcpMessage(tap: McpMessageTap): void {
+    const capped = Inspector.capPayload(tap);
     const list = this.mcpMessages.get(tap.mcp) ?? [];
-    list.push(tap);
+    list.push(capped);
     if (list.length > Inspector.MCP_MESSAGE_RING_SIZE) {
       list.splice(0, list.length - Inspector.MCP_MESSAGE_RING_SIZE);
     }
     this.mcpMessages.set(tap.mcp, list);
-    this.broadcast({ kind: "mcpMessage", tap });
+    this.broadcast({ kind: "mcpMessage", tap: capped });
+  }
+
+  // Replace an over-large payload with a marker naming its real size, so the
+  // pane shows that something was elided rather than silently displaying a
+  // truncated-and-therefore-invalid JSON fragment. An unserializable payload
+  // (a cycle) is passed through untouched — the ring is bounded by count in that
+  // case, and a value JSON.stringify cannot walk is not one we can measure.
+  private static capPayload(tap: McpMessageTap): McpMessageTap {
+    let size: number;
+    try {
+      size = JSON.stringify(tap.payload)?.length ?? 0;
+    } catch {
+      return tap;
+    }
+    if (size <= Inspector.MCP_MESSAGE_MAX_PAYLOAD_BYTES) return tap;
+    return {
+      ...tap,
+      payload: `<elided: ${size} bytes exceeds the ${Inspector.MCP_MESSAGE_MAX_PAYLOAD_BYTES}-byte per-entry cap>`,
+    };
   }
 
   // Read-only snapshot of one MCP's current log. Backs GET /mcp/messages.

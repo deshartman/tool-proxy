@@ -35,11 +35,19 @@ import {
 } from "./calendar.js";
 import { runMigrations, closePool } from "./db.js";
 
-const PORT = Number(process.env.PORT ?? 7400);
+// Empty string == not set (MCP-AUDIT #21): PORT="" would make Number("") 0 and
+// have the kernel assign a random port, which the crm drop-in dials by a fixed
+// URL and would never find. LOG_LEVEL="" makes pino throw outright at boot.
+const envOr = (name: string, fallback: string): string => {
+  const v = process.env[name];
+  return v === undefined || v === "" ? fallback : v;
+};
+
+const PORT = Number(envOr("PORT", "7400"));
 
 const pretty = process.env.NODE_ENV !== "production" && Boolean(process.stdout.isTTY);
 const log = pino({
-  level: process.env.LOG_LEVEL ?? "info",
+  level: envOr("LOG_LEVEL", "info"),
   ...(pretty
     ? {
         transport: {
@@ -59,9 +67,34 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
+// Body ceiling (MCP-AUDIT #13). Every POST here is a handful of fields — the
+// largest is create_customer — so 1 MiB is orders of magnitude of headroom. The
+// unbounded read this replaces buffered whatever it was sent, so a single large
+// POST from anything inside the Fly org could OOM the machine. Mirrors the shape
+// of the connector's own connector/src/inspector/read-body.ts, reimplemented
+// rather than imported because mock-backend is a standalone service outside the
+// npm workspace and shares no code with the connector by design.
+const MAX_BODY_BYTES = 1024 * 1024;
+
+class BodyTooLargeError extends Error {
+  constructor() {
+    super(`request body exceeds ${MAX_BODY_BYTES} bytes`);
+    this.name = "BodyTooLargeError";
+  }
+}
+
 async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  let total = 0;
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  for await (const chunk of req) {
+    const buf = chunk as Buffer;
+    total += buf.length;
+    // Deliberately NOT req.destroy() here: the caller still needs the write side
+    // to send the 413. Destroying from in here races the response and the client
+    // sees ECONNRESET instead of the status.
+    if (total > MAX_BODY_BYTES) throw new BodyTooLargeError();
+    chunks.push(buf);
+  }
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
@@ -71,6 +104,11 @@ const ORDER_PATH = /^\/orders\/([^/]+)$/;
 
 const server = http.createServer((req, res) => {
   void handle(req, res).catch((err) => {
+    if (err instanceof BodyTooLargeError) {
+      log.warn({ url: req.url }, "request body too large");
+      if (!res.headersSent) send(res, 413, { error: "body_too_large" });
+      return;
+    }
     log.error({ err }, "handler error");
     if (!res.headersSent) send(res, 500, { error: "internal_error" });
   });

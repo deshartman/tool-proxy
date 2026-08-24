@@ -31,13 +31,15 @@ export class NormalizationError extends Error {
 export function normalizePhone(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.length === 0) throw new NormalizationError("empty phone value");
-  const stripped = trimmed.replace(/[^\d+]/g, "");
-  const hasPlus = stripped.startsWith("+");
-  const digits = stripped.replace(/\D/g, "");
+  const digits = trimmed.replace(/\D/g, "");
   if (digits.length < 8 || digits.length > 15) {
     throw new NormalizationError(`phone "${raw}" has ${digits.length} digits — E.164 requires 8–15`);
   }
-  return hasPlus ? `+${digits}` : `+${digits}`;
+  // Unconditional `+` (MCP-AUDIT #26): this was a ternary on a `hasPlus` flag
+  // whose two branches were textually identical, so the flag was computed and
+  // discarded. `digits` is already plus-free, and prepending regardless is what
+  // the comment above describes — a value that arrives without `+` gets one.
+  return `+${digits}`;
 }
 
 // Email: lowercase + trim + require exactly one @ with non-empty local and

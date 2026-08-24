@@ -32,6 +32,36 @@ Business logic (working-hours model, `checkAvailability`,
 `findNearbySlots`, reschedule state machine) still lives in `calendar.ts` —
 only the storage layer changed.
 
+## Security model — network isolation is the only control
+
+**This service has no authentication of any kind.** No bearer token, no mTLS, no
+allowlist. Every endpoint below is readable and writable by anything that can
+reach the port, and the data behind them is customer PII (names, phone numbers,
+email addresses, order history).
+
+The only thing protecting it is the network: the Fly app deploys **private-only**
+— no `[[services]]` block, no public IP — so it is reachable on
+`<app>.internal:7400` from inside the same Fly org and nowhere else. `deploy init
+--target fly-mock` generates it that way on purpose.
+
+Two consequences worth stating out loud:
+
+- **Anything else in your Fly org can read and write the whole customer table.**
+  Private networking is an org-level boundary, not a per-app one.
+- **Do not promote this shape to a real backend.** It is a stand-in for the
+  customer's own CRM, and the HTTP boundary is the interesting part — swapping in
+  Salesforce or Zendesk is a mock-side change that leaves the crm drop-in a
+  `fetch` client. Whatever replaces it needs real authentication.
+
+Request bodies are capped at 1 MiB (over-cap → `413 body_too_large`). That is an
+availability guard, not an access control: it stops one large POST from OOMing the
+machine and nothing more.
+
+Note that `server.listen(PORT)` binding all interfaces here **is** correct, and is
+the opposite of the rule for MCP children — a Fly private app must bind `0.0.0.0`
+to receive `.internal` traffic at all. MCP children have no such requirement and
+bind loopback only.
+
 ## Endpoints
 
 | Method | Path | Notes |

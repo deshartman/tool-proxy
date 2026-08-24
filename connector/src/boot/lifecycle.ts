@@ -16,6 +16,7 @@
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
 import type { McpServerConnection } from "../servers/index.js";
 import { wrapWithMessageTap } from "../servers/message-tap.js";
+import { redactTapPayload } from "../policy/redact.js";
 import { buildManifest } from "../manifest/build.js";
 import { diffManifest, isEmptyDelta } from "../manifest/diff.js";
 import { validateManifestSchemas } from "../manifest/validate.js";
@@ -311,7 +312,8 @@ async function bootFromDb(): Promise<void> {
       // connection one line earlier) so dispatcher.ts, manifest/build.ts,
       // and the inspector's own tool-runner all read the tapped version.
       const tapped = inspector
-        ? wrapWithMessageTap(name, connection, (tap) => inspector.recordMcpMessage(tap))
+        ? wrapWithMessageTap(name, connection, (tap) =>
+            inspector.recordMcpMessage(redactTapPayload(tap, config.policy.log_tool_args)))
         : connection;
       notifications.attachToConnection(name, tapped);
       servers.set(name, tapped);

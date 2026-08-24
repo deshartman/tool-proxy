@@ -69,3 +69,32 @@ export const ExternalIdSchema = z
   .string()
   .regex(EXTERNAL_ID_RE, "externalId must be 12 lowercase hex characters (as returned by identity_resolve)")
   .describe("Identity handle from identity_resolve — 12 lowercase hex chars.");
+
+// ── Write-side limits (MCP-AUDIT #18) ─────────────────────────────────────────
+// capabilities.ts advertises maxQueryLength / maxResults / maxSourceRefs, but
+// those bound RECALL — nothing bounded what got written. Combined with saveState
+// re-serializing the entire state on every commit(), cost per append grew with
+// total accumulated state (O(n^2) across a long-running demo) and the advertised
+// numbers implied limits that were not enforced.
+//
+// Two different kinds of limit, deliberately handled differently:
+//
+//   * SUMMARY_MAX_CHARS and MAX_SOURCE_REFS are advertised INPUT limits, so
+//     exceeding them is the caller's error and is reported as one. Silently
+//     accepting-then-dropping would make the advertised number a lie.
+//   * MAX_EPISODES_PER_IDENTITY is a RETENTION policy, not an advertised limit.
+//     It trims oldest-first and logs, because there is no caller error to report —
+//     the append itself is valid.
+export const SUMMARY_MAX_CHARS = 4000;
+
+// 10x the maxResults: 50 that recall can return, so the cap cannot be reached by
+// any caller that reads its own results.
+export const MAX_EPISODES_PER_IDENTITY = 500;
+
+// MUST match capabilities.ts extensions."agentic-memory".memory.semantic.maxSourceRefs.
+export const MAX_SOURCE_REFS = 1000;
+
+export const SummarySchema = z
+  .string()
+  .max(SUMMARY_MAX_CHARS, `summary must be at most ${SUMMARY_MAX_CHARS} characters`)
+  .describe(`LLM-written conversation summary, at most ${SUMMARY_MAX_CHARS} characters.`);
