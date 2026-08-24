@@ -59,7 +59,7 @@ One row per MCP, with:
   - **Restart** — re-spawn the child with current env. Resets the consecutive-failure counter. Also clears the message-history log.
   - **Clear** — wipes the message-history log only, without touching the child process.
 
-> **Tool arguments are visible here regardless of `policy.log_tool_args`** (MCP-AUDIT #10). The dispatcher's *log line* for a call renders its arguments through that policy, whose default is `redacted` — this pane does not, and shows the payload verbatim. That is deliberate: the pane exists so a developer can see what actually went into a tool, and the two surfaces have different exposure. The log stream is durable and leaves the box; this pane is in-memory, capped, cleared on restart or **Clear**, and served loopback-only.
+> **Tool arguments are visible here regardless of `policy.log_tool_args`**. The dispatcher's *log line* for a call renders its arguments through that policy, whose default is `redacted` — this pane does not, and shows the payload verbatim. That is deliberate: the pane exists so a developer can see what actually went into a tool, and the two surfaces have different exposure. The log stream is durable and leaves the box; this pane is in-memory, capped, cleared on restart or **Clear**, and served loopback-only.
 >
 > The one setting it does honour is `log_tool_args: none` — nobody arrives at that by accident, so it is read as "do not record tool arguments anywhere" and request payloads show as `<args hidden by policy.log_tool_args=none>`. Results are still shown: the knob is named after arguments and makes no claim about them.
 >
