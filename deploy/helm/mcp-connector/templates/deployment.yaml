@@ -34,8 +34,6 @@ spec:
               value: {{ .Values.connector.credsSource | quote }}
             - name: CONNECTOR_CONFIG
               value: /etc/mcp-connector/config.yaml
-            - name: CONNECTOR_STATE_PATH
-              value: /var/lib/mcp-connector/.connector-state.json
             - name: INSPECTOR_PORT
               # Load-bearing: never expose this port via a Service. The
               # inspector binds 127.0.0.1 inside the pod. `kubectl port-forward`

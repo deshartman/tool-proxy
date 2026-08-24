@@ -47,7 +47,6 @@ services:
       POSTGRES_PW_FILE: /run/secrets/pg_password
       CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
       CONNECTOR_CONFIG: /etc/mcp-connector/config.yaml
-      CONNECTOR_STATE_PATH: /var/lib/mcp-connector/.connector-state.json
       INSPECTOR_PORT: "9090"
     secrets:
       - pg_password

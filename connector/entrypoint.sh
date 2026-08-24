@@ -47,4 +47,43 @@ if [ -n "${POSTGRES_URL_TEMPLATE:-}" ] && [ -n "${POSTGRES_PW_FILE:-}" ] && [ -f
   unset pw prefix suffix POSTGRES_URL_TEMPLATE POSTGRES_PW_FILE
 fi
 
+# Re-establish what the connector needs ON the state volume, while we are
+# still root and before the su-exec below drops to mcp.
+#
+# The Dockerfile already does `mkdir -p /var/lib/mcp-connector/customer-mcps`
+# and `chown -R mcp:mcp /var/lib/mcp-connector` — but a volume mounted AT that
+# path SHADOWS the image directory, so none of it survives. Fly mounts the
+# volume `uid: 0, gid: 0, chmod 0755`; a K8s PVC and a raw EFS mount behave the
+# same way. (A docker-compose *named* volume is the exception — Docker seeds it
+# from the image and keeps ownership — which is why this only bites on the
+# cloud targets.) The connector then runs as mcp against a root-owned 0755
+# directory and cannot create anything in it.
+#
+#   agentic-memory/ — the bundled MCP writes .state.json here via a sibling
+#                     .tmp + rename, so mcp must own the DIRECTORY, not just
+#                     the file. Failure mode is a lazy EACCES on the first
+#                     memory write, long after a clean boot.
+#   customer-mcps/  — default root for the drop-in scanner. Created so
+#                     discovery (and the "Refresh local MCPs" rescan) sees an
+#                     empty directory instead of a missing path.
+#
+# Deliberately NOT `chown -R` on the volume root. The root stays root-owned so
+# a compromised child cannot litter the volume or plant a drop-in for the next
+# boot, and a customer's read-only bind-mount of customer-mcps/ must not be
+# rewritten. Both commands are therefore tolerant: on a read-only mount they
+# warn and boot continues, because a pre-provisioned mount is a valid setup.
+state_dir="/var/lib/mcp-connector"
+if [ -d "$state_dir" ]; then
+  for d in agentic-memory customer-mcps; do
+    if [ ! -d "$state_dir/$d" ]; then
+      mkdir -p "$state_dir/$d" 2>/dev/null \
+        || echo "[entrypoint] warn: cannot create $state_dir/$d (read-only mount?)" >&2
+    fi
+    if [ -d "$state_dir/$d" ]; then
+      chown mcp:mcp "$state_dir/$d" 2>/dev/null \
+        || echo "[entrypoint] warn: cannot chown $state_dir/$d (read-only mount?)" >&2
+    fi
+  done
+fi
+
 exec su-exec mcp:mcp node dist/index.js "$@"

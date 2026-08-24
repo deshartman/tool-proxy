@@ -81,8 +81,7 @@ const FARGATE_TASK_DEF = `{
         { "name": "CONNECTOR_CONFIG",       "value": "/etc/mcp-connector/config.yaml" },
         { "name": "CONNECTOR_NAME",         "value": "{{NAME}}" },
         { "name": "CONTROLLER_URL",         "value": "{{CONTROLLER_URL}}" },
-        { "name": "INSPECTOR_PORT",         "value": "9090" },
-        { "name": "CONNECTOR_STATE_PATH",   "value": "/var/lib/mcp-connector/.connector-state.json" }
+        { "name": "INSPECTOR_PORT",         "value": "9090" }
       ],
       "secrets": [
         { "name": "TUNNEL_AUTH_TOKEN", "valueFrom": "REPLACE_WITH_SECRETS_MANAGER_ARN" }
@@ -187,7 +186,6 @@ spec:
             - { name: CONTROLLER_URL,         value: "{{CONTROLLER_URL}}" }
             - { name: CONNECTOR_NAME,         value: "{{NAME}}" }
             - { name: CONNECTOR_CONFIG,       value: "/etc/mcp-connector/config.yaml" }
-            - { name: CONNECTOR_STATE_PATH,   value: "/var/lib/mcp-connector/.connector-state.json" }
             - { name: INSPECTOR_PORT,         value: "9090" }
           volumeMounts:
             - { name: config, mountPath: /etc/mcp-connector,  readOnly: true }
@@ -242,7 +240,6 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
             { name: 'CONNECTOR_NAME',         value: connectorName }
             { name: 'CONTROLLER_URL',         value: controllerUrl }
             { name: 'INSPECTOR_PORT',         value: '9090' }
-            { name: 'CONNECTOR_STATE_PATH',   value: '/var/lib/mcp-connector/.connector-state.json' }
             { name: 'TUNNEL_AUTH_TOKEN',      secretRef: 'tunnel-auth-token' }
           ]
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
@@ -352,7 +349,6 @@ primary_region = "iad"
 [env]
   CONNECTOR_KEY_FILE = "/etc/mcp-connector/connector.key"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
-  CONNECTOR_STATE_PATH = "/var/lib/mcp-connector/.connector-state.json"
   INSPECTOR_PORT = "9090"
   # Bind on all IPv6 interfaces so \`fly proxy\` can reach the inspector via
   # Fly's private mesh. Loopback-only (default 127.0.0.1) isn't reachable

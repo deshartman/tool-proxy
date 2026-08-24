@@ -105,7 +105,6 @@ spec:
             # Where the connector persists registrationToken across pod
             # restarts. Without a stable, writable path here, every pod
             # restart re-mints and the controller's dup-name guard 409s.
-            - { name: CONNECTOR_STATE_PATH, value: "/var/lib/mcp-connector/.connector-state.json" }
             # INSPECTOR_PORT defaults to 9090 and binds 127.0.0.1 only. Keep it
             # on — any MCP using createWebhookEndpoint depends on the inspector
             # loopback for SDK ↔ connector IPC. Setting INSPECTOR_PORT=0
