@@ -238,3 +238,37 @@ Only mention here what would surprise a Controller-side integrator:
 | Date | Change |
 |---|---|
 | 2026-07-17 | Initial mock — implements all 14 tools + 3 prompts + 3 resources + capabilities under `experimental.agentic-memory`. Documented `experimental` envelope deviation from spec §7. |
+
+---
+
+## Identity-key handling (what a real provider must do differently)
+
+Two properties of this mock are deliberate simplifications, and a production
+memory/identity provider must not copy either.
+
+**`externalId` is reversible here.** `externalIdFor` is an unsalted SHA-1 of
+`<channel>::<normalisedValue>`, truncated to 12 hex characters. It is
+deterministic so demos survive a connector bounce and reproduce the same
+identities — but that also means it is **not a de-identified handle**. The input
+space for a phone number in one country is ~10^10, so a rainbow table against a
+truncated unsalted digest recovers the original in minutes. Since `externalId`
+travels to the controller in tool results, is used as a storage key, and is
+written to disk, anywhere it is treated as safe-to-log because "it isn't the phone
+number" is wrong.
+
+A real provider should either use a random id tied to its own storage (UUIDv4/v7)
+or, if determinism is genuinely required, an HMAC keyed on a per-deployment
+secret. Do not derive an identity key from a raw identifier with an unkeyed hash.
+
+**Caller-supplied strings must not index a bare object.** `externalId` arrives
+from the caller and is used directly as a key into the four state maps. With a
+plain `{}` that let JavaScript's own prototype machinery through — `__proto__`
+resolves to `Object.prototype`, which is *truthy*, so the `identity_not_found`
+guard passed and the tool proceeded on a non-existent identity. Two defences are
+in place and both matter: the input schema (`ExternalIdSchema`) constrains the
+value to what `externalIdFor` emits, and `emptyState`/`loadState` build the maps
+with `Object.create(null)`. The second is what survives a future schema change.
+
+Both are covered by
+`connector/tests/integration/agentic-memory-key-safety.test.ts`.
+

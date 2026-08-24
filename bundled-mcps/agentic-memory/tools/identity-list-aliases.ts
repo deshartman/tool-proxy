@@ -1,11 +1,11 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { AliasEntrySchema } from "../schemas.js";
+import { AliasEntrySchema, ExternalIdSchema } from "../schemas.js";
 import { store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
 };
 
 const OutputSchema = {

@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { HydrationReferenceSchema, ISO_DATETIME } from "../schemas.js";
+import { ExternalIdSchema, HydrationReferenceSchema, ISO_DATETIME } from "../schemas.js";
 import type { HydrationReference } from "../state.js";
 import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
   additionalRefs: z.array(HydrationReferenceSchema),
   now: ISO_DATETIME,
 };

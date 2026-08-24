@@ -58,8 +58,25 @@ export interface AgenticMemoryState {
   semanticCache: Record<string, SemanticCache>;
 }
 
+// MCP-AUDIT #4: the four maps are keyed by caller-supplied strings, so they are
+// built WITHOUT a prototype. A plain `{}` makes `map["__proto__"]` resolve to
+// Object.prototype (truthy — it defeated the identity_not_found guard) and makes
+// `map["__proto__"] = obj` replace the map's prototype. Object.create(null) has
+// neither behaviour. loadState must rebuild the same way: JSON.parse returns
+// ordinary objects, so the guarantee is lost on reload otherwise.
+function bareMap<T>(from?: Record<string, T>): Record<string, T> {
+  const out = Object.create(null) as Record<string, T>;
+  if (from) for (const k of Object.keys(from)) out[k] = from[k] as T;
+  return out;
+}
+
 export function emptyState(): AgenticMemoryState {
-  return { identities: {}, aliasIndex: {}, episodes: {}, semanticCache: {} };
+  return {
+    identities: bareMap(),
+    aliasIndex: bareMap(),
+    episodes: bareMap(),
+    semanticCache: bareMap(),
+  };
 }
 
 export function aliasKey(channel: Channel, normalisedValue: string): string {
@@ -85,11 +102,14 @@ export function loadState(path: string): AgenticMemoryState {
     const raw = readFileSync(path, "utf8");
     if (raw.trim().length === 0) return emptyState();
     const parsed = JSON.parse(raw) as Partial<AgenticMemoryState>;
+    // Rebuild as prototype-less maps — see bareMap. JSON.parse hands back
+    // ordinary objects, so reusing them directly would reintroduce MCP-AUDIT #4
+    // on the first restart after a write.
     return {
-      identities: parsed.identities ?? {},
-      aliasIndex: parsed.aliasIndex ?? {},
-      episodes: parsed.episodes ?? {},
-      semanticCache: parsed.semanticCache ?? {},
+      identities: bareMap(parsed.identities),
+      aliasIndex: bareMap(parsed.aliasIndex),
+      episodes: bareMap(parsed.episodes),
+      semanticCache: bareMap(parsed.semanticCache),
     };
   } catch (err) {
     log.error({ path, err: err as Error }, `failed to load state — starting fresh`);

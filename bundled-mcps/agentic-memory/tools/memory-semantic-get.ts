@@ -1,11 +1,11 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { HydrationReferenceSchema } from "../schemas.js";
+import { ExternalIdSchema, HydrationReferenceSchema } from "../schemas.js";
 import { store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
 };
 
 // Semantic cache is best-effort. Missing rows return an empty shape rather

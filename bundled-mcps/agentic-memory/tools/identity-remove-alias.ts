@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { ChannelSchema } from "../schemas.js";
+import { ChannelSchema, ExternalIdSchema } from "../schemas.js";
 import { NormalizationError, normalizeChannelValue } from "../normalize.js";
 import { aliasKey, commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
   channel: ChannelSchema,
   value: z.string(),
 };

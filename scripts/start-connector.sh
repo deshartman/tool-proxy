@@ -181,6 +181,13 @@ fi
 # get auto-discovered by the connector (W-A1/A2 of MCP-LOADING). Production
 # images use the customer-mount path /var/lib/mcp-connector/customer-mcps/.
 # Don't clobber a user-supplied value.
+# MCP-AUDIT #31: the drop-in scanner refuses a folder that resolves outside
+# MCP_DROPIN_DIR, so a symlink committed into a read-only production mount can't
+# point discovery at a writable path. The documented dev workflow does exactly
+# that on purpose — customer-mcps/<name> symlinks to examples/demos/<name> — so
+# dev opts out here. Never set this in a deployed container.
+export MCP_DROPIN_ALLOW_SYMLINK_ESCAPE=1
+
 if [ -z "${MCP_DROPIN_DIR:-}" ]; then
   export MCP_DROPIN_DIR="$ROOT/customer-mcps"
   echo "[start-connector] MCP_DROPIN_DIR=$MCP_DROPIN_DIR"

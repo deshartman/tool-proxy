@@ -1,11 +1,11 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { ISO_DATETIME } from "../schemas.js";
+import { ExternalIdSchema, ISO_DATETIME } from "../schemas.js";
 import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
   resolved: z.record(z.string(), z.unknown()),
   hydratedAt: ISO_DATETIME,
 };

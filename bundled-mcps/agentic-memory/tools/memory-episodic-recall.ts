@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { EpisodeSchema } from "../schemas.js";
+import { EpisodeSchema, ExternalIdSchema } from "../schemas.js";
 import { store } from "../state.js";
 import type { Episode } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
-  externalId: z.string(),
+  externalId: ExternalIdSchema,
   query: z.string().describe("Free-text query. Empty = most-recent N."),
   opts: z.object({
     limit: z.number().int().min(1).max(50).optional(),
