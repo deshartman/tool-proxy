@@ -23,12 +23,20 @@ primary_region = "iad"
   CONNECTOR_KEY_FILE = "/etc/mcp-connector/connector.key"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
   INSPECTOR_PORT = "9090"
-  # Bind on all IPv6 interfaces so `fly proxy` can reach the inspector via
-  # Fly's private mesh. Loopback-only (default 127.0.0.1) isn't reachable
-  # from `fly proxy` because it tunnels to the Machine's fdaa: mesh IP,
-  # not to 127.0.0.1. Safe here because this app has no public IP allocated —
+  # Bind on all IPv6 interfaces so the machine API is reachable over Fly's
+  # private mesh (the controller calls /oauth/token and the /v1/* routes at
+  # <app>.internal:9090). Safe here because this app has no public IP —
   # `fly ips list -a twilio-tool-sdk` MUST be empty.
-  # See architectural-plans/CODE-DEPLOY.md §B4.
+  #
+  # This does NOT make the operator DASHBOARD reachable, and an earlier version
+  # of this comment claimed it did. A wide bind gets the packet to the process;
+  # the request gate then judges where it came from, and every route outside the
+  # four allowlisted machine-API paths requires a LOOPBACK caller. `fly proxy`
+  # arrives from the fdaa: mesh address, so the dashboard answers 403
+  # {"error":"forbidden: loopback only"}. That was true from the moment the gate
+  # landed; the claim was correct only before it existed.
+  # See deploy/fly/README.md "Reach the inspector dashboard" for the relay
+  # recipe that does work.
   INSPECTOR_BIND_ADDR = "::"
   # C4 (security hardening) — acknowledge non-loopback bind explicitly.
   # The connector refuses to start otherwise. Requires `fly ips list` empty.
