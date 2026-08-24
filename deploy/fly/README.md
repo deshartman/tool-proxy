@@ -27,6 +27,17 @@ Two Fly apps in the same Fly organization:
 
 The mock app is optional — a stand-in for a customer's real CRM backend. In a real deployment, only the connector app exists; the crm drop-in points at the customer's actual API.
 
+## Verify state persistence after a deploy
+
+```bash
+./scripts/verify-state-volume.sh            # defaults to twilio-tool-sdk
+./scripts/verify-state-volume.sh <app>
+```
+
+A volume mounted at `/var/lib/mcp-connector` shadows the image directory, discarding the Dockerfile's `mkdir` + `chown` — Fly mounts it `root:root 0755`. `connector/entrypoint.sh` re-provisions the directories before dropping privileges; this script proves it worked on the box you actually deployed, by running `saveState`'s exact sequence as the real `mcp` uid.
+
+Worth running after any deploy that touches the entrypoint, the Dockerfile, or the `[[mounts]]` block, because **the failure it catches is lazy**: `saveState` runs on the first memory write, not at boot, so a broken deploy reports healthy and fails later under real traffic. The script includes a control write against the still-root-owned volume root — without it, a pass would also be produced by a container accidentally running everything as root.
+
 ## Machine sizing
 
 `[[vm]] memory` in `fly.toml` is **1 GB**, not Fly's 512 MB default, and that is load-bearing.
