@@ -57,6 +57,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, createConnection } from "node:net";
+import { createInterface } from "node:readline";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -113,6 +114,30 @@ function computeDropinNodePath(): string {
   return out.join(process.platform === "win32" ? ";" : ":");
 }
 const DROPIN_NODE_PATH = computeDropinNodePath();
+
+// Child-output plumbing (MCP-AUDIT #29). Children used to be spawned with
+// stdio: ["ignore", "inherit", "inherit"], handing them the connector's own file
+// descriptors — so everything they wrote reached the container log stream having
+// passed through no connector code at all. That bypassed the logger entirely:
+// uncaught stack traces (printed by Node itself), raw `process.stderr.write`
+// (which the SDK's own dropin-runner uses), and upstream error bodies all landed
+// unfiltered and unattributed.
+//
+// We now pipe and route through the connector's logger. Note what that does and
+// does not buy: pino's `redact.paths` censors whole FIELDS by path, so putting a
+// child's line in a `line` field gains nothing from it — censoring `line` would
+// blank the whole message. The defence that actually works on free text is
+// value-based: mask the secret strings the supervisor itself injected. That
+// covers the realistic case (an MCP echoing its own credential back in an error
+// message, e.g. an OAuth `error_description`) because those values came from
+// controllerEnv / sessionEnv in the first place. It cannot cover a secret the
+// connector never knew.
+const CHILD_LOG_MAX_LINE = 2000;
+const CHILD_LOG_WINDOW_MS = 10_000;
+const CHILD_LOG_MAX_LINES_PER_WINDOW = 200;
+// Below this length a "secret" is too short to mask without mangling ordinary
+// output — a 3-character value would match inside half the words on the line.
+const MIN_MASKABLE_SECRET_LEN = 8;
 
 // Connector-only secrets that must NOT reach a spawned child by inheritance
 // (MCP-AUDIT #2). boot/require-env.ts requires exactly two env vars and both
@@ -826,8 +851,10 @@ export class McpSupervisor {
     const proc = spawn(process.execPath, childArgs, {
       cwd: dir,
       env,
-      stdio: ["ignore", "inherit", "inherit"],
+      // MCP-AUDIT #29: pipe, don't inherit — see attachChildLogging.
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    this.attachChildLogging(entry, proc);
     proc.on("error", (error) => this.opts.log.error({ name: spec.name, err: error }, `child spawn error`));
     proc.on("exit", (code, signal) => {
       this.opts.log.info({ name: spec.name, code, signal }, `child exited`);
@@ -844,6 +871,85 @@ export class McpSupervisor {
     (spec as { __port?: number }).__port = port;
     entry.child = proc;
     this.opts.onSpawn?.({ name: spec.name, envSources: sources });
+  }
+
+  // MCP-AUDIT #29: route a child's stdout/stderr through the connector's logger
+  // instead of letting it inherit our file descriptors. Gains attribution (which
+  // MCP), structure, a rate limit, and value-based masking of the secrets we
+  // injected. stdout logs at info, stderr at warn — a child's stderr is not
+  // necessarily an error (many libraries write diagnostics there), so `error` is
+  // reserved for the connector's own judgement.
+  private attachChildLogging(entry: Entry, proc: ChildProcess): void {
+    const secrets = this.secretValuesFor(entry);
+    const log = this.opts.log.child({ mcp: entry.spec.name, stream: "child" });
+    const streams: Array<[NodeJS.ReadableStream | null, "stdout" | "stderr"]> = [
+      [proc.stdout, "stdout"],
+      [proc.stderr, "stderr"],
+    ];
+    for (const [stream, which] of streams) {
+      if (!stream) continue;
+      // readline handles chunk boundaries; `data` events split mid-line.
+      const rl = createInterface({ input: stream });
+      let windowStart = nowMs();
+      let inWindow = 0;
+      let suppressed = 0;
+      const flushSuppressed = (): void => {
+        if (suppressed === 0) return;
+        log.warn({ which, suppressed }, `child output rate-limited — lines dropped`);
+        suppressed = 0;
+      };
+      rl.on("line", (raw: string) => {
+        if (raw.trim().length === 0) return;   // blank-line noise
+        const now = nowMs();
+        if (now - windowStart >= CHILD_LOG_WINDOW_MS) {
+          flushSuppressed();
+          windowStart = now;
+          inWindow = 0;
+        }
+        if (inWindow >= CHILD_LOG_MAX_LINES_PER_WINDOW) {
+          // Drop rather than buffer: a chatty child must not grow the
+          // connector's heap or stall it behind its own logging.
+          suppressed++;
+          return;
+        }
+        inWindow++;
+        let line = maskSecrets(raw, secrets);
+        if (line.length > CHILD_LOG_MAX_LINE) {
+          line = `${line.slice(0, CHILD_LOG_MAX_LINE)}… [truncated ${line.length - CHILD_LOG_MAX_LINE} chars]`;
+        }
+        // The masked line is the log MESSAGE, not a field. In dev, pino-pretty's
+        // messageFormat renders `{component} | {msg}`, so a child line stays
+        // readable at a glance instead of being buried in an object dump; in
+        // production JSON it lands on `msg` where log search expects it. The
+        // `mcp` / `stream` / `which` bindings carry the attribution.
+        if (which === "stderr") log.warn({ which }, line);
+        else log.info({ which }, line);
+      });
+      rl.on("close", flushSuppressed);
+      // A child dying mid-line closes the stream; readline emits no error, but
+      // the underlying stream can. Swallow — the exit handler is the real signal.
+      stream.on("error", () => { /* child is going away; exit handler reports it */ });
+    }
+  }
+
+  // Secret strings this child was given, longest first so a value that contains
+  // another is masked whole rather than partially. Recomputed per spawn, which
+  // is correct: a creds change forces a restart, so a respawn always sees the
+  // current set.
+  private secretValuesFor(entry: Entry): string[] {
+    const out = new Set<string>();
+    for (const v of Object.values(entry.controllerEnv)) out.add(v);
+    for (const v of Object.values(entry.sessionEnv ?? {})) out.add(v);
+    out.add(entry.webhookToken);
+    // The connector's own secrets are no longer inherited (MCP-AUDIT #2), but a
+    // child could still learn one another way; masking costs nothing.
+    for (const key of CONNECTOR_ONLY_ENV) {
+      const v = process.env[key];
+      if (typeof v === "string") out.add(v);
+    }
+    return [...out]
+      .filter((v) => v.length >= MIN_MASKABLE_SECRET_LEN)
+      .sort((a, b) => b.length - a.length);
   }
 
   // Build the env passed to the child. Layered per CLAUDE.md "highest-risk
@@ -906,6 +1012,19 @@ export class McpSupervisor {
 
 function nowMs(): number {
   return Date.now();
+}
+
+// MCP-AUDIT #29: mask known secret VALUES in a child's output line. Plain
+// split/join rather than a regex so no value needs escaping. `secrets` must be
+// longest-first (see secretValuesFor) so a longer value containing a shorter one
+// is replaced whole.
+export function maskSecrets(line: string, secrets: readonly string[]): string {
+  let out = line;
+  for (const secret of secrets) {
+    if (!out.includes(secret)) continue;
+    out = out.split(secret).join("***");
+  }
+  return out;
 }
 
 // StdioClientTransport requires env values be plain strings. mergeEnv returns
