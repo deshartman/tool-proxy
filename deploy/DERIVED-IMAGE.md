@@ -170,9 +170,8 @@ primary_region = "iad"
 [env]
   CONNECTOR_CREDS_SOURCE = "env"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
-  # State volume mounted at /data so it doesn't mask the derived-image's
-  # drop-in path baked in at /var/lib/mcp-connector/customer-mcps/.
-  CONNECTOR_STATE_PATH = "/data/.connector-state.json"
+  # Volume mounted at /data (see the masking pitfall below) so it doesn't
+  # hide the drop-in path baked in at /var/lib/mcp-connector/customer-mcps/.
   INSPECTOR_PORT = "9090"
   INSPECTOR_BIND_ADDR = "::"
 
@@ -187,7 +186,7 @@ primary_region = "iad"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory = "512mb"
+  memory = "1gb"
 
 [deploy]
   strategy = "immediate"
@@ -197,9 +196,15 @@ primary_region = "iad"
 > `/var/lib/mcp-connector` (the connector image's default state dir), the
 > mount masks any subdirectories the derived image COPYed into that path
 > — the drop-in scanner will find zero MCPs. Two fixes: (1) mount the
-> volume at a sibling path like `/data` and set `CONNECTOR_STATE_PATH`
-> accordingly, as shown above; or (2) override `MCP_DROPIN_DIR` to a path
-> outside the mount and have your Dockerfile COPY there instead.
+> volume at a sibling path like `/data`, as shown above; or (2) override
+> `MCP_DROPIN_DIR` to a path outside the mount and have your Dockerfile
+> COPY there instead.
+>
+> The entrypoint re-creates the directories the connector itself needs on
+> the volume (`agentic-memory/`, `customer-mcps/`) every boot, because the
+> mount also discards the image's ownership of them. It can only create
+> them **empty** — it cannot restore content your Dockerfile COPYed, so
+> the pitfall above still applies to your own MCPs.
 
 ### Build + deploy
 

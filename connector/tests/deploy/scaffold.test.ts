@@ -375,3 +375,32 @@ describe("scaffoldTo — file writes", () => {
     }
   });
 });
+
+// CONNECTOR_STATE_PATH was set by every deploy target and read by nothing.
+// It pointed at the connector's persisted registration token, which moved to
+// Postgres when `env` mode was removed — the token now lives in the sealed
+// `controllers` row and is cleared via ConfigStore.clearRegistrationToken.
+// Left in place it invited two wrong conclusions: that the connector needs a
+// writable file on the state volume, and that /var/lib/mcp-connector must be
+// mounted for the tunnel identity to survive a restart. Neither is true.
+describe("render — no dead CONNECTOR_STATE_PATH in any target", () => {
+  const TARGETS = ["fargate", "gke", "aca", "compose", "fly", "fly-mock"] as const;
+
+  for (const target of TARGETS) {
+    it(`${target} sets no CONNECTOR_STATE_PATH`, () => {
+      const { files } = render(target, { ...VARS });
+      for (const f of files) {
+        expect(f.content, `${target}/${f.path} still sets it`).not.toContain("CONNECTOR_STATE_PATH");
+      }
+    });
+  }
+
+  it("fargate's task definition is still valid JSON after the removal", () => {
+    // It was the LAST element of the environment array, so deleting the line
+    // alone would leave a trailing comma on the line above — invalid JSON that
+    // no other assertion here would catch.
+    const { files } = render("fargate", { ...VARS });
+    const task = files.find((f) => f.path === "task-definition.json")!;
+    expect(() => JSON.parse(task.content)).not.toThrow();
+  });
+});

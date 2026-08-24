@@ -20,7 +20,6 @@ Set these only when the default doesn't match your infrastructure.
 | Variable | Default | Purpose |
 |---|---|---|
 | `CONNECTOR_CONFIG` | `/etc/mcp-connector/config.yaml` | Path to `connector.yaml` — legacy dev knob. Customers using the derived-image or volume-mount delivery paths don't author this file anymore; controller push + drop-in scanners cover every MCP entry. |
-| `CONNECTOR_STATE_PATH` | `./.connector-state.json` (CWD) | Path to the connector's persisted registration token. Under `db` mode (default) the token lives in Postgres and this file is not used; set only when running `env` mode explicitly. |
 | `INSPECTOR_PORT` | `9090` | The loopback-only inspector UI. Set `0` to disable entirely. **Never expose to a public LB** — the Webhooks panel surfaces bcrypt-protected URLs by design. |
 | `INSPECTOR_BIND_ADDR` | `127.0.0.1` | Where the inspector binds. Loopback set: `127.0.0.1` / `::1` / `localhost`. Any other value REQUIRES `INSPECTOR_ALLOW_NONLOOPBACK=1` also be set — the connector otherwise refuses to boot. Prevents a silent typo from exposing copy-able webhook URLs. |
 | `INSPECTOR_ALLOW_NONLOOPBACK` | (unset) | Explicit opt-in for non-loopback `INSPECTOR_BIND_ADDR`. Set to `1` for Fly.io deployments using `::` behind the WireGuard mesh (with `fly ips list` empty). Do NOT set on any host with a public IP allocated. |

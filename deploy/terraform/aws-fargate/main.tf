@@ -42,8 +42,7 @@ resource "aws_ecs_task_definition" "connector" {
         { name = "CONNECTOR_CONFIG",       value = "/etc/mcp-connector/config.yaml" },
         { name = "CONNECTOR_NAME",         value = var.connector_name },
         { name = "CONTROLLER_URL",         value = var.controller_url },
-        { name = "INSPECTOR_PORT",         value = "9090" },
-        { name = "CONNECTOR_STATE_PATH",   value = "/var/lib/mcp-connector/.connector-state.json" }
+        { name = "INSPECTOR_PORT",         value = "9090" }
       ]
       secrets = [
         {
