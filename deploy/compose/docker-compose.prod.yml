@@ -38,7 +38,6 @@ services:
     environment:
       # db mode is the recommended default per CLAUDE.md — creds live in
       # the sealed controllers row, editable via inspector UI.
-      CONNECTOR_CREDS_SOURCE: db
       # C8 (security hardening) — assemble POSTGRES_URL from a mounted
       # secret file at container start, so the password never lives in
       # a shell env var, .env file, or compose YAML. The entrypoint

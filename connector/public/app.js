@@ -1668,22 +1668,20 @@ document.querySelectorAll('.collapsible').forEach((sec) => {
 // ─── Tunnel panel (Step 9b) ─────────────────────────────────────
 // Renders the top-of-left-col Tunnel panel that lets operators configure
 // / edit / force-reregister the controller tunnel from the inspector UI.
-// Backend: /internal/tunnel/* routes (wired only under CONNECTOR_CREDS_SOURCE=db).
+// Backend: /internal/tunnel/* routes.
 //
 // State is fetched with GET /internal/tunnel/config on init and re-fetched
-// after every successful mutation. A 404 on that route means the connector
-// is running under env mode — the panel renders a legacy banner instead
-// of the form.
+// after every successful mutation. Postgres is the only identity store, so
+// the panel has two sub-views (empty / configured) — the env-mode banner it
+// used to render was removed with env mode itself.
 //
 // Never renders decrypted secrets — the readout uses presence badges
 // (set / not set), matching §"Write-only for secrets" in the plan.
 
 const elTunnelLoading    = document.getElementById('tunnel-loading');
-const elTunnelEnvMode    = document.getElementById('tunnel-env-mode');
 const elTunnelEmpty      = document.getElementById('tunnel-empty');
 const elTunnelConfigured = document.getElementById('tunnel-configured');
 const elTunnelList       = document.getElementById('tunnel-list');
-const elTunnelModeBadge  = document.getElementById('tunnel-mode-badge');
 const elTunnelConfigureBtn = document.getElementById('tunnel-configure-btn');
 
 const elTunnelModal      = document.getElementById('tunnel-modal');
@@ -1711,12 +1709,8 @@ let tunnelState = { mode: 'loading', rows: [], row: null, actionStatus: null };
 
 function showTunnelView(view) {
   elTunnelLoading.hidden    = view !== 'loading';
-  elTunnelEnvMode.hidden    = view !== 'env-mode';
   elTunnelEmpty.hidden      = view !== 'empty';
   elTunnelConfigured.hidden = view !== 'configured';
-  elTunnelModeBadge.hidden  = view === 'loading';
-  if (view === 'env-mode') { elTunnelModeBadge.textContent = 'env mode'; }
-  else if (view === 'empty' || view === 'configured') { elTunnelModeBadge.textContent = 'db mode'; }
 }
 
 function setTunnelActionStatus(text, ok) {
@@ -1778,9 +1772,16 @@ async function fetchTunnelConfig() {
   try {
     const resp = await fetch('/internal/tunnel/config');
     if (resp.status === 404) {
-      tunnelState = { ...tunnelState, mode: 'env', rows: [], row: null };
-      showTunnelView('env-mode');
+      // This used to mean env mode: identity came from .env and these routes
+      // were never wired, so the panel rendered a legacy banner. env mode is
+      // gone and the routes are now always present, so a 404 means the route
+      // is genuinely missing — a stale build, or something in front of the
+      // inspector eating the path. Report it instead of presenting a removed
+      // configuration as if it were supported.
+      tunnelState = { ...tunnelState, mode: 'error', rows: [], row: null };
+      showTunnelView('empty');
       renderTunnelList([]);
+      setTunnelActionStatus('/internal/tunnel/config returned 404 — the connector may be serving a stale build', false);
       return;
     }
     const body = await resp.json().catch(() => ({}));

@@ -68,7 +68,6 @@ describe("runChecks — db mode (only mode)", () => {
       seedYaml(root);
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "db",
           POSTGRES_URL: "postgres://localhost:5432/mcp",
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
         },
@@ -92,7 +91,6 @@ describe("runChecks — db mode (only mode)", () => {
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "db",
           POSTGRES_URL: "postgres://localhost:5432/mcp",
           CONNECTOR_KEY_FILE: badKey,
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
@@ -118,7 +116,6 @@ describe("runChecks — db mode (only mode)", () => {
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "db",
           POSTGRES_URL: "postgres://localhost:5432/mcp",
           CONNECTOR_KEY_FILE: keyPath,
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
@@ -143,7 +140,6 @@ describe("runChecks — db mode (only mode)", () => {
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "db",
           CONNECTOR_KEY_FILE: keyPath,
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
         },
@@ -194,7 +190,6 @@ describe("runChecks — common", () => {
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "env",
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
           CONTROLLER_URL: "https://controller.example.com",
           CONNECTOR_NAME: "test",
@@ -218,7 +213,6 @@ describe("runChecks — common", () => {
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "env",
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
           INSPECTOR_PORT: "not-a-number",
           CONTROLLER_URL: "https://controller.example.com",
@@ -243,7 +237,6 @@ describe("runChecks — common", () => {
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "env",
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
           INSPECTOR_PORT: "0",
           CONTROLLER_URL: "https://controller.example.com",
@@ -278,7 +271,6 @@ describe("runChecks — common", () => {
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "env",
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
           INSPECTOR_PORT: String(addr.port),
           CONTROLLER_URL: "https://controller.example.com",
@@ -306,7 +298,6 @@ describe("runChecks — common", () => {
 
       const results = await runChecks(
         {
-          CONNECTOR_CREDS_SOURCE: "env",
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
           CONTROLLER_URL: "https://controller.example.com",
           CONNECTOR_NAME: "test",

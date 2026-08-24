@@ -38,7 +38,6 @@ resource "aws_ecs_task_definition" "connector" {
       image     = var.image
       essential = true
       environment = [
-        { name = "CONNECTOR_CREDS_SOURCE", value = var.creds_source },
         { name = "CONNECTOR_CONFIG",       value = "/etc/mcp-connector/config.yaml" },
         { name = "CONNECTOR_NAME",         value = var.connector_name },
         { name = "CONTROLLER_URL",         value = var.controller_url },

@@ -45,16 +45,6 @@ variable "log_retention_days" {
   default     = 30
 }
 
-variable "creds_source" {
-  description = "\"db\" (default, recommended) or \"env\". Db mode stores tunnel identity in Postgres — you'll need to provision that separately."
-  type        = string
-  default     = "db"
-  validation {
-    condition     = contains(["db", "env"], var.creds_source)
-    error_message = "creds_source must be \"db\" or \"env\"."
-  }
-}
-
 variable "region" {
   description = "AWS region used for the CloudWatch log group's awslogs-region option."
   type        = string

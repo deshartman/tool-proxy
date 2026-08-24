@@ -168,7 +168,6 @@ app = "mcp-shim-derived-test"
 primary_region = "iad"
 
 [env]
-  CONNECTOR_CREDS_SOURCE = "env"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
   # Volume mounted at /data (see the masking pitfall below) so it doesn't
   # hide the drop-in path baked in at /var/lib/mcp-connector/customer-mcps/.
@@ -219,7 +218,6 @@ docker build --platform linux/amd64 -t mcp-shim-derived:test .
 # 3. Create Fly app + secrets + state volume
 fly apps create mcp-shim-derived-test --org personal
 fly secrets set \
-  CONNECTOR_CREDS_SOURCE=env \
   CONTROLLER_URL="$CONTROLLER_URL" \
   CONNECTOR_NAME=mcp-shim-derived-test \
   TUNNEL_AUTH_TOKEN="$TUNNEL_AUTH_TOKEN" \
