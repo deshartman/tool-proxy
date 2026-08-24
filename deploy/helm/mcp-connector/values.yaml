@@ -7,8 +7,6 @@ connector:
   name: ""
   # HTTPS root of the controller. No default; must be set.
   controllerUrl: ""
-  # Recommended: "db" mode. Alternate "env".
-  credsSource: db
   # Auth posture. "static" reads TUNNEL_AUTH_TOKEN; "oauth2" reads
   # OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL.
   auth: static

@@ -30,8 +30,6 @@ spec:
               value: {{ required "connector.name is required" .Values.connector.name | quote }}
             - name: CONTROLLER_URL
               value: {{ required "connector.controllerUrl is required" .Values.connector.controllerUrl | quote }}
-            - name: CONNECTOR_CREDS_SOURCE
-              value: {{ .Values.connector.credsSource | quote }}
             - name: CONNECTOR_CONFIG
               value: /etc/mcp-connector/config.yaml
             - name: INSPECTOR_PORT
@@ -39,10 +37,8 @@ spec:
               # inspector binds 127.0.0.1 inside the pod. `kubectl port-forward`
               # is the intended access path.
               value: "9090"
-            {{- if eq .Values.connector.credsSource "db" }}
             - name: CONNECTOR_KEY_FILE
               value: {{ .Values.secrets.connectorKeyFile | quote }}
-            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "mcp-connector.fullname" . }}-auth

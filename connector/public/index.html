@@ -43,23 +43,17 @@
 
   <main id="main">
     <aside id="left-col">
-      <!-- Tunnel panel — DB mode only. When /internal/tunnel/config returns
-           404 (env mode), the panel renders the legacy-mode banner instead.
-           Three sub-views: env-mode-banner, empty (needs configuration),
-           configured (readout + Edit / Force re-registration buttons). -->
+      <!-- Tunnel panel. Two sub-views: empty (needs configuration) and
+           configured (readout + Edit / Force re-registration buttons). A
+           third env-mode banner was removed with env mode itself; a 404 from
+           /internal/tunnel/config is now reported as an error, not a mode. -->
       <section id="tunnel-pane" class="collapsible" data-key="tunnel">
         <h2 class="section-head">
           <span class="caret">▾</span>
           <span class="section-title">Tunnel</span>
-          <span id="tunnel-mode-badge" class="tunnel-mode-badge" hidden></span>
         </h2>
         <div class="section-body">
           <div id="tunnel-loading" class="empty">Loading tunnel configuration…</div>
-
-          <div id="tunnel-env-mode" class="tunnel-env-mode" hidden>
-            <p>Tunnel identity is configured via <code>.env</code> (<code>CONNECTOR_CREDS_SOURCE=env</code>).</p>
-            <p class="muted">To manage tunnel credentials from this UI, set <code>CONNECTOR_CREDS_SOURCE=db</code> and restart the connector.</p>
-          </div>
 
           <div id="tunnel-empty" class="tunnel-empty" hidden>
             <p>No tunnel configured.</p>

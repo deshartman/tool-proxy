@@ -335,7 +335,6 @@ app = "mcp-shim-volume-test"
 primary_region = "iad"
 
 [env]
-  CONNECTOR_CREDS_SOURCE = "env"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
   INSPECTOR_PORT = "9090"
   INSPECTOR_BIND_ADDR = "::"
@@ -368,7 +367,6 @@ IMAGE=mcp-connector:local-npm-pivot PLATFORMS=linux/amd64 ./scripts/build-image.
 cd test/deploy/volume-mount
 fly apps create mcp-shim-volume-test --org personal
 fly secrets set \
-  CONNECTOR_CREDS_SOURCE=env \
   CONTROLLER_URL="$CONTROLLER_URL" \
   CONNECTOR_NAME=mcp-shim-volume-test \
   TUNNEL_AUTH_TOKEN="$TUNNEL_AUTH_TOKEN" \

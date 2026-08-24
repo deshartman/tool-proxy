@@ -17,7 +17,6 @@ For db mode:
 helm install my-connector ./deploy/helm/mcp-connector \
   --set connector.name=prod-us-east-1 \
   --set connector.controllerUrl=https://controller.example.com \
-  --set connector.credsSource=db \
   --set secrets.postgresUrl=postgres://mcp:password@postgres:5432/mcp_connector \
   --set secrets.tunnelAuthToken=ts_your_bearer_from_controller
 ```

@@ -748,35 +748,13 @@ h2 {
 }
 
 /* ─── Tunnel panel (Step 9b) ─────────────────────────────────────
-   The Tunnel panel lives at the top of #left-col in DB mode. It has
-   three sub-views mutually toggled via [hidden]: env-mode banner
-   (when the routes 404 under CONNECTOR_CREDS_SOURCE=env), empty
-   state ("Configure tunnel" CTA), and configured readout (dl of
-   non-secret fields + Edit / Force-reregister buttons).
+   The Tunnel panel lives at the top of #left-col. It has two
+   sub-views mutually toggled via [hidden]: empty state ("Configure
+   tunnel" CTA) and configured readout (dl of non-secret fields +
+   Edit / Force-reregister buttons). A third env-mode banner was
+   removed with env mode itself.
    No cleartext secrets are ever rendered — the readout uses "set"
-   / "not set" badges instead of the value. See §"Write-only for
-   secrets" in .claude/plans/ENV-TO-DB.md. */
-.tunnel-mode-badge {
-  font-family: var(--mono);
-  font-size: 0.65rem;
-  padding: 1px 6px;
-  border-radius: 999px;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  background: transparent;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.tunnel-env-mode { padding: 0.5rem 0 0.25rem; font-size: 0.85rem; line-height: 1.5; }
-.tunnel-env-mode code {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--accent);
-}
+   / "not set" badges instead of the value. */
 .tunnel-empty { padding: 0.5rem 0; }
 .tunnel-empty p { margin: 0 0 0.75rem; }
 .tunnel-primary-btn {

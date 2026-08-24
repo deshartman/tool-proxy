@@ -58,14 +58,12 @@ kind: ConfigMap
 metadata: { name: mcp-connector-config }
 data:
   config.yaml: |
-    # ── env mode only ──
-    # This block is READ only when CONNECTOR_CREDS_SOURCE=env (legacy mode).
-    # Under the default `db` mode, tunnel identity lives in a sealed Postgres
-    # row managed via the inspector's Configure Tunnel modal — no yaml block
-    # needed. The ${VAR:-} defaults below let interpolation succeed even
-    # under db mode (all three env vars will be unset) without hard-failing
-    # boot; bootFromDb sees the empty-string fields and logs an "ignored"
-    # WARN.
+    # ── legacy, ignored ──
+    # Tunnel identity lives in a sealed Postgres row managed via the
+    # inspector's Configure Tunnel modal; this block is not read. The
+    # ${VAR:-} defaults let interpolation succeed with all three env vars
+    # unset instead of hard-failing boot; bootFromDb sees the empty-string
+    # fields and logs an "ignored" WARN. Safe to delete outright.
     tunnel:
       controller_url: ${CONTROLLER_URL:-}
       name: ${CONNECTOR_NAME:-}

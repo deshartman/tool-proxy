@@ -43,13 +43,9 @@ The WS handshake is gated by per-tunnel auth that the controller mints. Before b
 - **Twilio Auth Token** or **Twilio API Key** → controller mints a long-lived `ts_<...>` bearer, shown once.
 - **OAuth 2.0 (client_credentials)** → controller mints a `client_id` + `client_secret`, plus the OAuth token URL. The connector mints a fresh 1h JWT against that endpoint on each reconnect (and refreshes <60s before expiry mid-session).
 
-### Configure tunnel creds — two modes
+### Configure tunnel creds
 
-The connector chooses how to load tunnel creds via **`CONNECTOR_CREDS_SOURCE`** (default `"db"`). The two modes are mutually exclusive at boot:
-
-#### Mode 1: `db` (default, recommended)
-
-Tunnel identity lives in a Postgres row, sealed at rest. The operator pastes creds via the inspector UI — no shell edits, no restart on rotation.
+Tunnel identity lives in a Postgres row, sealed at rest. The operator pastes creds via the inspector UI — no shell edits, no restart on rotation. There is no env-var alternative: an earlier `CONNECTOR_CREDS_SOURCE=env` mode was removed, and `POSTGRES_URL` + `CONNECTOR_KEY_FILE` are now the only env vars the connector requires at boot.
 
 ```bash
 # from repo root
@@ -66,12 +62,11 @@ mkdir -p .local && head -c 32 /dev/urandom > .local/master.key && chmod 0600 .lo
 # Point the connector at Postgres + the key file.
 cp .env.example .env
 # edit .env:
-#   CONNECTOR_CREDS_SOURCE=db          (or omit — this is the default)
 #   POSTGRES_URL=postgres://postgres:dev@localhost:5432/postgres
 #   CONNECTOR_KEY_FILE=./.local/master.key
 
-# Copy the yaml example — mcp_servers + policy blocks only (the tunnel:
-# block is ignored under db mode; leave it in place harmless, or delete).
+# Copy the yaml example — mcp_servers + policy blocks only (a legacy
+# tunnel: block is never read; leave it in place harmless, or delete).
 cp connector.yaml.example connector.yaml
 
 ./scripts/start-connector.sh
@@ -81,51 +76,11 @@ First boot: schema created, empty `controllers` table, connector logs `"no contr
 
 Rotate later via **Edit** on the same panel — paste a new bearer to replace the sealed value, or leave the field blank to keep the existing one. `cycleTunnel` reloads the row from Postgres before redialing so the fresh bearer is presented on the very next WS upgrade (no restart required). **Force re-registration** clears the current `registrationToken` and redials — read the confirm dialog carefully, since it can strand the connector against a controller row that already exists.
 
-#### Mode 2: `env` (legacy, being removed after `db` is proven)
-
-Tunnel identity in `.env` + `connector.yaml`'s `tunnel:` block + `.connector-state.json`. Preserved as a rollback lane; **new deployments should use `db` mode.**
-
-```bash
-cp connector.yaml.example connector.yaml
-cp .env.example .env
-# edit .env:
-#   CONNECTOR_CREDS_SOURCE=env
-#   CONTROLLER_URL=https://your-controller.example.com
-#   CONNECTOR_NAME=<exact Name from the MCP Tunnel row (NOT the Tunnel Security row)>
-# then ONE of:
-#   TUNNEL_AUTH_TOKEN=ts_<...>                     (Twilio Auth Token / API Key row)
-# OR
-#   OAUTH_CLIENT_ID=cid_tsec...                    (OAuth 2.0 row)
-#   OAUTH_CLIENT_SECRET=cs_...
-#   OAUTH_TOKEN_URL=https://your-controller.example.com/oauth2/token
-
-./scripts/start-connector.sh
-```
-
-### Migrating from env mode
-
-If you previously ran the connector in `env` mode, you have a `.connector-state.json` on disk carrying the `registrationToken` the controller minted for your `mcp-tunnel` connectors row. Under `db` mode `bootFromDb` doesn't read that file (D11 says delete it after the first successful register-ack, not import it) — so the first register frame under `db` mode carries no token, the controller sees "you already have a connector called `<name>`" and rejects with `code: "organisation_has_connector"`. The connector suppresses auto-reconnect and you're stuck.
-
-Recovery is a one-shot seed of the legacy token into the DB row:
-
-```bash
-# From the repo root, with .env loaded (POSTGRES_URL + CONNECTOR_KEY_FILE):
-node scripts/migrate-registration-token.mjs
-```
-
-The script:
-1. Reads `.connector-state.json` from CWD.
-2. Refuses if the DB row already has a sealed token (nothing to migrate).
-3. Otherwise seals the token with your master key and writes it into `controllers.registration_token_ct`.
-4. Prints a hint to click **Reconnect** in the inspector.
-
-On the next successful register-ack the connector deletes `.connector-state.json` automatically (per D11); the migration is one-shot. Alternatively, if you don't have `.connector-state.json` or don't care to preserve the existing controller row, delete the row in the controller UI (**Settings → MCP Tunnel → delete**) and click **Force re-registration** in the inspector — the controller mints a fresh row + token.
-
-### Under the hood — WS handshake (both modes)
+### Under the hood — WS handshake
 
 The WS upgrade sends `Authorization: Bearer <bearer>` plus `X-Connector-Name: <name>`. The controller looks up the `tunnel_security_configs` row by `(tenant_id, name)` and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). Mismatch / missing header / unknown name → HTTP 401, no socket.
 
-Once the WS is up, the connector registers a `connectors` row using the configured name and persists the controller-issued `registrationToken`. Under `db` mode the token lives in `controllers.registration_token_ct` (sealed); under `env` mode it lives in `connector/.connector-state.json`. Subsequent boots reconnect by token; clearing the store (or clicking **Force re-registration** in db mode) forces a fresh mint — note that the Tunnel Security row is independent of the connectors row, so you don't need to recreate the bearer for that.
+Once the WS is up, the connector registers a `connectors` row using the configured name and persists the controller-issued `registrationToken`. The token lives sealed in `controllers.registration_token_ct`. Subsequent boots reconnect by token; clearing the store (or clicking **Force re-registration**) forces a fresh mint — note that the Tunnel Security row is independent of the connectors row, so you don't need to recreate the bearer for that.
 
 Rotate via the row's **Rotate Secret** (long-lived bearer) or by issuing a new client secret (OAuth2); previous credentials stay valid 24h so the connector can roll without coordinated downtime.
 

@@ -80,7 +80,7 @@ async function bootFromDb(): Promise<void> {
   // be nonsense.
   for (const name of ["CONTROLLER_URL", "CONNECTOR_NAME", "TUNNEL_AUTH_TOKEN", "OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET", "OAUTH_TOKEN_URL"]) {
     if (envOptional(name)) {
-      log.warn(`legacy per-controller env var '${name}' present but ignored (CONNECTOR_CREDS_SOURCE=db); remove from .env`);
+      log.warn(`legacy per-controller env var '${name}' present but ignored — tunnel identity lives in Postgres; remove from .env`);
     }
   }
 
@@ -98,7 +98,7 @@ async function bootFromDb(): Promise<void> {
 
   // WARN if legacy tunnel: block is present in yaml (db mode ignores it)
   if (config.tunnel) {
-    log.warn("legacy 'tunnel:' block in connector.yaml ignored under CONNECTOR_CREDS_SOURCE=db; remove it from your yaml");
+    log.warn("legacy 'tunnel:' block in connector.yaml ignored — tunnel identity lives in Postgres; remove it from your yaml");
   }
 
   // Live mutable references — replaced on each reconnect.

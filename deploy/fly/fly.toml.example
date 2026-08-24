@@ -43,7 +43,6 @@ primary_region = "iad"
   image = "ghcr.io/twilio/mcp-connector:latest"
 
 [env]
-  CONNECTOR_CREDS_SOURCE = "db"
   CONNECTOR_KEY_FILE = "/etc/mcp-connector/connector.key"
   CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
   INSPECTOR_PORT = "9090"
