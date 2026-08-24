@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { ChannelSchema } from "../schemas.js";
 import { NormalizationError, normalizeChannelValue } from "../normalize.js";
-import { aliasKey, store } from "../state.js";
+import { aliasKey, commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
@@ -62,7 +62,8 @@ export const identityAddAlias: Tool = {
         }
         identity.aliases.push({ channel, value: normalised, addedAt: new Date().toISOString() });
         store.state.aliasIndex[key] = externalId;
-        store.commit();
+        const failed = commitOrError();
+        if (failed) return failed;
         const data = { success: true, wasAlreadyPresent: false };
         return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }] };
       },

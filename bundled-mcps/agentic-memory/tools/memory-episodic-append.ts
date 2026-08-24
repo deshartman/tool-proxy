@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { ChannelSchema, ISO_DATETIME } from "../schemas.js";
 import { episodeId } from "../id.js";
-import { store } from "../state.js";
+import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
@@ -54,7 +54,8 @@ export const memoryEpisodicAppend: Tool = {
         const list = store.state.episodes[externalId] ?? [];
         list.push(episode);
         store.state.episodes[externalId] = list;
-        store.commit();
+        const failed = commitOrError();
+        if (failed) return failed;
         const data = { success: true, episodeId: id };
         return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }] };
       },

@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 
-import { McpSupervisor, maskSecrets } from "../../src/mcp-supervisor.js";
+import { McpSupervisor, maskSecrets, parseChildRecord } from "../../src/mcp-supervisor.js";
 import type { McpServerSpec } from "../../src/config.js";
 
 // MCP-AUDIT #29 — a child's stdout/stderr must not reach the log stream
@@ -211,6 +211,101 @@ describe("MCP-AUDIT #29 — child output is piped through the logger", () => {
     const drop = captured.find((c) => c.msg === "child output rate-limited — lines dropped");
     expect(drop).toBeDefined();
     expect(drop?.obj.suppressed).toBe(300);
+  });
+});
+
+describe("MCP-AUDIT #29 — a child's own pino JSON is unwrapped, not double-encoded", () => {
+  it("lifts the child's msg and keeps its fields under `child`", async () => {
+    const { privates, captured, supervisor } = buildSupervisor();
+    const entry = register(supervisor, privates, "jsonny");
+    const { proc, stdout } = fakeChild();
+    privates.attachChildLogging(entry, proc);
+
+    // Exactly what the SDK's createLogger emits — observed live on boot.
+    stdout.push(JSON.stringify({
+      level: 30, time: 1787548641699, pid: 94323, hostname: "host",
+      component: "agentic-memory", port: 7100, msg: "listening",
+    }) + "\n");
+    await flush();
+
+    const rec = captured.find((c) => c.obj.which !== undefined);
+    // Before the fix this was the whole JSON blob as a string.
+    expect(rec?.msg).toBe("listening");
+    expect(rec?.msg).not.toContain("{");
+    const child = rec?.obj.child as Record<string, unknown>;
+    expect(child.component).toBe("agentic-memory");
+    expect(child.port).toBe(7100);
+    // Noise the outer record already carries is dropped.
+    expect(child).not.toHaveProperty("pid");
+    expect(child).not.toHaveProperty("hostname");
+    expect(child).not.toHaveProperty("level");
+  });
+
+  it("honours the child's own level rather than the stream it arrived on", async () => {
+    const { privates, captured, supervisor } = buildSupervisor();
+    const entry = register(supervisor, privates, "leveller");
+    const { proc, stdout } = fakeChild();
+    privates.attachChildLogging(entry, proc);
+
+    // A child logging at error on STDOUT must still surface as error.
+    stdout.push(JSON.stringify({ level: 50, time: 1, msg: "boom" }) + "\n");
+    await flush();
+    expect(captured.find((c) => c.msg === "boom")?.level).toBe("error");
+  });
+
+  it("still masks secrets inside a structured record's field values", async () => {
+    const { privates, captured, supervisor } = buildSupervisor();
+    const entry = register(supervisor, privates, "structleak") as { controllerEnv: Record<string, string> };
+    entry.controllerEnv = { API_TOKEN: "tok-abcdefgh12345678" };
+    const { proc, stderr } = fakeChild();
+    privates.attachChildLogging(entry, proc);
+
+    // Masking runs on the raw text before the parse, so a field value is covered.
+    stderr.push(JSON.stringify({ level: 40, time: 1, msg: "auth failed", sent: "tok-abcdefgh12345678" }) + "\n");
+    await flush();
+
+    const rec = captured.find((c) => c.msg === "auth failed");
+    expect((rec?.obj.child as Record<string, unknown>).sent).toBe("***");
+  });
+
+  it("leaves a non-JSON line on the plain-text path", async () => {
+    const { privates, captured, supervisor } = buildSupervisor();
+    const entry = register(supervisor, privates, "plain");
+    const { proc, stderr } = fakeChild();
+    privates.attachChildLogging(entry, proc);
+
+    // What dropin-runner's raw stderr.write and Node's stack traces look like.
+    stderr.push("dropin-runner: DROPIN_DIR and DROPIN_NAME must be set\n");
+    await flush();
+
+    const rec = captured.find((c) => c.obj.which !== undefined);
+    expect(rec?.msg).toBe("dropin-runner: DROPIN_DIR and DROPIN_NAME must be set");
+    expect(rec?.obj.child).toBeUndefined();
+    expect(rec?.level).toBe("warn");
+  });
+});
+
+describe("parseChildRecord", () => {
+  it("rejects a bare JSON payload that is not a log record", () => {
+    // A child printing a tool result must not be mistaken for a log line.
+    expect(parseChildRecord('{"records":[{"Id":"001"}],"totalSize":1}')).toBeUndefined();
+  });
+
+  it("rejects non-JSON, arrays, and malformed JSON", () => {
+    expect(parseChildRecord("plain text")).toBeUndefined();
+    expect(parseChildRecord('[{"level":30,"time":1}]')).toBeUndefined();
+    expect(parseChildRecord('{"level":30,"time":')).toBeUndefined();
+  });
+
+  it("maps pino numeric levels", () => {
+    expect(parseChildRecord('{"level":30,"time":1,"msg":"a"}')?.level).toBe("info");
+    expect(parseChildRecord('{"level":40,"time":1,"msg":"a"}')?.level).toBe("warn");
+    expect(parseChildRecord('{"level":50,"time":1,"msg":"a"}')?.level).toBe("error");
+    expect(parseChildRecord('{"level":60,"time":1,"msg":"a"}')?.level).toBe("error");
+  });
+
+  it("falls back to a placeholder when the record has no msg", () => {
+    expect(parseChildRecord('{"level":30,"time":1,"component":"x"}')?.msg).toBe("child output");
   });
 });
 

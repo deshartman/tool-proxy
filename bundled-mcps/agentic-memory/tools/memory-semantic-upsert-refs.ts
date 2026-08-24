@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { HydrationReferenceSchema, ISO_DATETIME } from "../schemas.js";
 import type { HydrationReference } from "../state.js";
-import { store } from "../state.js";
+import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";
 
 const InputSchema = {
@@ -59,7 +59,8 @@ export const memorySemanticUpsertRefs: Tool = {
         cache.hydratedAt = cache.hydratedAt ?? now;
         cache.lastEngagedAt = now;
         store.state.semanticCache[externalId] = cache;
-        store.commit();
+        const failed = commitOrError();
+        if (failed) return failed;
         const data = {
           resolved: cache.resolved,
           sourceRefs: cache.sourceRefs,

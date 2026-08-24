@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { store } from "../state.js";
+import { commitOrError, store } from "../state.js";
 
 const InputSchema = {
   deletedCanonical: z.string().describe("Canonical procedure identifier (e.g. procedure:<id>) whose refs should be purged."),
@@ -38,7 +38,10 @@ export const memorySemanticPruneRefs: Tool = {
             mutated = true;
           }
         }
-        if (mutated) store.commit();
+        if (mutated) {
+          const failed = commitOrError();
+          if (failed) return failed;
+        }
         const data = { removedCount };
         return { structuredContent: data, content: [{ type: "text", text: JSON.stringify(data) }] };
       },

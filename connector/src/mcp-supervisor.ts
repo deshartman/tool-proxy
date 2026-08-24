@@ -917,6 +917,23 @@ export class McpSupervisor {
         if (line.length > CHILD_LOG_MAX_LINE) {
           line = `${line.slice(0, CHILD_LOG_MAX_LINE)}… [truncated ${line.length - CHILD_LOG_MAX_LINE} chars]`;
         }
+        // Every Type 1 MCP logs through the SDK's createLogger, so most lines are
+        // already pino JSON. Wrapping that in another record's `msg` would
+        // double-encode it — a JSON string inside a JSON field, which no log
+        // aggregator can query and which reads terribly in dev. So unwrap it:
+        // lift the child's own message to `msg`, keep its fields under `child`,
+        // and honour the level it chose. A non-JSON line (a raw stderr.write, an
+        // uncaught stack trace) takes the plain path.
+        //
+        // Masking runs BEFORE the parse, on the raw text, so a secret is caught
+        // whether it sits in a field value or in free text.
+        const structured = parseChildRecord(line);
+        if (structured) {
+          const { level, msg, fields } = structured;
+          const emit = level === "error" ? log.error : level === "warn" ? log.warn : log.info;
+          emit.call(log, { which, child: fields }, msg);
+          return;
+        }
         // The masked line is the log MESSAGE, not a field. In dev, pino-pretty's
         // messageFormat renders `{component} | {msg}`, so a child line stays
         // readable at a glance instead of being buried in an object dump; in
@@ -1012,6 +1029,42 @@ export class McpSupervisor {
 
 function nowMs(): number {
   return Date.now();
+}
+
+// MCP-AUDIT #29: unwrap a child's own pino JSON line so it doesn't get
+// double-encoded inside our `msg`. Returns undefined for anything that isn't a
+// pino-shaped record, which takes the plain-text path instead.
+//
+// `level` maps pino's numeric levels; anything unrecognised falls back to info
+// rather than guessing, because the stream (stdout/stderr) is a poor proxy — many
+// libraries write ordinary diagnostics to stderr.
+export function parseChildRecord(line: string):
+  | { level: "info" | "warn" | "error"; msg: string; fields: Record<string, unknown> }
+  | undefined {
+  const trimmed = line.trimStart();
+  if (!trimmed.startsWith("{")) return undefined;      // cheap reject before parsing
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  const rec = parsed as Record<string, unknown>;
+  // Require pino's shape. Without this, a child that prints a bare JSON payload
+  // (a tool result, a config dump) would be mistaken for a log record.
+  if (typeof rec.level !== "number" || typeof rec.time !== "number") return undefined;
+
+  const level = rec.level >= 50 ? "error" : rec.level >= 40 ? "warn" : "info";
+  const msg = typeof rec.msg === "string" && rec.msg.length > 0 ? rec.msg : "child output";
+  // Drop the fields our own record already carries or that duplicate the child's
+  // transport identity — keeping them would just be noise on every line.
+  const fields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    if (k === "level" || k === "time" || k === "msg" || k === "pid" || k === "hostname") continue;
+    fields[k] = v;
+  }
+  return { level, msg, fields };
 }
 
 // MCP-AUDIT #29: mask known secret VALUES in a child's output line. Plain
