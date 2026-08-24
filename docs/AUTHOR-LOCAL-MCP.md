@@ -1,6 +1,6 @@
 # Author a local MCP
 
-> Drop a folder under `mcp/local/<name>/` with one or more tool files (and optionally prompts and resources). That's it. The connector picks it up at boot — or at runtime via the **Refresh local MCPs** button.
+> Drop a folder under `${MCP_DROPIN_DIR}/<name>/` — `customer-mcps/<name>/` in dev, `/var/lib/mcp-connector/customer-mcps/<name>/` in production — with one or more tool files (and optionally prompts and resources). That's it. The connector picks it up at boot — or at runtime via the **Refresh local MCPs** button.
 >
 > No `server.ts`, no `package.json`, no `.env`, no `connector.yaml` edit.
 >
@@ -9,7 +9,7 @@
 ## What you write
 
 ```
-mcp/local/<name>/
+${MCP_DROPIN_DIR}/<name>/
 ├── tools/                ← one file per tool, default-exports a Tool
 │   └── <tool>.ts
 ├── prompts/              ← (optional) one file per prompt, default-exports a Prompt
@@ -164,6 +164,46 @@ Two ways to get the connector to pick up a new folder:
 
 Both refresh paths re-run the drop-in scanner, register new folders with the supervisor, fan out an `mcp-discovered` frame for each new drop-in, and (after the operator approves) emit a `manifest-delta` so the controller picks up the new tools.
 
+## In-process state is a cache, not the truth
+
+Your tool module is loaded once per child process, so a module-level `const`, a
+`Map`, or a counter survives across calls — and it is tempting to treat that as
+storage. It isn't. **The connector restarts your child, without warning, on every
+one of these:**
+
+| Trigger | Who causes it |
+|---|---|
+| `creds-update` frame for your MCP | Operator edits creds in the controller UI |
+| `mcp-enable` (initial approval) | Operator's approval click |
+| **Apply (session only)** in the inspector | A developer on the local box |
+| Session-creds 12h TTL expiry | Nobody — it is a timer |
+| **Restart** / **Reload creds** button | Operator, from the inspector |
+| Readiness-probe failure on a prior spawn | The supervisor, recovering |
+
+A restart is a fresh `tsx` process: module state resets to its initial value and
+in-flight calls fail (the dispatcher reports `mcp_disconnected` rather than
+`tool_failed`, so the controller can tell a restart from a crash). Nothing is
+migrated, and there is no shutdown hook to flush from.
+
+So treat in-process state as a **cache you may lose at any moment**:
+
+- **Fine** — a memoised access token (re-mint on miss), a recent-lookups ring
+  buffer backing a resource, a schema cache.
+- **Not fine** — anything a caller would be upset to lose. Two in-repo demos are
+  deliberately on the wrong side of this line and say so: `crm`'s
+  `REFUND_LEDGER` is a `Map` that a restart wipes, and `agentic-memory` writes a
+  JSON file precisely so it doesn't.
+
+If you need durability, write it to a file under `/var/lib/mcp-connector/` (the
+one writable path — `/app` ships root-owned and read-only) or put the state
+behind an HTTP call to a service you own, the way `crm` talks to
+`examples/mock-backend/`.
+
+**Reading env is a special case of the same rule, and it is why a module-level
+read is correct** rather than merely convenient: new creds arrive as a *new
+process*, so `envString(...)` at module scope always sees the current value.
+Re-reading `process.env` inside a handler buys nothing.
+
 ## Approval — the operator's one click
 
 In v1.3+, customer-authored drop-in MCPs go through an explicit operator approval gate before the LLM can call their tools. The flow:
@@ -205,11 +245,12 @@ Per-MCP env values arrive over the WSS tunnel from the **controller**. Operator 
 
 The `envKeys` array on each `Tool` (or, server-level, on `createMcpHttpServer({ envKeys: [...] })`) tells the controller's UI which keys to surface — the operator never has to guess.
 
-For offline development, you can still use `mcp/local/<name>/.env`. The connector's env merge order is:
+For offline development, you can still drop a `.env` beside your folder (`${MCP_DROPIN_DIR}/<name>/.env`). The connector's env merge order is:
 
 ```
-process.env  ⊕  mcp/local/<name>/.env  ⊕  yaml inline (rare)  ⊕  controller-supplied
-                                                                ↑ winner on conflict
+process.env  ⊕  <your-folder>/.env  ⊕  session creds  ⊕  controller-supplied
+(minus connector-only     (dev escape    (inspector      ↑ winner on conflict
+ secrets — see below)      hatch)         paste, 12h)
 ```
 
 The plan is to remove the `dir/.env` fallback once every customer has migrated their creds into the controller — the per-spawn `mcp spawn env-sources` log line tracks that progress (the `dirDotEnv: [...]` array trends toward `[]`).
@@ -235,8 +276,19 @@ These are validated at boot by [src/manifest/validate.ts](../connector/src/manif
 2. **Tools we author declare `outputSchema`.** Lets controller-side procedure authors write `{{ hydrate:<server>.<tool>.<field> }}` and have it type-checked.
 3. **Wrap single-scalar outputs in `{ value }`.** Stable field name regardless of tool semantics — see [`examples/demos/sample/tools/now.ts`](../examples/demos/sample/tools/now.ts) for the canonical example.
 4. **Return `structuredContent` AND `content`.** The first is the schema-typed JSON; the second is the human-readable rendering.
-5. **`envKeys` lists the env vars your tool reads.** Optional but strongly recommended — the controller UI uses it to render the right form fields.
+5. **`envKeys` lists the env vars your tool reads.** Not optional in practice: the value is how the controller learns the key exists. The supervisor reads your MCP's `/envkeys` after spawn and puts the result in the `creds-request` frame, so an undeclared key means the controller has **no way** to offer it — the operator gets no form field, and the only route left is a connector-level env var visible to every other MCP child.
 6. **Prompts and resources don't declare `outputSchema`.** That field is tools-only. The MCP protocol's `prompts/get` and `resources/read` are typed by the prompt's `argsSchema` and the resource's `mimeType` respectively.
+8. **Read env with `envString` / `envOptional` / `envNumber`, never `??`.** All three come from `@mcp-shim/connector/sdk`. The connector-wide rule is **empty string == not set**, because `FOO=` (a blank line in a `dir/.env`, or a controller key cleared to empty) is how an operator says "leave this unset" — and `??` disagrees, since `""` is not nullish:
+
+   ```ts
+   import { envString } from "@mcp-shim/connector/sdk";
+
+   const BASE = envString("MY_API_URL", "http://localhost:7400");  // "" → default
+   // const BASE = process.env.MY_API_URL ?? "http://localhost:7400";  // "" → ""
+   ```
+
+   The `??` form fails in ways that don't name the cause: an empty base URL makes `fetch()` throw `Failed to parse URL`, `Number("")` is `0` so a port gets kernel-assigned, and pino throws outright on an empty level. `envNumber` additionally rejects a non-numeric value with an error naming the variable instead of silently yielding `NaN`.
+
 7. **Pick distinct URI schemes per MCP for resources.** `orders://...`, `crm://...`, `inventory://...`. The connector and controller route resource reads by scheme/host.
 
 ## Live examples

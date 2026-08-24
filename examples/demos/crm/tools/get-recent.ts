@@ -1,14 +1,13 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { recordLookup } from "../resources/recent-lookups.js";
+import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 
 // Hydration-role tool: takes a phone number and returns the customer's
 // recent orders in a shape the cloud server can field-project against
 // (e.g. [get-recent-orders.orders[0].id]). The outputSchema below is the
 // contract: when the controller-side procedure references a field, it
 // resolves against this shape.
-const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
-const REQ_TIMEOUT_MS = 4000;
 
 interface Interaction {
   orderId: string;
@@ -80,6 +79,7 @@ async function fetchJson(url: string): Promise<{ status: number; body: unknown }
 
 export const getRecent: Tool = {
   name: "get_recent",
+  envKeys: ["MOCK_CUSTOMERS_URL"],
   register(server) {
     server.registerTool(
       "get_recent",

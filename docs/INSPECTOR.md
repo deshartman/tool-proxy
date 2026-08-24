@@ -98,7 +98,7 @@ Click the **purple `<name>`** on any MCP server card to open the creds view in t
 
 ### What session creds are for
 
-Session creds are the **developer's local feedback loop**. After dropping a folder under `mcp/local/<name>/` you'd otherwise have to wait for an admin to paste creds in the controller UI before you could smoke-test your tool. Session creds let you paste your own dev creds directly into the inspector — values live in connector RAM only, expire after 12 hours, and never persist to disk or cross to the controller.
+Session creds are the **developer's local feedback loop**. After dropping a folder under `${MCP_DROPIN_DIR}/<name>/` you'd otherwise have to wait for an admin to paste creds in the controller UI before you could smoke-test your tool. Session creds let you paste your own dev creds directly into the inspector — values live in connector RAM only, expire after 12 hours, and never persist to disk or cross to the controller.
 
 ### Precedence
 

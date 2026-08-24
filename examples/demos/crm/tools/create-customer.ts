@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
 import { recordLookup } from "../resources/recent-lookups.js";
+import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 
 // Operator-facing write tool. Creates a customer + optional inline
 // orders in one round-trip. Backed by the mock-backend's POST /customers
@@ -11,8 +12,6 @@ import { recordLookup } from "../resources/recent-lookups.js";
 //
 // The tool doesn't touch Postgres directly — the mock-backend owns the
 // DB creds. Same HTTP boundary every other CRM tool uses.
-const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
-const REQ_TIMEOUT_MS = 4000;
 
 // Response body echoes what get_customer would return for the same
 // person, so the operator can eyeball what got inserted and downstream
@@ -59,6 +58,7 @@ interface CreateCustomerResponse {
 
 export const createCustomer: Tool = {
   name: "create_customer",
+  envKeys: ["MOCK_CUSTOMERS_URL"],
   register(server) {
     server.registerTool(
       "create_customer",

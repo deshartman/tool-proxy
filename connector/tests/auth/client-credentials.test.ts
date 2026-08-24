@@ -18,10 +18,10 @@ import { deriveJwtSigningKey, verifyAccessToken, verifyHs256 } from "../../src/a
 describe("POST /oauth/token — self-issued client_credentials", () => {
   const TEST_SCHEMA = "test_mcp_connector_oauth_" + Date.now();
   let store: ConfigStore;
-  let pool: pg.Pool;
+  let pool: pg.Pool | undefined;
   let masterKey: { bytes: Buffer; fingerprint: string };
   let signingKey: Buffer;
-  let server: Server;
+  let server: Server | undefined;
   let port: number;
 
   beforeAll(async () => {
@@ -44,10 +44,13 @@ describe("POST /oauth/token — self-issued client_credentials", () => {
   });
 
   afterAll(async () => {
+    // MCP-AUDIT #22: beforeAll throws on its first line when POSTGRES_URL is
+    // unset, so nothing below is assigned yet. Every handle is optional-guarded
+    // so this teardown is a no-op rather than a TypeError masking the real cause.
     await store?.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await pool.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
-    await pool.end();
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    await pool?.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
+    await pool?.end();
     delete process.env.POSTGRES_SCHEMA;
   });
 

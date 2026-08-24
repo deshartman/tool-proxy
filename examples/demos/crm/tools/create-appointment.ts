@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
+import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 
 // Operator-facing write tool. Books an appointment for an existing
 // customer at a given start time. Backed by the mock-backend's
@@ -9,8 +10,6 @@ import type { Tool } from "@mcp-shim/connector/sdk";
 // uses (Mon-Fri, 09:00-16:00 UTC, on the hour) and the same "single
 // technician, one appointment per slot" rule. Failures return one of
 // { no_customer | slot_taken | outside_working_hours | in_the_past }.
-const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
-const REQ_TIMEOUT_MS = 4000;
 
 // Success-path shape mirrors get_appointment's success body — the mock
 // returns the freshly-inserted Appointment record. Error envelopes flow
@@ -37,6 +36,7 @@ interface AppointmentResponse {
 
 export const createAppointment: Tool = {
   name: "create_appointment",
+  envKeys: ["MOCK_CUSTOMERS_URL"],
   register(server) {
     server.registerTool(
       "create_appointment",

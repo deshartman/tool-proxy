@@ -1,13 +1,12 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
+import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 
 // Moves an existing appointment to a new start time. The mock service runs
 // the same validation `check_availability` does (working hours, not in the
 // past, slot not double-booked) and returns one of:
 //   - 200 with the updated appointment
 //   - 409 { error: "slot_taken" | "outside_working_hours" | "in_the_past" | "not_found" }
-const MOCK_URL = process.env.MOCK_CUSTOMERS_URL ?? "http://localhost:7400";
-const REQ_TIMEOUT_MS = 4000;
 
 // Same shape as get-appointment's success body — the mock service returns
 // the updated Appointment record. Error envelopes (HTTP 409) flow through
@@ -42,6 +41,7 @@ interface ErrorBody { error?: string }
 
 export const updateAppointment: Tool = {
   name: "update_appointment",
+  envKeys: ["MOCK_CUSTOMERS_URL"],
   register(server) {
     server.registerTool(
       "update_appointment",

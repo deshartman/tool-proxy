@@ -3,6 +3,8 @@
 // README.md "Auth model" for why this bundle rolls its own client instead of
 // the official @salesforce/mcp package.
 
+import { envString } from "@mcp-shim/connector/sdk";
+
 const API_VERSION = "v62.0";
 // Client Credentials token responses may omit expires_in, so this is a
 // conservative proactive-refresh heuristic. The 401 → forced refresh → retry
@@ -18,7 +20,10 @@ interface TokenState {
 let cached: TokenState | undefined;
 
 function loginUrl(): string {
-  return process.env.SF_LOGIN_URL ?? "https://login.salesforce.com";
+  // envString, not `??` (MCP-AUDIT #21): SF_LOGIN_URL="" is how an operator
+  // says "use the default", but `??` treats "" as set and fetch() then throws
+  // "Failed to parse URL" on the bare /services/oauth2/token path.
+  return envString("SF_LOGIN_URL", "https://login.salesforce.com");
 }
 
 async function fetchToken(): Promise<TokenState> {
