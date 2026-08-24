@@ -27,6 +27,36 @@ Two Fly apps in the same Fly organization:
 
 The mock app is optional — a stand-in for a customer's real CRM backend. In a real deployment, only the connector app exists; the crm drop-in points at the customer's actual API.
 
+## Reach the inspector dashboard
+
+`fly proxy 9090:9090 -a <app>` does **not** work for the dashboard. The tunnel establishes, then every route answers:
+
+```
+403 {"ok":false,"error":"forbidden: loopback only"}
+```
+
+The bind is not the problem — `INSPECTOR_BIND_ADDR="::"` is set, so the process accepts the connection. The request *gate* is: everything outside the four allowlisted machine-API paths (`/oauth/token`, `/v1/outbound/calls`, `/v1/memory/events`, `/v1/identity/list`) requires a **loopback** caller, and `fly proxy` arrives from the Machine's `fdaa:` mesh address.
+
+This is a Fly-specific gap rather than a design flaw. On other platforms the documented path presents a genuine loopback origin — `ssh -L 9090:localhost:9090 <host>` makes the remote sshd dial `localhost` from the host, and `kubectl port-forward` enters the pod's network namespace. Fly has neither: `fly proxy` routes over 6PN without entering the netns, and `fly ssh` has no `-L`.
+
+The workaround is to supply the missing loopback hop yourself. Terminal 1 — a relay inside the container, so the inspector's client really is `127.0.0.1`:
+
+```bash
+fly ssh console -a <app> -C "node -e \"const net=require('net');net.createServer(c=>{const u=net.connect(9090,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{})}).listen(9099,'::',()=>console.log('relay up'))\""
+```
+
+Terminal 2:
+
+```bash
+fly proxy 9099:9099 -a <app>
+```
+
+Then open <http://localhost:9099>. The relay lives only as long as terminal 1; closing it removes the listener.
+
+> **Understand what this trades away.** The relay does not authenticate — it launders the source address, so the gate sees the relay rather than you. That is exactly the confused-deputy pattern the loopback rule exists to prevent, so it is **not** equivalent to `kubectl port-forward`, which is a tunnel with no listener. While the relay runs, any other peer on your organization's 6PN `/64` can reach the full dashboard — including the Webhooks panel, where the URL *is* the secret, and the session-creds routes. Start it deliberately, keep the window short, and close terminal 1 when you are done.
+
+Two cleaner destinations, neither built yet: restore an authenticated admin session (removed in `7c8d8ad` on the reasoning that remote reach is an infra concern — recoverable from history), or surface a read-only inspector view from the controller over the existing WSS tunnel, which needs no inbound port and no gate change at all.
+
 ## Verify state persistence after a deploy
 
 ```bash
