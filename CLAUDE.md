@@ -176,7 +176,7 @@ First boot lands on an empty `controllers` row — the inspector renders "Config
 
 Inspector UI: <http://localhost:9090/>. There's only one inspector per connector process.
 
-A Type 1 entry whose child crashes on boot fails at the spawner readiness probe / `connectServer` call. `startAll` **logs the failure and CONTINUES** to the next entry — a broken MCP does not take down the connector or its siblings. The failed entry surfaces as `permanently-failed` in the inspector's MCP Status panel; recovery is either the inspector's per-MCP "Reload creds" / "Restart" buttons or a fix to the entry's `dir/.env` + connector restart. The `fail_mode` field in yaml `policy:` is spec-only today — effective behavior is continue-on-fail.
+A Type 1 entry whose child crashes on boot fails at the spawner readiness probe / `connectServer` call. `startAll` **logs the failure and CONTINUES** to the next entry — a broken MCP does not take down the connector or its siblings. The failed entry surfaces as `permanently-failed` in the inspector's MCP Status panel (true for BOTH halves since MCP-AUDIT #33 — `spawnChild` threw past the catch that set it, so spawn failures previously showed as merely `stopped`); recovery is either the inspector's per-MCP "Reload creds" / "Restart" buttons or a fix to the entry's `dir/.env` + connector restart. The `fail_mode` field in yaml `policy:` is spec-only today — effective behavior is continue-on-fail.
 
 Primary verification is **interactive via the inspector UI**:
 - **MCP Server** panel — local MCP servers and their tools.

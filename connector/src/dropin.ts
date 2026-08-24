@@ -75,6 +75,19 @@ function symlinkEscapeAllowed(): boolean {
   return envOptional(ALLOW_SYMLINK_ESCAPE_ENV) === "1";
 }
 
+// MCP-AUDIT #16 — the folder name becomes the MCP name verbatim, and the
+// dispatcher routes on the FIRST dot: `qualifiedName.indexOf(".")` splits
+// `${server}.${tool}`. So a folder named `acme.crm` yields `acme.crm.get_customer`,
+// which splits to server `acme` / tool `crm.get_customer` — `tool_not_found` for
+// every tool in the folder, with nothing anywhere explaining why. Whitespace and
+// non-ASCII names were accepted just as silently.
+//
+// Deliberately conservative: alphanumeric start, then alphanumerics, dash, or
+// underscore. Covers every name we ship (agentic-memory, crm, salesforce, sample)
+// and rejects the shapes that break routing. Widening this means re-checking the
+// dispatcher's split.
+const MCP_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/i;
+
 const DROPIN_PROD_DEFAULT = "/var/lib/mcp-connector/customer-mcps";
 const BUNDLED_PROD_DEFAULT = "/app/bundled-mcps";
 
@@ -162,6 +175,14 @@ function scanFolder(
         continue;
       }
       log.debug({ folder, resolvedTo: real }, `drop-in folder resolves outside the drop-in dir — allowed by ${ALLOW_SYMLINK_ESCAPE_ENV}`);
+    }
+    // MCP-AUDIT #16: reject unroutable names before they become MCP names.
+    if (!MCP_NAME_RE.test(name)) {
+      log.warn(
+        { folder, name },
+        `drop-in folder name is not a valid MCP name (letters, digits, dash, underscore; no dots) — skipping`,
+      );
+      continue;
     }
     if (yamlNames.has(name)) continue;          // yaml entry wins
     if (existsSync(resolve(folder, "server.ts"))) continue; // hand-written Type 1 wins

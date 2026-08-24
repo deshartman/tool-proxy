@@ -132,6 +132,10 @@ const DROPIN_NODE_PATH = computeDropinNodePath();
 // message, e.g. an OAuth `error_description`) because those values came from
 // controllerEnv / sessionEnv in the first place. It cannot cover a secret the
 // connector never knew.
+// Grace period between SIGTERM and SIGKILL for a spawned child. Used by both
+// stopEntry's normal teardown and spawnChild's readiness-timeout path (#6).
+const SIGKILL_GRACE_MS = 2000;
+
 const CHILD_LOG_MAX_LINE = 2000;
 const CHILD_LOG_WINDOW_MS = 10_000;
 const CHILD_LOG_MAX_LINES_PER_WINDOW = 200;
@@ -685,7 +689,21 @@ export class McpSupervisor {
     // four-layer merge. After: every transport sees the same merge.
     let stdioEnv: Record<string, string> | undefined;
     if (isSpawn) {
-      await this.spawnChild(entry);
+      // MCP-AUDIT #33: a spawn failure (readiness timeout, tsx crash, no free
+      // port) threw straight past the catch below, so status stayed at whatever
+      // it was — "stopped" from register(), or "stopped" from a restart's
+      // stopEntry. In the inspector's MCP Status panel that is indistinguishable
+      // from "not started yet", while CLAUDE.md documents that a child failing
+      // "at the spawner readiness probe / connectServer call" surfaces as
+      // permanently-failed. Only the connectServer half actually did.
+      try {
+        await this.spawnChild(entry);
+      } catch (err) {
+        entry.status.process = "permanently-failed";
+        entry.status.lastRestartReason = reason;
+        this.opts.log.error({ name: spec.name, err: err as Error }, `failed to spawn MCP child`);
+        throw err;
+      }
     } else if (spec.transport === "stdio") {
       const sources: Record<string, EnvSource> = {};
       const merged = this.mergeEnv(entry, sources, {});
@@ -804,7 +822,7 @@ export class McpSupervisor {
             );
             proc.kill("SIGKILL");
             res();
-          }, 2000);
+          }, SIGKILL_GRACE_MS);
           proc.once("exit", () => { clearTimeout(t); res(); });
         });
       }
@@ -863,7 +881,37 @@ export class McpSupervisor {
     try {
       await waitForPort(port, this.opts.readyTimeoutMs);
     } catch (error) {
-      proc.kill("SIGTERM");
+      // MCP-AUDIT #6. Everything below the try assigns entry.child and __port,
+      // and stopEntry's cleanup is gated on exactly those two — so a readiness
+      // timeout used to leak the port forever (the only release site is inside
+      // `if (entry.child)`, and unregister() routes through the same stopEntry)
+      // and leave a SIGTERM'd child with no SIGKILL escalation, lingering
+      // untracked on the port we had also leaked. Clean up both here, where we
+      // still hold the handles.
+      //
+      // Scale, for the record: the scan window is 1000 ports, so this is slow
+      // drift rather than a fast cliff — `permanently-failed` is terminal (no
+      // auto-retry, and applyControllerEnv skips the restart path for a dead
+      // entry), so accrual is one port per operator-initiated restart. Still
+      // unbounded, and unrecoverable without a process restart.
+      const exited = await new Promise<boolean>((res) => {
+        const t = setTimeout(() => res(false), SIGKILL_GRACE_MS);
+        const done = (v: boolean): void => { clearTimeout(t); res(v); };
+        proc.once("exit", () => done(true));
+        // A spawn that never started (bad cwd, missing interpreter) emits
+        // "error" and NEVER "exit" — waiting out the full grace period for a
+        // process that does not exist just stalls the boot loop.
+        proc.once("error", () => done(true));
+        proc.kill("SIGTERM");
+      });
+      if (!exited) {
+        this.opts.log.warn(
+          { name: spec.name, pid: proc.pid },
+          `child ignored SIGTERM after readiness timeout — sending SIGKILL`,
+        );
+        proc.kill("SIGKILL");
+      }
+      this.reservedPorts.delete(port);
       throw new Error(`MCP child "${spec.name}" did not become ready on port ${port} within ${this.opts.readyTimeoutMs}ms: ${(error as Error).message}`);
     }
 

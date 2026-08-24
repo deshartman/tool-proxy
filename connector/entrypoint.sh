@@ -34,10 +34,17 @@ fi
 # POSTGRES_URL directly (Fly, RDS, managed Postgres) bypass this block.
 if [ -n "${POSTGRES_URL_TEMPLATE:-}" ] && [ -n "${POSTGRES_PW_FILE:-}" ] && [ -f "$POSTGRES_PW_FILE" ]; then
   pw=$(cat "$POSTGRES_PW_FILE")
-  # POSIX sh doesn't have parameter-expansion substitution; use sed with a
-  # delimiter unlikely to appear in a Postgres password.
-  export POSTGRES_URL=$(printf '%s' "$POSTGRES_URL_TEMPLATE" | sed "s|__PWFILE__|$pw|")
-  unset pw POSTGRES_URL_TEMPLATE POSTGRES_PW_FILE
+  # MCP-AUDIT #12: built with prefix/suffix parameter expansion, NOT sed. The
+  # previous `sed "s|__PWFILE__|$pw|"` broke on two characters: `&` is the
+  # replacement-side metacharacter meaning "the whole match", so a password
+  # `a&b` expanded to `a__PWFILE__b`; and a `|` in the password terminated the
+  # expression outright. Both failed as a bare authentication error with no hint
+  # at the cause. It also put the password in sed's argv, visible to `ps` inside
+  # the container. Expansion is literal, needs no escaping, and spawns nothing.
+  prefix=${POSTGRES_URL_TEMPLATE%%__PWFILE__*}
+  suffix=${POSTGRES_URL_TEMPLATE#*__PWFILE__}
+  export POSTGRES_URL="${prefix}${pw}${suffix}"
+  unset pw prefix suffix POSTGRES_URL_TEMPLATE POSTGRES_PW_FILE
 fi
 
 exec su-exec mcp:mcp node dist/index.js "$@"

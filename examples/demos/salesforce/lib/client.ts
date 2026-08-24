@@ -80,6 +80,21 @@ export async function sfFetch(path: string, init: RequestInit = {}): Promise<SfF
     return { status: 204, ok: true, body: undefined };
   }
   const text = await res.text();
-  const body = text.length > 0 ? JSON.parse(text) : undefined;
-  return { status: res.status, ok: res.ok, body };
+  // MCP-AUDIT #19: a non-JSON body — a proxy's HTML error page, a WAF block, a
+  // maintenance interstitial — used to throw a raw SyntaxError, surfacing as an
+  // opaque tool failure instead of the structured envelope every other path in
+  // this module produces. Fall back to the raw text so salesforceError can still
+  // report something useful.
+  return { status: res.status, ok: res.ok, body: parseJsonOrRaw(text) };
+}
+
+function parseJsonOrRaw(text: string): unknown {
+  if (text.length === 0) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Cap it: an HTML error page can be large, and this reaches the controller's
+    // model as tool output.
+    return { raw: text.length > 2000 ? `${text.slice(0, 2000)}… [truncated]` : text };
+  }
 }

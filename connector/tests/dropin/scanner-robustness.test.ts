@@ -148,3 +148,30 @@ describe("MCP-AUDIT #7/#31 — the existing contract still holds", () => {
     expect(names(discoverDropins({ yamlNames: new Set(["shadowed"]), dropinDir: root }))).toEqual(["kept"]);
   });
 });
+
+describe("MCP-AUDIT #16 — folder name must be a routable MCP name", () => {
+  it("skips a name containing a dot, which would break dispatcher routing", () => {
+    // The dispatcher splits `${server}.${tool}` on the FIRST dot, so a folder
+    // named `acme.crm` yields `acme.crm.get_customer` -> server `acme`, tool
+    // `crm.get_customer` -> tool_not_found for every tool, unexplained.
+    makeDropin(root, "good-name");
+    makeDropin(root, "acme.crm");
+    expect(names(discoverDropins({ yamlNames: new Set(), dropinDir: root }))).toEqual(["good-name"]);
+  });
+
+  it("skips names with whitespace or leading punctuation", () => {
+    makeDropin(root, "keeper");
+    makeDropin(root, "has space");
+    makeDropin(root, "-leading-dash");
+    makeDropin(root, "_leading-underscore");
+    expect(names(discoverDropins({ yamlNames: new Set(), dropinDir: root }))).toEqual(["keeper"]);
+  });
+
+  it("accepts every name we actually ship", () => {
+    for (const n of ["agentic-memory", "crm", "salesforce", "sample", "my_mcp", "mcp2"]) {
+      makeDropin(root, n);
+    }
+    expect(names(discoverDropins({ yamlNames: new Set(), dropinDir: root })))
+      .toEqual(["agentic-memory", "crm", "mcp2", "my_mcp", "salesforce", "sample"]);
+  });
+});

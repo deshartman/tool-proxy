@@ -162,7 +162,11 @@ else
   # Diagnostic only — the caller's DSN always wins. Printed with the password
   # masked so an unexpected inherited value (e.g. injected by a VS Code
   # terminal env collection) is visible instead of failing later as 28P01.
-  echo "[start-connector] POSTGRES_URL inherited from environment: $(printf '%s' "$POSTGRES_URL" | sed -E 's#://([^:/@]+):[^/]*@#://\1:***@#')"
+  # MCP-AUDIT #11: the character class must be greedy `.*` to the LAST `@`.
+  # `[^/]*` cannot cross a `/`, so a password containing one made the pattern
+  # fail to match and printed the WHOLE DSN unmasked — measured. `.*` also
+  # covers `:` and `@` in the password, and leaves a passwordless DSN alone.
+  echo "[start-connector] POSTGRES_URL inherited from environment: $(printf '%s' "$POSTGRES_URL" | sed -E 's#://([^:/@]+):.*@#://\1:***@#')"
   echo "[start-connector]   (unset POSTGRES_URL to use the dev default instead)"
 fi
 

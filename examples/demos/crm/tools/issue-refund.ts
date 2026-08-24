@@ -95,7 +95,29 @@ export const issueRefund: Tool = {
         }
 
         const orderTotal = await fetchOrderTotal(orderId);
-        if (orderTotal !== undefined && amount > orderTotal + 0.001) {
+        // MCP-AUDIT #5: an unknown order is a REFUSAL, not a free pass. The
+        // guard below used to read `orderTotal !== undefined && amount > ...`,
+        // so a 404 skipped the amount check entirely and the refund issued for
+        // any amount against any string — returning status: "issued". Note the
+        // asymmetry that made it worse: a backend that is *down* already refused
+        // (fetchOrderTotal throws), so only "definitively unknown" was treated
+        // as permission to proceed.
+        if (orderTotal === undefined) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: "order_not_found",
+                  orderId,
+                  detail: "No such order — refunds are only issued against an order returned by get_recent.",
+                }),
+              },
+            ],
+          };
+        }
+        if (amount > orderTotal + 0.001) {
           return {
             isError: true,
             content: [

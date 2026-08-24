@@ -32,8 +32,20 @@ export async function loadCategory<T extends { name: string }>(
     try {
       const mod = (await import(pathToFileURL(full).href)) as Record<string, unknown>;
       const picked = pickShape(mod, isShape);
-      if (picked && !items.some((existing) => existing.name === picked.name)) items.push(picked);
-      else if (!picked) log.warn({ file: `${subdir}/${entry}` }, `no ${singular} default-export found — skipping`);
+      // MCP-AUDIT #15: three cases, and the middle one used to match neither
+      // branch — a duplicate NAME was dropped in complete silence, so a tool
+      // simply did not exist and the author's only clue was its absence from the
+      // manifest.
+      if (!picked) {
+        log.warn({ file: `${subdir}/${entry}` }, `no ${singular} default-export found — skipping`);
+      } else if (items.some((existing) => existing.name === picked.name)) {
+        log.warn(
+          { file: `${subdir}/${entry}`, name: picked.name },
+          `duplicate ${singular} name — keeping the first one found, skipping this file`,
+        );
+      } else {
+        items.push(picked);
+      }
     } catch (err) {
       log.error({ file: `${subdir}/${entry}`, err: err as Error }, `failed to import ${singular} file`);
     }
