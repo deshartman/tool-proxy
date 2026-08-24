@@ -31,15 +31,14 @@ The mock app is optional — a stand-in for a customer's real CRM backend. In a 
 
 `[[vm]] memory` in `fly.toml` is **1 GB**, not Fly's 512 MB default, and that is load-bearing.
 
-Each Type 1 MCP costs ~118 MB RSS, because `tsx` spawns **three** processes per drop-in — a wrapper `node`, the real `node`, and a resident esbuild service. The shipped image bundles four demo MCPs (`agentic-memory`, `crm`, `salesforce`, `sample`):
+Each Type 1 MCP is expensive because `tsx` spawns **three** processes per drop-in — a wrapper `node`, the real `node`, and a resident esbuild service. The shipped image bundles four demo MCPs (`agentic-memory`, `crm`, `salesforce`, `sample`). Measured with `free -m`, totals rather than per-process RSS (summing RSS double-counts shared pages):
 
-| | RSS |
-|---|---|
-| connector | ~72 MB |
-| 4 x Type 1 child | ~470 MB |
-| Fly `hallpass` (SSH) | ~16 MB |
-| kernel + buffers | ~50 MB |
-| **total** | **~610 MB** |
+| machine | children up | used | available |
+|---|---|---|---|
+| 512 MB (459 usable) | 3 of 4 | 412 MB | 30 MB |
+| 1 GB (962 usable) | **4 of 4** | 493 MB | 336 MB |
+
+The marginal cost of the fourth child is ~81 MB. Note 493 > 459: the full set does not fit a 512 MB machine at all, so this is not a headroom preference.
 
 On a 512 MB machine (459 MB usable, and **no swap**) the fourth child cannot allocate. It stalls before reaching the code that binds its port or logs its first line, so the readiness probe kills it at 15s and you get exactly one clue:
 
