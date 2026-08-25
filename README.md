@@ -127,10 +127,17 @@ no `-L`. So on Fly every dashboard route answers:
 ```
 
 Because step 2 above is the only way to configure the tunnel — there is no CLI
-subcommand and no env var for it — **a fresh Fly deployment cannot complete
-first-connect without supplying that missing loopback hop yourself.** The
-recipe, and the exposure it trades away while it runs, are in
+subcommand and no env var for it — a fresh Fly deployment cannot complete
+first-connect until that loopback hop exists. One command supplies it:
+
+```bash
+./scripts/fly-inspector.sh <app>     # prints a URL; Ctrl-C tears it all down
+```
+
+What it does, and the exposure it trades away while running, are in
 [deploy/fly/README.md](deploy/fly/README.md#reach-the-inspector-dashboard).
+Note that **API clients in the Network Access panel do not help** — those open
+the machine API (`/oauth/token`, `/v1/*`) for scripts, never the dashboard.
 
 This is platform coverage, not a flaw in the model: the loopback rule is
 deliberate ([CLAUDE.md](CLAUDE.md), [docs/INSPECTOR.md](docs/INSPECTOR.md)), and
@@ -204,7 +211,8 @@ Deployment:
 - [deploy/README.md](deploy/README.md) — decision matrix + prereqs.
 - [deploy/DERIVED-IMAGE.md](deploy/DERIVED-IMAGE.md) / [deploy/VOLUME-MOUNT.md](deploy/VOLUME-MOUNT.md) — delivery paths.
 - Per-platform: [deploy/fly/](deploy/fly/README.md), [deploy/terraform/](deploy/terraform/README.md), [deploy/helm/](deploy/helm/README.md), [deploy/aca/](deploy/aca/README.md), [deploy/compose/](deploy/compose/README.md).
-- **Fly.io operators:** the inspector dashboard is not reachable via `fly proxy` — see
+- **Fly.io operators:** `fly proxy` alone cannot reach the inspector dashboard; run
+  `./scripts/fly-inspector.sh <app>` — see
   [Reach the inspector dashboard](deploy/fly/README.md#reach-the-inspector-dashboard).
 
 ## Building the image

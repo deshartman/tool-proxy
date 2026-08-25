@@ -194,18 +194,16 @@ describe("applyFly — happy path", () => {
     expect(applyFly(outDir, spawn)).toBe(0);
 
     const stdoutText = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    // The relay must come FIRST and be copy-pasteable — it supplies the
-    // loopback hop that `ssh -L` and `kubectl port-forward` give for free.
-    expect(stdoutText).toContain("fly ssh console -a twilio-tool-sdk -C");
-    expect(stdoutText).toContain("net.connect(9090,'127.0.0.1')");
-    // The proxy then targets the RELAY port, never 9090 directly.
-    expect(stdoutText).toContain("fly proxy 9099:9099 -a twilio-tool-sdk");
-    expect(stdoutText).not.toContain("fly proxy 9090:9090");
-    // And the operator must be told why proxy-alone fails, or they will
-    // "fix" it by deleting the relay step.
+    // One command, with the app name substituted — the relay/proxy pair and
+    // its teardown live in the script, not in this block.
+    expect(stdoutText).toContain("./scripts/fly-inspector.sh twilio-tool-sdk");
+    // The operator must be told why `fly proxy` alone fails, or the 403 reads
+    // as a broken Inspector and they go looking in the wrong place.
     expect(stdoutText).toContain("forbidden: loopback only");
-    // ...and what the relay costs while it runs.
-    expect(stdoutText).toContain("launders the source address");
+    expect(stdoutText).not.toContain("fly proxy 9090:9090");
+    // And that API clients are not the answer — the Network Access panel is
+    // the first place an operator reasonably looks.
+    expect(stdoutText).toContain("Network Access panel does NOT help");
     // The HSTS warning must be there — recurring source of "why doesn't
     // localhost:9090 work" support questions.
     expect(stdoutText).toContain("Chrome HSTS");
@@ -213,11 +211,8 @@ describe("applyFly — happy path", () => {
     expect(stdoutText).toContain("Next steps");
     // Post-deploy invariant check must be mentioned.
     expect(stdoutText).toContain("fly ips list -a twilio-tool-sdk");
-    // Port-collision fallback — operators running a local dev inspector
-    // alongside `fly proxy` hit "address already in use". The fallback lets
-    // them pick a different LOCAL port without hunting for the PID.
-    expect(stdoutText).toContain("fly proxy 19099:9099 -a twilio-tool-sdk");
-    expect(stdoutText).toContain("bind: address already in use");
+    // Port collisions are handled by the script (it probes both sides), so
+    // this block no longer needs to teach a fallback command.
     vi.restoreAllMocks();
   });
 

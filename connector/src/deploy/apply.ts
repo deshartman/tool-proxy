@@ -283,10 +283,12 @@ export function applyFly(cwd: string = process.cwd(), spawn: SpawnFn = spawnSync
 
 // Explicit post-deploy summary — written directly to stdout so it bypasses
 // the pino formatter and lands as an unmissable block after the log
-// output. Deliberately verbose because operators (a) forget the relay +
-// proxy pair and (b) forget which of the "reach the inspector" mistakes they
-// made last time (HSTS-upgrade, port collision, forgot the relay and got a
-// bare 403 from `fly proxy`).
+// output. Deliberately verbose because operators (a) reach for `fly proxy`
+// and get an unexplained 403 — the Inspector is loopback-only and fly proxy
+// arrives from the mesh address — and (b) forget the HSTS-upgrade trap. The
+// relay/proxy pair that fixes it now lives in scripts/fly-inspector.sh, which
+// also owns teardown, so this block points at the script rather than teaching
+// the recipe inline.
 function printPostDeployNextSteps(app: string): void {
   const block = `
 ==============================================================
@@ -302,40 +304,25 @@ Next steps:
      MUST return empty. If it lists an IPv4/IPv6, release with
      \`fly ips release <address> -a ${app}\` before proceeding.
 
-  2. In ANOTHER terminal, start a loopback relay inside the Machine —
-     leave it running.
+  2. Open the Inspector — one command, from a checkout of this repo:
 
-     \`fly proxy\` ALONE WILL NOT REACH THE DASHBOARD. It tunnels to the
-     Machine's fdaa: mesh IP, not to its 127.0.0.1, and every route
-     except the four machine-API paths requires a LOOPBACK caller — so
-     it answers 403 {"ok":false,"error":"forbidden: loopback only"}.
-     This relay supplies the missing loopback hop.
+       ./scripts/fly-inspector.sh ${app}
 
-       fly ssh console -a ${app} -C "node -e \\"const net=require('net');net.createServer(c=>{const u=net.connect(9090,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{})}).listen(9099,'::',()=>console.log('relay up'))\\""
+     It prints a URL and tears everything down on Ctrl-C.
 
-     Wait for "relay up". NOTE: the relay launders the source address
-     rather than authenticating, so while it runs any peer on your Fly
-     org's private network can reach the dashboard. Stop it when done.
-     See deploy/fly/README.md "Reach the inspector dashboard".
+     Why a script and not just \`fly proxy\`: the Inspector is loopback-only,
+     and \`fly proxy\` arrives from the Machine's fdaa: mesh address, so it
+     gets 403 {"ok":false,"error":"forbidden: loopback only"} on every
+     dashboard route. The script supplies the missing loopback hop. Adding
+     API clients in the Network Access panel does NOT help — those are
+     credentials for scripts calling /oauth/token, not for a browser.
 
-  3. In a THIRD terminal, forward to the relay — leave it running:
-
-       fly proxy 9099:9099 -a ${app}
-
-     Wait for "Proxying local port 9099 to remote [...] :9099".
-
-     If you get "bind: address already in use", pick another local port:
-
-       fly proxy 19099:9099 -a ${app}    # then browser http://localhost:19099
-
-  4. Open the inspector:
-
-       http://localhost:9099
+  3. Open the URL it prints.
 
      Use \`http://\` explicitly. Chrome HSTS on localhost can force
      https:// which the inspector doesn't serve (ERR_CONNECTION_RESET).
 
-  5. In the browser, fill in the "Configure Tunnel" modal:
+  4. In the browser, fill in the "Configure Tunnel" modal:
 
        Controller URL:  https://<your-controller>
        Connector Name:  must match the Tunnel Security row Name
@@ -345,7 +332,7 @@ Next steps:
      Save. The status pill goes:
        closed  →  connecting  →  open  (green)
 
-  6. Verify tools flowing (once tunnel is open):
+  5. Verify tools flowing (once tunnel is open):
 
        fly logs -a ${app}   # look for "tunnel opened" + "register-ack"
 
