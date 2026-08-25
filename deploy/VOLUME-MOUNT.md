@@ -407,11 +407,10 @@ inspector route — on Fly that means a relay, not just `fly proxy` (see
 [deploy/fly/README.md](fly/README.md#reach-the-inspector-dashboard)).
 
 ```bash
-# Terminal 1 — relay, leave running.
-fly ssh console -a mcp-shim-volume-test -C "node -e \"const net=require('net');net.createServer(c=>{const u=net.connect(9090,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{})}).listen(9099,'::',()=>console.log('relay up'))\""
+# Terminal 1 — leave running; prints the URL and its port.
+./scripts/fly-inspector.sh mcp-shim-volume-test
 
-# Terminal 2.
-fly proxy 9099:9099 -a mcp-shim-volume-test &
+# Terminal 2 — use the port it printed.
 curl -sS -X POST http://localhost:9099/mcp/rescan-local
 # → {"ok":true,"added":[{"name":"hello-volume","toolsCount":0}],"removed":[],"unchanged":[],"errors":[]}
 ```

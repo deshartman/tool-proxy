@@ -39,21 +39,22 @@ The bind is not the problem — `INSPECTOR_BIND_ADDR="::"` is set, so the proces
 
 This is a Fly-specific gap rather than a design flaw. On other platforms the documented path presents a genuine loopback origin — `ssh -L 9090:localhost:9090 <host>` makes the remote sshd dial `localhost` from the host, and `kubectl port-forward` enters the pod's network namespace. Fly has neither: `fly proxy` routes over 6PN without entering the netns, and `fly ssh` has no `-L`.
 
-The workaround is to supply the missing loopback hop yourself. Terminal 1 — a relay inside the container, so the inspector's client really is `127.0.0.1`:
+Use the wrapper — it supplies that hop, prints a URL, and cleans up after itself:
 
 ```bash
-fly ssh console -a <app> -C "node -e \"const net=require('net');net.createServer(c=>{const u=net.connect(9090,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{})}).listen(9099,'::',()=>console.log('relay up'))\""
+./scripts/fly-inspector.sh                # app read from deploy/fly/fly.toml
+./scripts/fly-inspector.sh <app>          # or name it
+./scripts/fly-inspector.sh <app> 19099    # or pin the local port
 ```
 
-Terminal 2:
+It starts a relay inside the Machine, opens `fly proxy` to it, **verifies the Inspector answers 200 rather than 403** before handing you the URL, and on Ctrl-C stops the proxy, kills the relay inside the Machine, and confirms it is gone. It probes for free ports on both sides, and refuses to run if the app has a public IP.
 
-```bash
-fly proxy 9099:9099 -a <app>
-```
+If you would rather do it by hand, the two commands are a relay
+(`fly ssh console -a <app> -C "node -e \"...net.connect(9090,'127.0.0.1')...\""` listening on 9099) and `fly proxy 9099:9099 -a <app>`. Two cautions if you do: killing the local `fly ssh` does **not** reliably kill the remote relay — it is parented to hallpass and has been observed outliving its terminal by hours — and the hand-run version has no self-expiry. Check for strays with `fly ssh console -a <app> -C "ps -o args" | grep createServer`.
 
-Then open <http://localhost:9099>. The relay lives only as long as terminal 1; closing it removes the listener.
+> **Understand what this trades away.** The relay does not authenticate — it launders the source address, so the gate sees the relay rather than you. That is exactly the confused-deputy pattern the loopback rule exists to prevent, so it is **not** equivalent to `kubectl port-forward`, which is a tunnel with no listener. While it runs, any other peer on your organization's 6PN `/64` can reach the full dashboard — including the Webhooks panel, where the URL *is* the secret, and the session-creds routes. That is why the script owns teardown and gives the relay a 60-minute self-expiry: an abandoned relay is the realistic failure, not a targeted attack.
 
-> **Understand what this trades away.** The relay does not authenticate — it launders the source address, so the gate sees the relay rather than you. That is exactly the confused-deputy pattern the loopback rule exists to prevent, so it is **not** equivalent to `kubectl port-forward`, which is a tunnel with no listener. While the relay runs, any other peer on your organization's 6PN `/64` can reach the full dashboard — including the Webhooks panel, where the URL *is* the secret, and the session-creds routes. Start it deliberately, keep the window short, and close terminal 1 when you are done.
+> **API clients do not help here.** The Network Access panel opens the *machine API* — `POST /oauth/token` and the `/v1/*` routes, for scripts. The dashboard requires a loopback caller no matter how many API clients exist.
 
 Two cleaner destinations, neither built yet: restore an authenticated admin session (removed in `7c8d8ad` on the reasoning that remote reach is an infra concern — recoverable from history), or surface a read-only inspector view from the controller over the existing WSS tunnel, which needs no inbound port and no gate change at all.
 

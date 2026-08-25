@@ -568,10 +568,10 @@ That's it. Creates the Fly app + Postgres, sets the master key, creates
 the state volume, runs \`fly deploy\`. Idempotent — safe to re-run if a
 mid-step failure interrupts the flow.
 
-Reach the inspector: \`fly proxy\` alone gets a 403 (it arrives from the mesh
-IP; the dashboard requires a loopback caller). Start a relay inside the
-Machine first, then forward to it — see deploy/fly/README.md
-"Reach the inspector dashboard" for the copy-paste pair.
+Reach the inspector: \`./scripts/fly-inspector.sh {{APP_NAME}}\` — prints a URL,
+tears down on Ctrl-C. (\`fly proxy\` alone gets a 403: it arrives from the mesh
+IP and the dashboard requires a loopback caller. API clients don't help either —
+those open the machine API, not the UI.)
 
 See deploy/fly/README.md for the full walkthrough (mock backend, private
 DNS, rotation, graduation to managed Postgres).
