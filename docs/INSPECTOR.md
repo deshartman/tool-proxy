@@ -4,7 +4,7 @@
 >
 > One thing, and only one thing, is ever reachable non-loopback: `POST /oauth/token`, the machine API's OAuth2 `client_credentials` grant — and only once an operator has added at least one API client from that same trusted loopback session. See [Network access](#network-access) below. The dashboard itself never becomes reachable off-box; there is no opt-in that changes that.
 
-Open it at <http://localhost:9090/> (or via SSH port-forward / `kubectl exec` from a deployed container).
+Open it at <http://localhost:9090/> (or via SSH port-forward / `kubectl exec` from a deployed container). On Fly.io neither works — `fly proxy` cannot present a loopback origin — so run [`scripts/fly-inspector.sh <app>`](../scripts/fly-inspector.sh), which prints a URL and cleans up on Ctrl-C.
 
 ## Layout
 
@@ -177,7 +177,7 @@ Top-right header. Re-reads `connector.yaml` and dials the controller again. Pick
 - **"My tool shows Awaiting config but I want to call it."** Open the MCP creds view (click the purple name) and paste your dev creds, OR ask an admin to set them in the controller UI. Tools without `envKeys` never enter the awaiting state.
 - **"Session creds disappeared."** They expire 12h after paste. Re-paste — the timer resets on re-apply, not on activity.
 - **"Webhook URL changed."** Expected — the random tail re-mints on every `webhook-allocate` (e.g. on connector reconnect). The prefix is stable across reconnects, so pasted Twilio configs that match by prefix continue resolving.
-- **"I want to test from a remote machine."** `ssh -L 9090:localhost:9090 <connector-host>` or `kubectl port-forward` — the only way to reach the dashboard, always. Both work because they present a genuine **loopback origin**: `ssh -L` has the remote sshd dial `localhost` from the host, and `kubectl port-forward` enters the pod's network namespace. A forward that merely reaches the host's port from outside is not enough — Fly's `fly proxy` routes to the Machine's private mesh address without entering its namespace, so it gets a 403 like any other non-loopback caller (see [deploy/fly/README.md](../deploy/fly/README.md) for the relay workaround and its trade-off). There is no alternative that skips the tunnel; the dashboard never becomes directly reachable, no matter how many API clients exist. If what you actually need is a machine hitting `/oauth/token` directly (not a human viewing the dashboard), see [Network access](#network-access).
+- **"I want to test from a remote machine."** `ssh -L 9090:localhost:9090 <connector-host>` or `kubectl port-forward` — the only way to reach the dashboard, always. Both work because they present a genuine **loopback origin**: `ssh -L` has the remote sshd dial `localhost` from the host, and `kubectl port-forward` enters the pod's network namespace. A forward that merely reaches the host's port from outside is not enough — Fly's `fly proxy` routes to the Machine's private mesh address without entering its namespace, so it gets a 403 like any other non-loopback caller (run `./scripts/fly-inspector.sh <app>`; see [deploy/fly/README.md](../deploy/fly/README.md#reach-the-inspector-dashboard) for what it does and what it trades away). There is no alternative that skips the tunnel; the dashboard never becomes directly reachable, no matter how many API clients exist. If what you actually need is a machine hitting `/oauth/token` directly (not a human viewing the dashboard), see [Network access](#network-access).
 
 ## Network access
 
