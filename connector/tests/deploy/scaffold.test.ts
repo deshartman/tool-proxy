@@ -122,10 +122,13 @@ describe("render — variable substitution", () => {
     expect(toml.content).not.toMatch(/^\[http_service\]/m);
     expect(toml.content).not.toMatch(/^\s*auto_stop_machines\s*=/m);
 
-    // Phase-B bug B4 fix: fly proxy tunnels to the mesh IP, not loopback.
-    // The scaffold-generated fly.toml MUST set INSPECTOR_BIND_ADDR=:: or
-    // the operator can't reach the inspector via `fly proxy`. Pinned as
-    // an active TOML assignment so a comment mention doesn't satisfy it.
+    // fly proxy tunnels to the mesh IP, not loopback, so the default
+    // 127.0.0.1 bind is unreachable over `.internal` DNS. The scaffolded
+    // fly.toml MUST set INSPECTOR_BIND_ADDR=:: or the MACHINE API
+    // (/oauth/token, /v1/*) stops answering for the controller. It does not
+    // make the dashboard reachable — that requires a loopback caller no
+    // matter how wide the bind. Pinned as an active TOML assignment so a
+    // comment mention doesn't satisfy it.
     expect(toml.content).toMatch(/^\s*INSPECTOR_BIND_ADDR\s*=\s*"::"/m);
 
     // Post-merge tweak: source-build is the ONLY working path today
@@ -187,9 +190,15 @@ describe("render — variable substitution", () => {
     expect(toml.content).toContain(`app = "twilio-tool-sdk"`);
     // The prefix must NOT sneak back in when appName is a bare name.
     expect(toml.content).not.toContain(`app = "mcp-connector-`);
-    // Comments about the app also reference the custom name (not the connector name).
-    expect(toml.content).toContain("fly proxy 9090:9090 -a twilio-tool-sdk");
+    // Comments about the app also reference the custom name (not the connector
+    // name). `fly ips list -a <app>` is the witness for that substitution.
     expect(toml.content).toContain("fly ips list -a twilio-tool-sdk");
+    // The witness used to be `fly proxy 9090:9090 -a <app>`, which the header
+    // gave as the way to reach the inspector. That instruction stopped working
+    // when the request gate landed (fly proxy arrives from the Machine's fdaa:
+    // mesh address; the dashboard requires a loopback caller), so it is gone
+    // from the template and must not come back.
+    expect(toml.content).not.toContain("fly proxy 9090:9090");
   });
 
   it("emits fly-mock fly.toml + Dockerfile with private-only invariants", () => {

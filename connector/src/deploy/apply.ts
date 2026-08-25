@@ -283,9 +283,10 @@ export function applyFly(cwd: string = process.cwd(), spawn: SpawnFn = spawnSync
 
 // Explicit post-deploy summary — written directly to stdout so it bypasses
 // the pino formatter and lands as an unmissable block after the log
-// output. Deliberately verbose because operators (a) forget the proxy
-// command and (b) forget which of the three "reach the inspector" mistakes
-// they made last time (HSTS-upgrade, port collision, forgot to run proxy).
+// output. Deliberately verbose because operators (a) forget the relay +
+// proxy pair and (b) forget which of the "reach the inspector" mistakes they
+// made last time (HSTS-upgrade, port collision, forgot the relay and got a
+// bare 403 from `fly proxy`).
 function printPostDeployNextSteps(app: string): void {
   const block = `
 ==============================================================
@@ -301,28 +302,40 @@ Next steps:
      MUST return empty. If it lists an IPv4/IPv6, release with
      \`fly ips release <address> -a ${app}\` before proceeding.
 
-  2. In ANOTHER terminal, start the WireGuard proxy — leave it running:
+  2. In ANOTHER terminal, start a loopback relay inside the Machine —
+     leave it running.
 
-       fly proxy 9090:9090 -a ${app}
+     \`fly proxy\` ALONE WILL NOT REACH THE DASHBOARD. It tunnels to the
+     Machine's fdaa: mesh IP, not to its 127.0.0.1, and every route
+     except the four machine-API paths requires a LOOPBACK caller — so
+     it answers 403 {"ok":false,"error":"forbidden: loopback only"}.
+     This relay supplies the missing loopback hop.
 
-     Wait for "Proxying local port 9090 to remote [...] :9090".
-     This forwards http://localhost:9090 to the Machine's :9090
-     inspector via Fly's private mesh.
+       fly ssh console -a ${app} -C "node -e \\"const net=require('net');net.createServer(c=>{const u=net.connect(9090,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{})}).listen(9099,'::',()=>console.log('relay up'))\\""
 
-     If you get "bind: address already in use" — port 9090 is already
-     held by a local dev inspector. Use a different local port:
+     Wait for "relay up". NOTE: the relay launders the source address
+     rather than authenticating, so while it runs any peer on your Fly
+     org's private network can reach the dashboard. Stop it when done.
+     See deploy/fly/README.md "Reach the inspector dashboard".
 
-       fly proxy 19090:9090 -a ${app}    # then browser http://localhost:19090
+  3. In a THIRD terminal, forward to the relay — leave it running:
 
-  3. Open the inspector:
+       fly proxy 9099:9099 -a ${app}
 
-       http://localhost:9090
+     Wait for "Proxying local port 9099 to remote [...] :9099".
 
-     Use \`http://\` explicitly. Chrome HSTS on localhost:9090 can
-     force https:// which the inspector doesn't serve
-     (ERR_CONNECTION_RESET).
+     If you get "bind: address already in use", pick another local port:
 
-  4. In the browser, fill in the "Configure Tunnel" modal:
+       fly proxy 19099:9099 -a ${app}    # then browser http://localhost:19099
+
+  4. Open the inspector:
+
+       http://localhost:9099
+
+     Use \`http://\` explicitly. Chrome HSTS on localhost can force
+     https:// which the inspector doesn't serve (ERR_CONNECTION_RESET).
+
+  5. In the browser, fill in the "Configure Tunnel" modal:
 
        Controller URL:  https://<your-controller>
        Connector Name:  must match the Tunnel Security row Name
@@ -332,7 +345,7 @@ Next steps:
      Save. The status pill goes:
        closed  →  connecting  →  open  (green)
 
-  5. Verify tools flowing (once tunnel is open):
+  6. Verify tools flowing (once tunnel is open):
 
        fly logs -a ${app}   # look for "tunnel opened" + "register-ack"
 

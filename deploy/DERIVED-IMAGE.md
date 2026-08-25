@@ -231,9 +231,11 @@ fly deploy --local-only --image mcp-shim-derived:test -a mcp-shim-derived-test
 ### Verify
 
 ```bash
-# Inspector
-fly proxy 9090:9090 -a mcp-shim-derived-test
-# open http://localhost:9090/ → hello-derived visible under MCP Server
+# Inspector — needs a loopback relay on Fly, `fly proxy` alone 403s.
+# See deploy/fly/README.md "Reach the inspector dashboard".
+fly ssh console -a mcp-shim-derived-test -C "node -e \"const net=require('net');net.createServer(c=>{const u=net.connect(9090,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{})}).listen(9099,'::',()=>console.log('relay up'))\""
+fly proxy 9099:9099 -a mcp-shim-derived-test      # second terminal
+# open http://localhost:9099/ → hello-derived visible under MCP Server
 
 # Boot logs — grep the sequence
 fly logs -a mcp-shim-derived-test --no-tail | grep -E \

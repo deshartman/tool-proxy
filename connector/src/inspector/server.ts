@@ -1219,14 +1219,21 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
   //
   // Fly.io is the special case that forced INSPECTOR_BIND_ADDR to exist:
   // `fly proxy` opens a WireGuard tunnel to the Machine's private-network
-  // (fdaa:...) mesh IP, NOT to the Machine's 127.0.0.1. A loopback-only
-  // bind is unreachable from `fly proxy`. Override to "::" in fly.toml
-  // [env] so the inspector listens on all IPv6 interfaces including the
-  // mesh. Trust posture is preserved: `fly ips list` MUST remain empty
-  // (see CODE-DEPLOY design record §"What we do NOT do"), so the
-  // inspector is only reachable via `fly proxy` from authenticated flyctl
-  // sessions in the app's Fly org — the same trust surface as .internal
-  // DNS.
+  // (fdaa:...) mesh IP, NOT to the Machine's 127.0.0.1, and `fly ssh` has
+  // no -L. Override to "::" in fly.toml [env] so the inspector listens on
+  // all IPv6 interfaces including the mesh. Trust posture is preserved:
+  // `fly ips list` MUST remain empty, so the mesh is the only non-loopback
+  // reach — the same trust surface as .internal DNS.
+  //
+  // What that override does NOT do is make the DASHBOARD reachable, and an
+  // earlier version of this comment implied otherwise. The bind decides
+  // whether this process accepts the connection; isAuthorizedRequest then
+  // judges the CALLER, and everything outside NON_LOOPBACK_ALLOWED_PATHS
+  // requires loopback — so `fly proxy` gets a 403 on every dashboard route.
+  // The override earns its keep for the machine API instead: the controller
+  // calls /oauth/token and the /v1/* routes at <app>.internal:9090. Getting
+  // a browser onto the dashboard on Fly needs a relay inside the Machine;
+  // see deploy/fly/README.md "Reach the inspector dashboard".
   //
   // C4 (security hardening) — any non-loopback bind requires the operator
   // to also set INSPECTOR_ALLOW_NONLOOPBACK=1. Prevents a silent typo
