@@ -96,10 +96,10 @@ Umbrella: [deploy/README.md](deploy/README.md).
 
 1. Container boots. Postgres is empty. The inspector renders "Configure
    Tunnel".
-2. Reach the inspector — `ssh -L 9090:127.0.0.1:9090 <host>`, `fly proxy
-   9090:9090`, or `kubectl port-forward`. **Never** expose the inspector
-   port to a public LB — the Webhooks panel surfaces bcrypt-protected
-   URLs by design.
+2. Reach the inspector — `ssh -L 9090:127.0.0.1:9090 <host>`, `docker exec`,
+   or `kubectl port-forward`. **Never** expose the inspector port to a public
+   LB — the Webhooks panel surfaces bcrypt-protected URLs by design.
+   On **Fly.io** `fly proxy` does NOT work for this step; see the note below.
 3. Fill in the modal: **Controller URL**, **Connector Name** (must match
    the Tunnel Security row Name in your controller UI, case-sensitive),
    auth posture (static bearer OR OAuth2).
@@ -107,6 +107,36 @@ Umbrella: [deploy/README.md](deploy/README.md).
 
 No `.env` edits. No `connector.yaml`. No shell access after the initial
 port-forward.
+
+#### Why only those three, and why Fly is different
+
+Every route except four machine-API paths requires a **loopback** caller, and
+there is no login, token, or opt-in that changes it. So a port-forward is not
+merely convenient — it is the mechanism. The three above work because each one
+presents a genuine loopback origin: `ssh -L` has the remote sshd dial
+`localhost` from the host, `kubectl port-forward` enters the pod's network
+namespace, and `docker exec` runs inside the container.
+
+A forward that merely reaches the host's port from outside is **not** enough.
+Fly's `fly proxy` is exactly that case — it routes over the private 6PN mesh to
+the Machine's `fdaa:` address without entering its namespace, and `fly ssh` has
+no `-L`. So on Fly every dashboard route answers:
+
+```
+403 {"ok":false,"error":"forbidden: loopback only"}
+```
+
+Because step 2 above is the only way to configure the tunnel — there is no CLI
+subcommand and no env var for it — **a fresh Fly deployment cannot complete
+first-connect without supplying that missing loopback hop yourself.** The
+recipe, and the exposure it trades away while it runs, are in
+[deploy/fly/README.md](deploy/fly/README.md#reach-the-inspector-dashboard).
+
+This is platform coverage, not a flaw in the model: the loopback rule is
+deliberate ([CLAUDE.md](CLAUDE.md), [docs/INSPECTOR.md](docs/INSPECTOR.md)), and
+Fly is the one supported target that offers no loopback-origin forward. Widening
+the bind does not help — `INSPECTOR_BIND_ADDR` decides whether the process
+accepts the connection; the gate then judges where it came from.
 
 ## Bundled MCPs (Twilio-shipped)
 
@@ -174,6 +204,8 @@ Deployment:
 - [deploy/README.md](deploy/README.md) — decision matrix + prereqs.
 - [deploy/DERIVED-IMAGE.md](deploy/DERIVED-IMAGE.md) / [deploy/VOLUME-MOUNT.md](deploy/VOLUME-MOUNT.md) — delivery paths.
 - Per-platform: [deploy/fly/](deploy/fly/README.md), [deploy/terraform/](deploy/terraform/README.md), [deploy/helm/](deploy/helm/README.md), [deploy/aca/](deploy/aca/README.md), [deploy/compose/](deploy/compose/README.md).
+- **Fly.io operators:** the inspector dashboard is not reachable via `fly proxy` — see
+  [Reach the inspector dashboard](deploy/fly/README.md#reach-the-inspector-dashboard).
 
 ## Building the image
 
