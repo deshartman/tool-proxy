@@ -3,7 +3,10 @@
 #
 # Load-bearing invariants (see architectural-plans/CODE-DEPLOY.md):
 #   - No [[services]] or [http_service] — connector is outbound-only.
-#     Reach inspector with `fly proxy 9090:9090 -a twilio-tool-sdk`.
+#     NOTE: `fly proxy` does NOT reach the inspector DASHBOARD — it
+#     arrives from the Machine's fdaa: mesh address and the request gate
+#     requires a loopback caller (403 "forbidden: loopback only"). See
+#     deploy/fly/README.md "Reach the inspector dashboard".
 #   - `fly ips list -a twilio-tool-sdk` MUST be empty.
 #   - Single Machine per CONNECTOR_NAME — do not `fly scale count > 1`.
 #   - Do not set `auto_stop_machines` — would kill the outbound WSS.

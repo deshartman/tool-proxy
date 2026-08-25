@@ -10,7 +10,10 @@ controller URL over WSS. No public IP, no `[[services]]`, no `[http_service]`.
 State (registration token) persists in a 1 GB Fly volume; tunnel identity +
 sealed creds live in a Fly Postgres attached as `POSTGRES_URL`.
 
-Reach the inspector via `fly proxy 9090:9090 -a mcp-connector-<CUSTOMER>`.
+Reaching the inspector dashboard takes two terminals on Fly — `fly proxy` alone
+returns 403 because it arrives from the mesh address rather than loopback. See
+["Open the inspector"](#open-the-inspector) below and
+[deploy/fly/README.md](README.md#reach-the-inspector-dashboard).
 
 ## Prereqs
 
@@ -150,14 +153,24 @@ expected.
 
 ### 7. Configure the tunnel via the inspector
 
-Open a WireGuard-tunneled port to the Machine's loopback:
+Supply a loopback hop, then tunnel to it:
 
 ```bash
-# In one terminal, leave it running:
-fly proxy 9090:9090 -a mcp-connector-acme-prod
+# Terminal 1 — loopback relay inside the Machine, leave running.
+# `fly proxy` alone gets 403 "forbidden: loopback only": it arrives from the
+# Machine's fdaa: mesh address and the dashboard requires a loopback caller.
+fly ssh console -a mcp-connector-acme-prod -C "node -e \"const net=require('net');net.createServer(c=>{const u=net.connect(9090,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{})}).listen(9099,'::',()=>console.log('relay up'))\""
+
+# Terminal 2 — forward to the relay, leave running.
+fly proxy 9099:9099 -a mcp-connector-acme-prod
 ```
 
-Then in a browser: <http://localhost:9090/>. You'll see the "Configure Tunnel"
+The relay launders the source address rather than authenticating, so while it
+runs any peer on your Fly org's private network can reach the dashboard. Close
+terminal 1 when you are done. See deploy/fly/README.md "Reach the inspector
+dashboard".
+
+Then in a browser: <http://localhost:9099/>. You'll see the "Configure Tunnel"
 modal. Fill in:
 
 - **Controller URL** — e.g. `https://controller.example.com`

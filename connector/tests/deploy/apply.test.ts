@@ -170,11 +170,19 @@ describe("applyFly — happy path", () => {
   });
 
   it("prints an explicit next-steps block to stdout on success", () => {
-    // Operators forget the proxy command. Pino log lines land as noise
-    // after the deploy output, so the CLI writes a plain-text summary
-    // block DIRECTLY to stdout (bypassing the pino formatter) with the
-    // exact `fly proxy` command, HSTS warning, and Configure Tunnel
-    // instructions. This test pins that: the block MUST appear.
+    // Operators forget the relay + proxy pair. Pino log lines land as noise
+    // after the deploy output, so the CLI writes a plain-text summary block
+    // DIRECTLY to stdout (bypassing the pino formatter) with the exact
+    // commands, HSTS warning, and Configure Tunnel instructions. This test
+    // pins that: the block MUST appear.
+    //
+    // These assertions were INVERTED. They used to pin
+    // `fly proxy 9090:9090`, which stopped reaching the dashboard when the
+    // request gate landed (2026-08-08) and the admin session was removed
+    // (7c8d8ad, 08-09): fly proxy arrives from the Machine's fdaa: mesh
+    // address, and every route outside the four machine-API paths requires
+    // a loopback caller. So the CLI's headline instruction was 403-ing while
+    // a green test guaranteed it was printed verbatim.
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const { spawn } = makeSpawn([
       { match: isFlyCmd("version"), response: { status: 0 } },
@@ -186,8 +194,18 @@ describe("applyFly — happy path", () => {
     expect(applyFly(outDir, spawn)).toBe(0);
 
     const stdoutText = stdoutSpy.mock.calls.map((c) => c[0]).join("");
-    // The exact fly proxy command must appear — copy-pasteable.
-    expect(stdoutText).toContain("fly proxy 9090:9090 -a twilio-tool-sdk");
+    // The relay must come FIRST and be copy-pasteable — it supplies the
+    // loopback hop that `ssh -L` and `kubectl port-forward` give for free.
+    expect(stdoutText).toContain("fly ssh console -a twilio-tool-sdk -C");
+    expect(stdoutText).toContain("net.connect(9090,'127.0.0.1')");
+    // The proxy then targets the RELAY port, never 9090 directly.
+    expect(stdoutText).toContain("fly proxy 9099:9099 -a twilio-tool-sdk");
+    expect(stdoutText).not.toContain("fly proxy 9090:9090");
+    // And the operator must be told why proxy-alone fails, or they will
+    // "fix" it by deleting the relay step.
+    expect(stdoutText).toContain("forbidden: loopback only");
+    // ...and what the relay costs while it runs.
+    expect(stdoutText).toContain("launders the source address");
     // The HSTS warning must be there — recurring source of "why doesn't
     // localhost:9090 work" support questions.
     expect(stdoutText).toContain("Chrome HSTS");
@@ -195,11 +213,10 @@ describe("applyFly — happy path", () => {
     expect(stdoutText).toContain("Next steps");
     // Post-deploy invariant check must be mentioned.
     expect(stdoutText).toContain("fly ips list -a twilio-tool-sdk");
-    // Port-collision fallback — operators running the local dev inspector
-    // alongside `fly proxy` hit "address already in use" on 9090. The
-    // fallback command lets them use a different local port without
-    // hunting for the PID holding 9090.
-    expect(stdoutText).toContain("fly proxy 19090:9090 -a twilio-tool-sdk");
+    // Port-collision fallback — operators running a local dev inspector
+    // alongside `fly proxy` hit "address already in use". The fallback lets
+    // them pick a different LOCAL port without hunting for the PID.
+    expect(stdoutText).toContain("fly proxy 19099:9099 -a twilio-tool-sdk");
     expect(stdoutText).toContain("bind: address already in use");
     vi.restoreAllMocks();
   });

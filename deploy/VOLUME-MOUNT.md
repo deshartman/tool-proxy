@@ -400,12 +400,19 @@ Two equivalent triggers — pick whichever fits your workflow.
 **Option A — Controller UI.** Connector detail → MCPs tab → **Refresh
 local MCPs**. Sends a `local-mcps-rescan` frame down the tunnel.
 
-**Option B — Inspector loopback via `fly proxy`.** No controller round-
-trip. This is what the tests below use.
+**Option B — the inspector's loopback route.** No controller round-trip. This
+is what the tests below use. `/mcp/rescan-local` is not one of the four
+allowlisted machine-API paths, so it needs a loopback caller like every other
+inspector route — on Fly that means a relay, not just `fly proxy` (see
+[deploy/fly/README.md](fly/README.md#reach-the-inspector-dashboard)).
 
 ```bash
-fly proxy 9090:9090 -a mcp-shim-volume-test &
-curl -sS -X POST http://localhost:9090/mcp/rescan-local
+# Terminal 1 — relay, leave running.
+fly ssh console -a mcp-shim-volume-test -C "node -e \"const net=require('net');net.createServer(c=>{const u=net.connect(9090,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{})}).listen(9099,'::',()=>console.log('relay up'))\""
+
+# Terminal 2.
+fly proxy 9099:9099 -a mcp-shim-volume-test &
+curl -sS -X POST http://localhost:9099/mcp/rescan-local
 # → {"ok":true,"added":[{"name":"hello-volume","toolsCount":0}],"removed":[],"unchanged":[],"errors":[]}
 ```
 

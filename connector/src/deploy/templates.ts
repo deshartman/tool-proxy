@@ -330,7 +330,10 @@ const FLY_TOML = `# mcp-connector — Fly.io deployment
 #
 # Load-bearing invariants (see CODE-DEPLOY design record):
 #   - No [[services]] or [http_service] — connector is outbound-only.
-#     Reach inspector with \`fly proxy 9090:9090 -a {{APP_NAME}}\`.
+#     NOTE: \`fly proxy\` does NOT reach the inspector DASHBOARD — it
+#     arrives from the Machine's fdaa: mesh address and the request gate
+#     requires a loopback caller (403 "forbidden: loopback only"). See
+#     deploy/fly/README.md "Reach the inspector dashboard".
 #   - \`fly ips list -a {{APP_NAME}}\` MUST be empty.
 #   - Single Machine per CONNECTOR_NAME — do not \`fly scale count > 1\`.
 #   - Do not set \`auto_stop_machines\` — would kill the outbound WSS.
@@ -565,7 +568,10 @@ That's it. Creates the Fly app + Postgres, sets the master key, creates
 the state volume, runs \`fly deploy\`. Idempotent — safe to re-run if a
 mid-step failure interrupts the flow.
 
-Reach the inspector: \`fly proxy 9090:9090 -a {{APP_NAME}}\` → http://localhost:9090/
+Reach the inspector: \`fly proxy\` alone gets a 403 (it arrives from the mesh
+IP; the dashboard requires a loopback caller). Start a relay inside the
+Machine first, then forward to it — see deploy/fly/README.md
+"Reach the inspector dashboard" for the copy-paste pair.
 
 See deploy/fly/README.md for the full walkthrough (mock backend, private
 DNS, rotation, graduation to managed Postgres).

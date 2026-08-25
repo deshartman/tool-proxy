@@ -1,6 +1,6 @@
 # Fly.io
 
-The connector's dial-out-only shape maps cleanly onto Fly Machines: single Firecracker VM, no load balancer, outbound TLS 443 by default, and `fly proxy` for reaching the loopback inspector without exposing anything publicly.
+The connector's dial-out-only shape maps cleanly onto Fly Machines: single Firecracker VM, no load balancer, outbound TLS 443 by default, and no public IP at all. Reaching the inspector dashboard needs one extra hop on Fly — see [Reach the inspector dashboard](#reach-the-inspector-dashboard).
 
 If you want to skip the walkthrough and copy-paste, the CLI renders both apps' manifests for you:
 
@@ -21,7 +21,7 @@ Two Fly apps in the same Fly organization:
 │    (`mcp_connector` db)      │          │    Postgres app, empty       │
 │  - inspector 127.0.0.1:9090  │          │  - no public IP              │
 └──────────────────────────────┘          └──────────────────────────────┘
-        (fly proxy 9090:9090)                 http://mock-customers-<CUSTOMER>.internal:7400
+     (relay + fly proxy — see below)           http://mock-customers-<CUSTOMER>.internal:7400
                                                           (Fly private DNS, IPv6, WireGuard mesh)
 ```
 
@@ -203,22 +203,13 @@ MOCK_CUSTOMERS_URL=http://mock-customers-acme-prod.internal:7400
 
 Rebuild the connector image (or use one that carries this env by default) and redeploy.
 
-## Reach the inspector
+## Machine API vs the dashboard
 
-The inspector stays bound to `127.0.0.1:9090` inside the Machine. Never bridge it to a public service — the Webhooks panel exposes bcrypt-protected URLs by design. Reach it via `fly proxy`:
+Never bridge the inspector port to a public service — the Webhooks panel exposes bcrypt-protected URLs by design. For getting a browser onto the dashboard, see [Reach the inspector dashboard](#reach-the-inspector-dashboard) above; this section is about the other half.
 
-```bash
-# One terminal — leave running.
-fly proxy 9090:9090 -a mcp-connector-acme-prod
+`INSPECTOR_BIND_ADDR = "::"` in this app's `[env]` exists so the **machine API** is reachable over the mesh: the controller calls `/oauth/token` and the `/v1/*` routes at `<app>.internal:9090`. It is not an opt-in to customer-network reachability, and `fly ips list` staying empty means this deployment was never meant to be reachable any other way. It does **not** make the dashboard reachable — a wide bind decides whether the process accepts the connection; the request gate then judges where it came from.
 
-# Browser.
-open http://localhost:9090/
-```
-
-`fly proxy` opens a WireGuard tunnel from your laptop to the Machine's loopback. The auth surface is your flyctl session — only operators with access to the Fly org can open the tunnel.
-
-This is a different, older mechanism than the inspector's machine-API
-network access (see `docs/NETWORK-ACCESS.md`) — `INSPECTOR_BIND_ADDR = "::"` in this app's `[env]` exists solely so `fly proxy` can reach the mesh IP; it's not the same as opting into customer-network reachability, and `fly ips list` staying empty means this Fly deployment was never meant to be reachable any other way. Don't also add an API client for a Fly deployment unless you specifically want a machine caller (`/oauth/token`) reaching this Machine over its private `.internal` DNS from another app in the same org — the dashboard itself stays loopback-only either way, and `fly proxy`'s flyctl-session auth already covers reaching it.
+Don't add an API client for a Fly deployment unless you specifically want a machine caller reaching this Machine over its private `.internal` DNS from another app in the same org (see `docs/NETWORK-ACCESS.md`). The dashboard stays loopback-only either way.
 
 ## Configure the tunnel
 
@@ -269,10 +260,10 @@ Fly's defaults would violate the connector's load-bearing invariants. The scaffo
 - **`fly ips allocate-v4` or `-v6`** — allocates a public IP on either app. Every app in this deploy should have `fly ips list` return empty.
 - **`fly scale count 2`** — the controller's dup-name guard 409s the second Machine. Multi-replica is a future workstream.
 - **Cross-Fly-org deployment** — the mock's `.internal` DNS is only resolvable from apps in the same org. Split-org forces public exposure, breaking the private-only invariant.
-- **Removing `INSPECTOR_BIND_ADDR = "::"` from the connector's `[env]`** — the inspector's default bind is `127.0.0.1`, which is unreachable from `fly proxy` (Fly's WireGuard tunnel connects to the Machine's mesh IP, not loopback). Without this override the inspector runs happily inside the Machine but there's no way to reach it from your laptop. Safe to keep the override because `fly ips list` is empty — the mesh is Fly-private, same trust surface as `.internal` DNS.
+- **Removing `INSPECTOR_BIND_ADDR = "::"` from the connector's `[env]`** — the default bind is `127.0.0.1`, which the controller cannot reach over `.internal` DNS, so the machine-API routes (`/oauth/token`, `/v1/*`) stop answering. Safe to keep because `fly ips list` is empty — the mesh is Fly-private, same trust surface as `.internal` DNS. Note this override does NOT make the dashboard reachable; that needs the relay above.
 - **Moving `fly.toml` from repo root into a subdirectory** — Fly's build context is locked to the fly.toml's directory (no `--build-context` flag exists), and this connector's Dockerfile needs the repo root as context. Everything breaks with "Dockerfile not found" or missing-source errors.
 - **Pasting the full `/mcp-tunnel` path into `--controller-url`** — the controller UI often shows the WS endpoint as `https://<controller>/mcp-tunnel`, but the connector appends that path itself when dialing. Pasting the full path leads to `wss://.../mcp-tunnel/mcp-tunnel` and silent handshake failure. Use the HTTPS root only (`https://<controller>`). `deploy init` will strip the `/mcp-tunnel` suffix with a loud warn if you paste it, but only that exact suffix — custom paths are left alone.
-- **Port 9090 collision on `fly proxy`** — if you have a local dev inspector running (from `npm run start` in the connector repo), `fly proxy 9090:9090 -a <app>` fails with `bind: address already in use`. Either kill the local process (`lsof -i :9090` → `kill <PID>`) or use a different local port: `fly proxy 19090:9090 -a <app>` → `http://localhost:19090`.
+- **Local port collision on `fly proxy`** — if you have a local dev inspector running (from `npm run start` in the connector repo), a proxy onto the same local port fails with `bind: address already in use`. Either kill the local process (`lsof -i :9090` → `kill <PID>`) or pick a different LOCAL port: `fly proxy 19099:9099 -a <app>` → `http://localhost:19099`.
 
 ## Reference
 
