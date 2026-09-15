@@ -226,8 +226,8 @@ describe("frame-router register-ack error sub-table", () => {
     };
     h.router(ack);
 
-    // Sticky — operator must intervene (delete the other row, or change
-    // CONNECTOR_NAME).
+    // Sticky — operator must intervene (delete the other row, or rename
+    // this connector in the inspector's Configure Tunnel modal).
     expect(h.reconnect.rejectedCount).toBe(1);
 
     // Local token is preserved (we still own it; the name collision doesn't

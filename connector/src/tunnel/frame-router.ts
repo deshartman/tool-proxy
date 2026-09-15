@@ -127,12 +127,19 @@ function handleRegisterAckError(frame: RegisterAckFrame, opts: FrameRouterOpts):
       opts.inspector?.setIdentity({ kind: "cleared" });
       return;
     case "name_taken":
-      // A different connector row already owns CONNECTOR_NAME. Self-healing
-      // isn't safe — silently retrying could mask a config mistake. Stay
-      // sticky and log an action-oriented message.
+      // A different connector row already owns this connector's name.
+      // Self-healing isn't safe — silently retrying could mask a config
+      // mistake. Stay sticky and log an action-oriented message.
+      //
+      // The remedy must NOT name an env var. Identity lives in the sealed
+      // controllers row and is set only through the inspector's Configure
+      // Tunnel modal; CONNECTOR_NAME is warned about and ignored at boot
+      // (see the legacy-env loop in bootFromDb). This is the one path that
+      // suppresses auto-reconnect, so it is also the path where a wrong
+      // remedy costs the most — the operator is already stuck here.
       opts.log.error(
         { code: error.code, name: opts.connectorName },
-        `name "${opts.connectorName}" is already bound to another connector row — delete that row controller-side, or change CONNECTOR_NAME and restart. auto-reconnect suppressed.`,
+        `name "${opts.connectorName}" is already bound to another connector row — delete that row controller-side, or rename this connector in the inspector's Configure Tunnel modal. auto-reconnect suppressed.`,
       );
       opts.reconnect.markRejected();
       opts.inspector?.setIdentity({
