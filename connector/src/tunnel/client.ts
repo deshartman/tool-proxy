@@ -1,5 +1,7 @@
-import WebSocket, { type RawData } from "ws";
+import WebSocket, { type RawData, type ClientOptions } from "ws";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import type { InboundTunnelFrame, TunnelFrame } from "./frames.js";
+import { resolveProxy, type ProxyDecision } from "./proxy.js";
 
 export type WsState = "connecting" | "open" | "closed";
 export type FrameDirection = "out" | "in";
@@ -78,8 +80,20 @@ export class TunnelClient {
     }
     if (this.connectorName) headers["x-connector-name"] = this.connectorName;
 
+    // Forward-proxy support. `ws` drives the upgrade through node:https, which
+    // NODE_USE_ENV_PROXY does not reach (that wires undici, and undici does not
+    // sit under node:https) — so on a proxy-mandated network the agent has to
+    // be attached explicitly or this dial just times out. Note the trap this
+    // closes: fetch-based egress IS proxied by Node, so on the OAuth2 posture
+    // the token mint succeeds through the proxy and only the tunnel fails,
+    // which reads as a broken controller rather than a network policy. Full
+    // reasoning in ./proxy.ts.
+    const proxy = resolveProxy(wsUrl);
+    const wsOptions: ClientOptions = { headers };
+    if (proxy.proxyUrl) wsOptions.agent = new HttpsProxyAgent(proxy.proxyUrl);
+
     await new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(wsUrl, { headers });
+      const ws = new WebSocket(wsUrl, wsOptions);
       this.ws = ws;
 
       // Pre-settlement flag. Any error that fires BEFORE the WS handshake
@@ -102,7 +116,7 @@ export class TunnelClient {
         // Abort the dial. terminate() forces a close even mid-handshake,
         // which the existing 'close' handler picks up.
         try { ws.terminate(); } catch { /* swallow */ }
-        reject(new Error(`Tunnel dial timed out after ${timeoutMs}ms`));
+        reject(new Error(`Tunnel dial timed out after ${timeoutMs}ms${describeProxy(proxy)}`));
       }, timeoutMs);
       const clearDialTimer = (): void => clearTimeout(dialTimer);
 
@@ -178,4 +192,18 @@ function rawDataToString(data: RawData): string {
   if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   return Buffer.from(data).toString("utf8");
+}
+
+// Proxy context appended to a dial-failure message. The connector cannot tell a
+// proxy-mandated network from a firewall drop, a wrong controller URL, or a
+// controller-side cold database — all four produce this same timeout. So this
+// speaks only when there is actual evidence in the environment, rather than
+// printing a list of maybes on every transient reconnect: either we used a
+// proxy, or one is configured and we deliberately bypassed it.
+function describeProxy(d: ProxyDecision): string {
+  if (d.reason === "proxy") return ` (dialed via proxy ${d.proxyUrl})`;
+  if (d.proxyConfigured) {
+    return " (a proxy is configured but does not apply to this host — NO_PROXY or loopback — so this dial went direct)";
+  }
+  return "";
 }
