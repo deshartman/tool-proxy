@@ -51,6 +51,46 @@ When you pass a port arg to the dev launcher, three of the above variables are a
 | `MCP_BASE_PORT` | `7100 + (<port> - 9090) × 100` (spacing avoids drop-in child port collisions across instances) |
 | `POSTGRES_SCHEMA` | `mcp_connector` when `<port>=9090` (historical default, preserves state); else `mcp_connector_<port>`. An explicit env value wins. |
 
+## Forward proxy (enterprise egress)
+
+Read only if your network mandates a forward proxy. These are **not connector
+config** — they are the pre-existing de facto standard vars your ops team
+already sets fleet-wide, and the connector honours them rather than adding a
+knob of its own. Nothing to set if your hosts have direct egress.
+
+| Variable | Purpose |
+|---|---|
+| `HTTPS_PROXY` / `https_proxy` | Forward proxy for the `wss://` tunnel dial and other TLS egress. Lowercase wins on conflict (curl's convention). |
+| `HTTP_PROXY` / `http_proxy` | Cleartext egress only. Deliberately **not** applied to the `wss://` tunnel — a host that proxies cleartext but not TLS is a real configuration. |
+| `ALL_PROXY` / `all_proxy` | Fallback when no scheme-specific var is set. |
+| `NO_PROXY` / `no_proxy` | Comma- or whitespace-separated exemptions, matched with curl's semantics: `*` bypasses everything, `example.com` also matches `api.example.com` (suffix on a dot boundary, so `notexample.com` does **not** match), a leading dot is ignored, ports are ignored. Loopback (`127.0.0.0/8`, `::1`, `localhost`, `*.localhost`) is **always** exempt whether listed or not — spawned MCP children live on `127.0.0.1`. |
+
+An empty value counts as unset, per the connector-wide rule that a blank env
+var means "leave this at the default".
+
+### The asymmetry worth knowing about
+
+`fetch`-based egress and the WSS tunnel take different paths, and Node treats
+them differently:
+
+- The **OAuth token mint** and **Type 2 external MCP endpoints** use `fetch`.
+  Node can proxy those itself if you set `NODE_USE_ENV_PROXY=1` (available on
+  Node 22, which this image pins).
+- The **tunnel dial** uses `ws`, which drives its upgrade through `node:https`.
+  `NODE_USE_ENV_PROXY` does not reach it, so the connector attaches a proxy
+  agent explicitly (see [`connector/src/tunnel/proxy.ts`](../connector/src/tunnel/proxy.ts)).
+
+The failure this closes is a confusing one: before the explicit agent, a
+proxy-mandated deployment on the OAuth2 posture would see the token mint
+**succeed** through the proxy and only the tunnel time out — which reads as a
+broken controller endpoint rather than a network policy. A dial timeout now
+names the proxy it used, or says a proxy is configured but was bypassed.
+
+**Not handled: TLS-intercepting proxies.** A proxy that MITMs with a private
+root CA will still fail certificate validation. That needs Node's standard
+`NODE_EXTRA_CA_CERTS` pointing at your corporate CA bundle; the connector adds
+nothing on top.
+
 ## Per-bundle vars (Twilio-shipped MCPs)
 
 Populated via the controller creds UI in production, or the inspector's
