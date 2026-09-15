@@ -35,11 +35,14 @@ export class ReconnectController {
   private attempt = 0;
   private timer: NodeJS.Timeout | undefined;
   private lastDelay = 0;
-  // Set when the controller actively rejects our register frame
-  // (unknown_registration_token, name_taken). Suppresses the auto-reconnect
-  // loop until cleared by markAccepted() (successful ack) or a manual
-  // reconnect path explicitly clearing it (operator's signal that they've
-  // fixed whatever caused the rejection).
+  // Set when the controller rejects our register frame with a STICKY error
+  // (name_taken, or any unrecognized code). NOT set for
+  // unknown_registration_token — that branch self-heals by clearing the
+  // token and letting the next attempt re-mint as a first-connect; see the
+  // switch in frame-router.ts and the invariant test pinning it.
+  // Suppresses the auto-reconnect loop until cleared by markAccepted()
+  // (successful ack) or a manual reconnect path explicitly clearing it
+  // (operator's signal that they've fixed whatever caused the rejection).
   private rejected = false;
 
   constructor(private readonly opts: ReconnectControllerOpts) {}
@@ -64,7 +67,10 @@ export class ReconnectController {
   }
 
   // Controller-side rejection. Don't auto-retry; operator intervention
-  // required (clear .connector-state.json or fix CONNECTOR_NAME).
+  // required — delete the conflicting row controller-side, or rename this
+  // connector in the inspector's Configure Tunnel modal. (Neither
+  // .connector-state.json nor CONNECTOR_NAME is live any more: identity is
+  // the sealed controllers row.)
   markRejected(): void {
     this.rejected = true;
   }
