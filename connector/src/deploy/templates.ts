@@ -1,6 +1,6 @@
 // Deploy scaffold templates. One entry per target, each a map of
 // relativePath → template string. Substitution is `String.replaceAll` on
-// `{{NAME}}`, `{{CONTROLLER_URL}}`, `{{IMAGE}}`, etc. — plain, no engine.
+// `{{NAME}}`, `{{APP_NAME}}`, `{{IMAGE}}` — plain, no engine.
 //
 // Adding a new target: append a key to TEMPLATES with the file map;
 // add the target to the TARGETS union in scaffold.ts.
@@ -10,13 +10,21 @@
 // its secrets. Everything else (cluster, network, DNS) the customer
 // supplies. See deploy/**/*.md for the reasoning.
 
-export type ScaffoldTarget = "fargate" | "gke" | "aca" | "compose" | "fly" | "fly-mock";
-
-// Some targets don't need a controller URL (the mock backend doesn't dial
-// anywhere — it's just an HTTP server). The CLI skips the prompt for these.
-export function targetNeedsControllerUrl(target: ScaffoldTarget): boolean {
-  return target !== "fly-mock";
-}
+// `gke` was removed. It rendered raw Kubernetes manifests that duplicated
+// deploy/helm/mcp-connector, and duplicated it badly: no master-key Secret at
+// all (so the pod could not boot), no resource requests or limits (so it was
+// scheduled anywhere and OOM-killed under the 493 MB floor), a placeholder
+// `mcp_servers` entry pointing at a service that never existed, and — the one
+// that needed a redesign rather than a patch — a read-only ConfigMap mounted at
+// /etc/mcp-connector, which is exactly where entrypoint.sh must WRITE the key
+// it decodes from CONNECTOR_KEY_B64.
+//
+// Kubernetes has one path now: the Helm chart. `helm template` produces raw
+// manifests for anyone whose policy forbids installing releases. Keeping both
+// was the mistake DB-TO-FILE's Stage 3 diagnosed — two artifacts per platform
+// drift independently, and the drift is invisible because each one is
+// internally valid.
+export type ScaffoldTarget = "fargate" | "aca" | "compose" | "fly" | "fly-mock";
 
 export interface ScaffoldVars {
   name: string;
@@ -28,10 +36,20 @@ export interface ScaffoldVars {
   // fly-mock. Non-Fly targets ignore this field (their prefixes are baked
   // into the template — ECS task family, K8s namespace, etc.).
   appName: string;
-  controllerUrl: string;
   image: string;
-  auth: "static" | "oauth2";
 }
+
+// `controllerUrl` and `auth` were removed from this interface, and the CLI no
+// longer prompts for them. No template referenced {{CONTROLLER_URL}} or
+// {{AUTH}} once ENV-TO-DB retired CONTROLLER_URL and made the auth posture a
+// choice in the inspector's Configure Tunnel modal — so `deploy init --yes` was
+// REQUIRING --controller-url and then discarding it. That is the same defect
+// this work removed from the Helm chart (four dead `required` values) and the
+// Terraform module (an ignored controller_url input); leaving it in the CLI
+// would have been inconsistent.
+//
+// `targetNeedsControllerUrl` went with them: it existed only to skip the prompt
+// for fly-mock, and there is no prompt now.
 
 interface TemplateFile {
   path: string;
@@ -56,9 +74,7 @@ function substitute(template: string, vars: ScaffoldVars): string {
   return template
     .replaceAll("{{APP_NAME}}", vars.appName)
     .replaceAll("{{NAME}}", vars.name)
-    .replaceAll("{{CONTROLLER_URL}}", vars.controllerUrl)
-    .replaceAll("{{IMAGE}}", vars.image)
-    .replaceAll("{{AUTH}}", vars.auth);
+    .replaceAll("{{IMAGE}}", vars.image);
 }
 
 interface Template {
@@ -72,26 +88,31 @@ const FARGATE_TASK_DEF = `{
   "family": "mcp-connector-{{NAME}}",
   "requiresCompatibilities": ["FARGATE"],
   "networkMode": "awsvpc",
-  "cpu": "256",
-  "memory": "512",
+  "cpu": "512",
+  "memory": "2048",
   "containerDefinitions": [
     {
       "name": "connector",
       "image": "{{IMAGE}}",
       "essential": true,
       "environment": [
-        { "name": "CONNECTOR_CONFIG",       "value": "/etc/mcp-connector/config.yaml" },
-        { "name": "CONNECTOR_NAME",         "value": "{{NAME}}" },
-        { "name": "CONTROLLER_URL",         "value": "{{CONTROLLER_URL}}" },
-        { "name": "INSPECTOR_PORT",         "value": "9090" }
+        { "name": "CONNECTOR_CONFIG",    "value": "/etc/mcp-connector/config.yaml" },
+        { "name": "CONNECTOR_KEY_FILE",  "value": "/etc/mcp-connector/connector.key" },
+        { "name": "INSPECTOR_PORT",      "value": "9090" }
       ],
       "secrets": [
-        { "name": "TUNNEL_AUTH_TOKEN", "valueFrom": "REPLACE_WITH_SECRETS_MANAGER_ARN" }
+        { "name": "CONNECTOR_KEY_B64", "valueFrom": "REPLACE_WITH_SECRETS_MANAGER_ARN" }
       ],
       "mountPoints": [
-        { "containerPath": "/etc/mcp-connector",  "sourceVolume": "config" },
         { "containerPath": "/var/lib/mcp-connector", "sourceVolume": "state" }
       ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/ >/dev/null 2>&1 || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      },
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
@@ -103,134 +124,125 @@ const FARGATE_TASK_DEF = `{
     }
   ],
   "volumes": [
-    { "name": "config", "host": {} },
-    { "name": "state",  "host": {} }
+    {
+      "name": "state",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "REPLACE_WITH_EFS_FILESYSTEM_ID",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "REPLACE_WITH_EFS_ACCESS_POINT_ID",
+          "iam": "ENABLED"
+        }
+      }
+    }
   ]
 }
 `;
 
-// Companion: Secrets Manager stub. Not applied — customer decides how
-// they populate the ARN. Emitted as a comment block, not runnable TF.
-const FARGATE_SECRETS_HINT = `# Secrets Manager stubs — populate before applying the task definition.
+// Companion: Secrets Manager + EFS stubs. Not applied — the customer decides
+// how they populate the ARN and which VPC the filesystem lives in. Emitted as
+// comment blocks, not runnable TF.
+const FARGATE_SECRETS_HINT = `# Secrets Manager stub — populate before applying the task definition.
+#
+# The connector needs exactly ONE secret: the 32-byte libsodium master key that
+# seals its config store. Mint it with a command; never paste key bytes into a
+# ticket, a chat, or a terminal you do not control.
 #
 # aws secretsmanager create-secret \\
-#   --name mcp-connector/{{NAME}}/tunnel-auth-token \\
-#   --secret-string "ts_<...>"
+#   --name mcp-connector/{{NAME}}/connector-key-b64 \\
+#   --secret-string "$(head -c 32 /dev/urandom | base64)"
 #
 # Then paste the returned ARN into task-definition.json under
 # containerDefinitions[0].secrets[0].valueFrom (replacing REPLACE_WITH_SECRETS_MANAGER_ARN).
 #
-# Similar for OAuth2 posture — three secrets:
-#   mcp-connector/{{NAME}}/oauth-client-id
-#   mcp-connector/{{NAME}}/oauth-client-secret
-#   mcp-connector/{{NAME}}/oauth-token-url
+# The task EXECUTION role needs secretsmanager:GetSecretValue on that ARN — not
+# the task role. Secret injection happens before the container starts, so it is
+# the agent's credential that is used, not the application's.
+#
+# RETIRED: earlier versions of this file created four secrets here — a tunnel
+# auth token, or an OAuth client id / secret / token URL. Those are entered in
+# the inspector's Configure Tunnel modal and sealed into the state volume. If a
+# runbook still tells you to create them, it predates ENV-TO-DB.
+#
+# Losing this key means losing the store: ConfigStore.open() compares a
+# fingerprint and refuses to start against a store sealed with a different key.
+# Keep it in a password manager and treat key + volume as one unit.
 `;
 
-// ---------- gke ----------
-
-const GKE_NAMESPACE = `apiVersion: v1
-kind: Namespace
-metadata:
-  name: mcp-connector-{{NAME}}
-`;
-
-const GKE_SECRET = `apiVersion: v1
-kind: Secret
-metadata:
-  name: mcp-connector-token
-  namespace: mcp-connector-{{NAME}}
-type: Opaque
-stringData:
-  # Sync from Secret Manager via the CSI driver in production.
-  TUNNEL_AUTH_TOKEN: REPLACE_ME
-  # For OAuth2 posture, replace the line above with:
-  # OAUTH_CLIENT_ID: REPLACE_ME
-  # OAUTH_CLIENT_SECRET: REPLACE_ME
-`;
-
-const GKE_CONFIGMAP = `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mcp-connector-config
-  namespace: mcp-connector-{{NAME}}
-data:
-  config.yaml: |
-    tunnel:
-      controller_url: \${CONTROLLER_URL:-}
-      name: \${CONNECTOR_NAME:-}
-      environment: prod
-      auth_token: \${TUNNEL_AUTH_TOKEN:-}
-    mcp_servers:
-      - name: placeholder
-        transport: http
-        endpoint: http://placeholder.mcp-connector-{{NAME}}.svc.cluster.local:7100/mcp
-    policy:
-      tool_timeout_ms: 5000
-`;
-
-const GKE_DEPLOYMENT = `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mcp-connector
-  namespace: mcp-connector-{{NAME}}
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: mcp-connector } }
-  template:
-    metadata: { labels: { app: mcp-connector } }
-    spec:
-      containers:
-        - name: connector
-          image: {{IMAGE}}
-          envFrom:
-            - secretRef: { name: mcp-connector-token }
-          env:
-            - { name: CONTROLLER_URL,         value: "{{CONTROLLER_URL}}" }
-            - { name: CONNECTOR_NAME,         value: "{{NAME}}" }
-            - { name: CONNECTOR_CONFIG,       value: "/etc/mcp-connector/config.yaml" }
-            - { name: INSPECTOR_PORT,         value: "9090" }
-          volumeMounts:
-            - { name: config, mountPath: /etc/mcp-connector,  readOnly: true }
-            - { name: state,  mountPath: /var/lib/mcp-connector }
-      volumes:
-        - name: config
-          configMap: { name: mcp-connector-config }
-        - name: state
-          persistentVolumeClaim: { claimName: mcp-connector-state }
-`;
-
-const GKE_PVC = `apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mcp-connector-state
-  namespace: mcp-connector-{{NAME}}
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources: { requests: { storage: 64Mi } }
+const FARGATE_EFS_HINT = `# EFS stub — the state volume MUST be persistent.
+#
+# This is not a durability nicety. /var/lib/mcp-connector/state/config.json holds
+# the sealed tunnel bearer and the registration token the controller issued. On a
+# bare Fargate volume ("host": {}) that file is created fresh on every task
+# start, so:
+#   - the operator is asked to re-run Configure Tunnel after every restart, and
+#   - the re-register collides on \`name_taken\` against the controller's
+#     surviving row, which is STICKY: auto-reconnect is suppressed and a human
+#     must click Reconnect. Unattended recovery is impossible.
+#
+# A task definition can reference an EFS filesystem but cannot create one:
+#
+# aws efs create-file-system \\
+#   --encrypted \\
+#   --performance-mode generalPurpose \\
+#   --tags Key=Name,Value=mcp-connector-{{NAME}}-state
+#
+# # The access point pins the POSIX identity, which is what makes the mount
+# # writable by the container's non-root user. The image runs as mcp:mcp
+# # (uid/gid 1000); entrypoint.sh then creates and chowns state/ beneath it.
+# aws efs create-access-point \\
+#   --file-system-id <FS-ID> \\
+#   --posix-user Uid=1000,Gid=1000 \\
+#   --root-directory 'Path=/mcp-connector-{{NAME}},CreationInfo={OwnerUid=1000,OwnerGid=1000,Permissions=0755}'
+#
+# Paste both IDs into task-definition.json under volumes[0].efsVolumeConfiguration.
+#
+# Also required, and easy to miss:
+#   - Mount targets in every subnet the task runs in.
+#   - A security group on those mount targets allowing NFS (2049) from the
+#     task's security group.
+#   - elasticfilesystem:ClientMount + ClientWrite on the TASK role (iam: ENABLED
+#     above makes the mount use it).
 `;
 
 // ---------- aca (Azure Container Apps) ----------
 
 const ACA_CONTAINERAPP = `// Azure Container Apps — bicep. Deploy with:
 //   az deployment group create --resource-group <rg> --template-file containerapp.bicep
-// (After the accompanying secrets.bicep has created the referenced secrets.)
+//
+// Prerequisites this file does NOT create (see the README appendix):
+//   - the Container Apps managed environment (pass its id as environmentId)
+//   - an Azure Files share + a storage mount registered on that environment,
+//     named by storageName below. THE CONNECTOR'S IDENTITY LIVES ON IT.
+//   - a Key Vault secret holding the base64 master key
+//   - the system-assigned identity's Key Vault access
 
 param location string = resourceGroup().location
 param environmentId string
 param imageRef string = '{{IMAGE}}'
 param connectorName string = '{{NAME}}'
-param controllerUrl string = '{{CONTROLLER_URL}}'
+// Name of the storage mount already registered on the managed environment
+// (az containerapp env storage set). Must be backed by Azure Files, not
+// ephemeral storage: state/config.json holds the sealed tunnel bearer and the
+// registration token, so losing it on a revision restart means re-running
+// Configure Tunnel AND clearing a sticky name_taken row on the controller.
+param stateStorageName string = 'mcp-connector-state'
 
 resource app 'Microsoft.App/containerApps@2023-05-01' = {
   name: 'mcp-connector-\${connectorName}'
   location: location
+  identity: { type: 'SystemAssigned' }
   properties: {
     managedEnvironmentId: environmentId
     configuration: {
+      // The connector needs exactly one secret: the 32-byte libsodium master
+      // key that seals its config store, base64-encoded. The four that used to
+      // be here — a tunnel auth token, or three OAUTH_* values — are entered in
+      // the inspector's Configure Tunnel modal and sealed at rest.
       secrets: [
-        { name: 'tunnel-auth-token', keyVaultUrl: 'REPLACE_WITH_KEYVAULT_URL', identity: 'system' }
+        { name: 'connector-key-b64', keyVaultUrl: 'REPLACE_WITH_KEYVAULT_SECRET_URL', identity: 'system' }
       ]
-      ingress: null // outbound-only, no public ingress for the tunnel
+      ingress: null // outbound-only: the connector opens no inbound port
     }
     template: {
       containers: [
@@ -238,16 +250,33 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
           name: 'connector'
           image: imageRef
           env: [
-            { name: 'CONNECTOR_CONFIG',       value: '/etc/mcp-connector/config.yaml' }
-            { name: 'CONNECTOR_NAME',         value: connectorName }
-            { name: 'CONTROLLER_URL',         value: controllerUrl }
-            { name: 'INSPECTOR_PORT',         value: '9090' }
-            { name: 'TUNNEL_AUTH_TOKEN',      secretRef: 'tunnel-auth-token' }
+            { name: 'CONNECTOR_CONFIG',   value: '/etc/mcp-connector/config.yaml' }
+            // The one variable requireEnv() demands. The entrypoint decodes
+            // CONNECTOR_KEY_B64 into this path at 0400 and unsets it before
+            // dropping privileges, so nothing mounts a key file — and nothing
+            // may mount over /etc/mcp-connector either, or the write fails.
+            { name: 'CONNECTOR_KEY_FILE', value: '/etc/mcp-connector/connector.key' }
+            { name: 'INSPECTOR_PORT',     value: '9090' }
+            { name: 'CONNECTOR_KEY_B64',  secretRef: 'connector-key-b64' }
           ]
-          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+          // Measured floor is 493 MB: the connector plus four bundled MCPs,
+          // each Type 1 child being three processes (tsx wrapper node, real
+          // node, resident esbuild). The previous 0.5Gi could not boot the
+          // shipped image. ACA requires cpu:memory in fixed ratios — 0.5 vCPU
+          // pairs with 1Gi, 1.0 with 2Gi.
+          resources: { cpu: json('1.0'), memory: '2Gi' }
+          volumeMounts: [
+            { volumeName: 'state', mountPath: '/var/lib/mcp-connector' }
+          ]
         }
       ]
-      scale: { minReplicas: 1, maxReplicas: 1 } // single connector — no HPA
+      volumes: [
+        { name: 'state', storageType: 'AzureFile', storageName: stateStorageName }
+      ]
+      // Single connector — no HPA. Identity binds (tenant, name) at register
+      // time, so a second replica collides on the controller's duplicate-name
+      // guard. minReplicas must also stay >= 1: scale-to-zero kills the WSS.
+      scale: { minReplicas: 1, maxReplicas: 1 }
     }
   }
 }
@@ -472,43 +501,79 @@ const TEMPLATES: Record<ScaffoldTarget, Template> = {
     files: [
       { path: "task-definition.json", content: FARGATE_TASK_DEF },
       { path: "secrets-hint.sh",      content: FARGATE_SECRETS_HINT },
+      { path: "efs-hint.sh",          content: FARGATE_EFS_HINT },
     ],
     readmeAppendix: `## AWS Fargate
 
-Register the task definition:
+**This target emits a task definition only.** It assumes you already have a VPC,
+subnets, a security group, an ECS cluster, and the two IAM roles. If you have
+none of those, use [\`deploy/terraform/aws-fargate/\`](../terraform/aws-fargate/)
+instead — it provisions the lot.
+
+Four placeholders have to be filled in before this runs. Each one is a hard
+failure, not a warning:
+
+| Placeholder | Filled from | Symptom if skipped |
+|---|---|---|
+| \`REPLACE_WITH_SECRETS_MANAGER_ARN\` | \`secrets-hint.sh\` | Task stops immediately: the agent cannot resolve the secret |
+| \`REPLACE_WITH_EFS_FILESYSTEM_ID\` | \`efs-hint.sh\` | Task stops: volume cannot be mounted |
+| \`REPLACE_WITH_EFS_ACCESS_POINT_ID\` | \`efs-hint.sh\` | Same |
+| \`REPLACE_WITH_REGION\` | your region | Task stops: awslogs driver cannot resolve the log group |
+
+Then:
 
     aws ecs register-task-definition --cli-input-json file://task-definition.json
 
-Before running, populate Secrets Manager per \`secrets-hint.sh\` and replace
-\`REPLACE_WITH_SECRETS_MANAGER_ARN\` in the task-definition.json. Same for
-\`REPLACE_WITH_REGION\` in the awslogs config.
+**Two things that will bite you, in the order they bite.** Both produce failures
+that read like a broken connector rather than a broken deployment:
 
-See deploy/terraform/README.md for the full walkthrough (ECS Exec for
-inspector access, orchestrator-vs-built-in reconnect, etc.).
-`,
-  },
+1. **\`assign_public_ip\` must be \`ENABLED\`** on the service's network
+   configuration (or give the subnet a NAT gateway). The connector is
+   outbound-ONLY, which is not the same as needing no egress: with no route out
+   the task cannot pull from ECR and dies with
+   \`CannotPullContainerError\` before any connector code runs. It also could
+   not reach Secrets Manager, EFS, or the controller.
+2. **The state volume is the connector's identity.** \`state/config.json\` on it
+   holds the sealed tunnel bearer and the registration token. That is why this
+   template uses EFS rather than a bare \`"host": {}\` volume — see
+   \`efs-hint.sh\` for why an ephemeral volume makes unattended restart
+   impossible.
 
-  gke: {
-    files: [
-      { path: "namespace.yaml",   content: GKE_NAMESPACE },
-      { path: "secret.yaml",      content: GKE_SECRET },
-      { path: "configmap.yaml",   content: GKE_CONFIGMAP },
-      { path: "deployment.yaml",  content: GKE_DEPLOYMENT },
-      { path: "pvc.yaml",         content: GKE_PVC },
-    ],
-    readmeAppendix: `## GCP GKE
+Reach the inspector with ECS Exec, which enters the task's namespace and so
+presents as a genuine loopback caller:
 
-Apply in order:
+    aws ecs execute-command --cluster <c> --task <t> --container connector \\
+      --interactive --command "node dist/index.js doctor"
 
-    kubectl apply -f namespace.yaml
-    kubectl apply -f secret.yaml       # after replacing REPLACE_ME
-    kubectl apply -f configmap.yaml
-    kubectl apply -f pvc.yaml
-    kubectl apply -f deployment.yaml
+### Why the values in the task definition are what they are
 
-Reach the inspector: \`kubectl port-forward -n mcp-connector-{{NAME}} deploy/mcp-connector 9090:9090\`
+The file carries no comments: \`aws ecs register-task-definition --cli-input-json\`
+validates against the API shape and rejects unknown keys, so a \`"//note"\` field
+fails the call. The reasoning therefore lives here.
 
-See deploy/helm/README.md for the reasoning behind each choice.
+- **\`cpu: 512\` / \`memory: 2048\`.** The measured floor is 493 MB for the
+  connector plus the four bundled MCPs, because each Type 1 child is three
+  processes (a \`tsx\` wrapper node, the real node, and a resident esbuild
+  service). \`memory: 512\` cannot boot the shipped image at all, and the symptom
+  is the fourth child dying at its readiness probe with no output — which reads
+  as a broken MCP rather than an undersized task. \`MCP_READINESS_TIMEOUT_MS\`
+  does not help: the memory is absent, not late. 256 CPU units is the cheapest
+  valid pairing that clears the floor, but a quarter vCPU for five node
+  processes is too thin.
+- **No mount at \`/etc/mcp-connector\`.** The entrypoint decodes
+  \`CONNECTOR_KEY_B64\` and *writes* the key there, so a read-only or shadowing
+  mount at that path breaks boot. An earlier version of this template mounted an
+  ephemeral \`config\` volume over it.
+- **\`healthCheck\` runs inside the container.** Every inspector route requires a
+  loopback caller, so a probe from outside would 403. \`wget\` against
+  \`127.0.0.1:9090\` from within the task is the one shape that works without
+  widening anything. (There is no load balancer and no readiness concept here.)
+- **\`secrets[]\` is read by the EXECUTION role, not the task role.** Injection
+  happens before the container starts, so it is the agent's credential that
+  fetches the value.
+
+See deploy/terraform/README.md for the full walkthrough (ECS Exec setup,
+orchestrator-vs-built-in reconnect, etc.).
 `,
   },
 
@@ -518,17 +583,58 @@ See deploy/helm/README.md for the reasoning behind each choice.
     ],
     readmeAppendix: `## Azure Container Apps
 
-Create the Container Apps environment separately (one per subscription is
-typical), then:
+Three things must exist before the bicep applies. The template creates none of
+them, and each omission fails the deployment rather than degrading it.
+
+**1. A Container Apps managed environment.** One per subscription is typical.
+
+    az containerapp env create --name <env> --resource-group <rg> --location <loc>
+
+**2. An Azure Files share, registered as a storage mount on that environment.**
+This is not optional. \`state/config.json\` on it holds the sealed tunnel bearer
+and the registration token the controller issued; on ephemeral storage the
+connector loses its identity on every revision restart, asks for Configure
+Tunnel again, and the re-register collides on \`name_taken\` — which is sticky,
+so auto-reconnect is suppressed and a human must click Reconnect. Unattended
+restart is impossible without this.
+
+    az storage share-rm create --storage-account <sa> --name mcp-connector-state --quota 1
+    az containerapp env storage set --name <env> --resource-group <rg> \\
+      --storage-name mcp-connector-state --azure-file-account-name <sa> \\
+      --azure-file-account-key <key> --azure-file-share-name mcp-connector-state \\
+      --access-mode ReadWrite
+
+**3. A Key Vault secret holding the base64 master key**, readable by the app's
+system-assigned identity. Mint it with a command — never paste key bytes into a
+ticket or a chat:
+
+    az keyvault secret set --vault-name <kv> --name connector-key-b64 \\
+      --value "$(head -c 32 /dev/urandom | base64)"
+
+Then paste the secret's URL over \`REPLACE_WITH_KEYVAULT_SECRET_URL\` and grant
+the identity access (\`az keyvault set-policy --secret-permissions get\`, or an
+RBAC role assignment). The identity does not exist until the first deployment,
+so this is a two-pass operation: deploy, read \`identity.principalId\` off the
+app, grant, then redeploy.
+
+Finally:
 
     az deployment group create \\
       --resource-group <rg> \\
       --template-file containerapp.bicep \\
       --parameters environmentId=<managed-env-id>
 
-Before deployment, populate a Key Vault with the tunnel bearer and replace
-\`REPLACE_WITH_KEYVAULT_URL\` in containerapp.bicep. See
-deploy/aca/README.md for the full walkthrough.
+**Reach the inspector** with \`az containerapp exec\`, which enters the
+container and so presents as a genuine loopback caller — every dashboard route
+refuses anything else:
+
+    az containerapp exec --name mcp-connector-{{NAME}} --resource-group <rg> \\
+      --command "node dist/index.js doctor"
+
+**Do not add an ingress.** \`ingress: null\` is load-bearing: the connector opens
+no inbound port, and exposing 9090 would publish the Webhooks panel's
+bcrypt-protected URLs. Likewise leave \`minReplicas: 1\` — scale-to-zero kills
+the outbound WSS, and \`maxReplicas: 1\` is the duplicate-name guard.
 `,
   },
 

@@ -18,30 +18,51 @@ backing infrastructure it does not.
 
 ## Before anything — which targets actually work
 
-Verified 2026-09-16. **Do not attempt a ❌ target.** Its generated manifest omits both required
-env vars and still emits four retired ones, so the container crash-loops in `requireEnv()` and
-the logs misleadingly point at the operator's secret wiring.
+Verified 2026-09-20. Two targets are exercised, four are rewritten but unrun, one is gone. There are
+no longer any known-broken targets — before DB-TO-FILE, three of them emitted a manifest that omitted
+both required env vars while still setting four retired ones, so the container crash-looped in
+`requireEnv()` and the logs pointed misleadingly at the operator's secret wiring.
 
 | Target | Status | Notes |
 |---|---|---|
-| Target | Status | Notes |
-|---|---|---|
-| `fly` | ✅ **works, exercised end-to-end** | `deploy apply` automates the whole bootstrap (4 steps) |
-| `compose` | ✅ works | Manifest and generated runbook both correct as of DB-TO-FILE |
-| Helm chart (`deploy/helm/`) | ⚠️ **should work, unverified** | Rewritten for DB-TO-FILE: installs with two `--set` flags, memory floor raised to 1 Gi, key delivered as `CONNECTOR_KEY_B64`. Static checks pass; **nobody has run it against a cluster** — treat a first install as the verification, and say so to the operator |
-| `fargate` | ❌ **blocked** | No `CONNECTOR_KEY_FILE` and no key secret, `memory: 512`, and its `state` volume is `host: {}` — ephemeral, so identity is lost on every task restart. Needs EFS |
-| `gke` (`deploy init`) | ❌ **blocked** | Distinct artifact from the Helm chart above — the emitted manifests still carry the four retired env vars. Use the chart instead |
-| `aca` | ❌ **blocked** | Same as `fargate`: no key wiring, `memory: '0.5Gi'` |
+| `fly` | ✅ **exercised end-to-end** | `deploy apply` automates the whole bootstrap (4 steps) |
+| `compose` | ✅ **exercised locally** | One service, one secret. Manifest and generated runbook both correct |
+| Helm chart (`deploy/helm/`) | ⚠️ **unverified** | Installs with two `--set` flags; memory floor 1 Gi; key as `CONNECTOR_KEY_B64` |
+| `fargate` (`deploy init`) | ⚠️ **unverified** | Task definition only — assumes you already have VPC/cluster/roles |
+| Terraform `aws-fargate` | ⚠️ **unverified** | Provisions EFS + secret + task + service. Use this for a from-zero AWS deploy |
+| `aca` | ⚠️ **unverified** | Bicep; needs an Azure Files share registered on the environment first |
+| `gke` | ⛔ **removed** | Kubernetes is the Helm chart. `deploy init --target gke` now errors with the `helm install` / `helm template` commands |
 
-**The blocked three are blocked on their env surface, not on infrastructure any more.** Removing
-Postgres deleted the hard part (a managed database per cloud, its networking, and its credential
-rotation); what remains is wiring one secret and raising a memory number. Don't describe them as
+**Read "unverified" literally, and say it to the operator.** Those four were rewritten for
+DB-TO-FILE and pass static checks — required env vars, memory floors, volume persistence, no retired
+vars — but **nobody has run them against a real cloud**, and neither `helm` nor `terraform` is
+installed in this repo's dev environment, so their tool-gated tests skip. A first deploy IS the
+verification. Do not present them as known-good; do offer to walk the operator through one and treat
+any failure as a finding rather than as their mistake.
+
+**None of them is blocked on infrastructure any more.** Removing Postgres deleted the hard part — a
+managed database per cloud, its networking, its credential rotation. What was left was wiring one
+secret, raising a memory number, and making the state volume persistent. Never describe any target as
 needing a database.
 
-If asked for a blocked target: say plainly that the generator is known-broken, name the two
-missing env vars, point at the plan doc, and offer `fly` or `compose` instead. **Do not hand-patch
-a generated manifest to get around it** — that hides the bug and leaves the customer with a
-deployment nobody can reproduce.
+**Two things that now apply to every cloud target**, both of which produce failures that read as a
+broken connector rather than a broken deployment:
+
+1. **The state volume is the connector's identity.** `state/config.json` on it holds the sealed
+   tunnel bearer and the registration token. On an ephemeral volume the connector asks for Configure
+   Tunnel after every restart, and the re-register collides on `name_taken` — which is sticky, so
+   auto-reconnect is suppressed and a human must click Reconnect. Unattended recovery is impossible.
+   This is why `fargate` uses EFS, `aca` needs Azure Files, and Helm needs a PVC.
+2. **Nothing may mount over `/etc/mcp-connector`.** The entrypoint decodes `CONNECTOR_KEY_B64` and
+   *writes* the key file there. A read-only ConfigMap or an ephemeral volume at that path breaks boot
+   — it is what killed the old `gke` manifests.
+
+If asked for an **unverified** target: say so before starting, name what is unproven (nobody has run
+it against that cloud), and proceed if they still want it — that is a reasonable choice and the first
+run is how it becomes verified. **Do not hand-patch a generated manifest when something fails.** Fix
+the template and regenerate: a patched manifest hides the bug and leaves the customer with a
+deployment nobody can reproduce. If asked for `gke`, the CLI's own error message has the two `helm`
+commands; use those rather than reconstructing raw YAML.
 
 ## Step 0 — situate yourself
 
@@ -63,14 +84,20 @@ and let the operator accept it.
 
 | # | Question | Default / guidance |
 |---|---|---|
-| 1 | **Platform?** | `fly` for a demo or the fastest path; `compose` for a single VM they already own |
+| 1 | **Platform?** | `fly` for a demo or the fastest path; `compose` for a single VM they already own; Helm for Kubernetes; Terraform `aws-fargate` for a from-zero AWS deploy; `fargate` (`deploy init`) only if they already have VPC + cluster + roles; `aca` for Azure. Say which ones are unverified |
 | 2 | **Connector name?** | No default. Must match the controller's Tunnel Security row **Name**, case-sensitive. A mismatch surfaces only as HTTP 401 at the WS upgrade — the worst failure shape available, so confirm the spelling explicitly |
-| 3 | **Controller URL?** | No default. **HTTPS root only.** If they paste `.../mcp-tunnel`, `normalizeControllerUrl()` strips it and warns — don't pre-strip it yourself, let the warning teach them |
+| 3 | **Controller URL?** | No default. **HTTPS root only.** Ask it, but do NOT pass it to `deploy init` — that flag is ignored now and warns. The URL is typed into the Configure Tunnel modal in Step 4, which strips a trailing `/mcp-tunnel` itself |
 | 4 | **Fly app name?** (`fly` only) | Defaults to `mcp-connector-<name>`. Ask only if they want a custom one |
 | 5 | **Region?** (`fly` only) | Comes from `fly.toml`'s `primary_region`; ask if generating fresh |
 
-Do **not** ask about: auth posture, bearer tokens, OAuth client IDs, or the image tag. The first
-three are entered in the Configure Tunnel modal at the end; the image is pinned by the template.
+Do **not** ask about: auth posture, bearer tokens, OAuth client IDs, a database, or the image tag.
+The first three are entered in the Configure Tunnel modal at the end; there is no database; the image
+is pinned by the template.
+
+**Also ask about persistent storage on every cloud target**, because it is the one prerequisite the
+manifests cannot create for the operator and the one whose absence is invisible until a restart:
+EFS for Fargate (the Terraform module builds it; the bare task definition needs IDs pasted in), an
+Azure Files share for ACA, a StorageClass that can bind a `ReadWriteOnce` PVC for Helm.
 
 ## Step 2 — runbooks
 
@@ -85,7 +112,6 @@ step that was not idempotent and the one that created a second billable app.)
 node connector/dist/index.js deploy init --target fly \
   --name <connector-name> \
   --app-name <fly-app-name> \
-  --controller-url https://<controller-host> \
   --yes
 
 node connector/dist/index.js deploy apply --target fly
@@ -108,7 +134,6 @@ the operator to edit `TUNNEL_AUTH_TOKEN` (retired) and omitted files the stack r
 ```bash
 node connector/dist/index.js deploy init --target compose \
   --name <connector-name> \
-  --controller-url https://<controller-host> \
   --out ./deploy/compose
 cd deploy/compose
 
@@ -250,7 +275,7 @@ The three failures that get misattributed, and what they actually mean:
 
 | Symptom | Actual cause |
 |---|---|
-| Container crash-loops; logs name missing env vars | The **manifest** is wrong, not the controller row. `CONNECTOR_KEY_FILE` is the only required var. On `fargate` / `aca` / `deploy init --target gke` this is the known-broken generator — use the Helm chart or `fly`/`compose` instead |
+| Container crash-loops; logs name missing env vars | The **manifest** is wrong, not the controller row. `CONNECTOR_KEY_FILE` is the only required var, and every shipped manifest now sets it — so suspect a hand-edited or pre-DB-TO-FILE manifest, and check for a leftover `POSTGRES_URL` / `TUNNEL_AUTH_TOKEN` block that predates the change |
 | Container crash-loops with `EACCES` on the state directory | The volume's mount is root-owned and nothing chowned the `state/` subdirectory. On K8s/Fly that is `entrypoint.sh`'s job and it runs only as root — check the pod isn't forcing a non-root `securityContext`, which a `restricted` Pod Security Standard does |
 | HTTP **401** at the WS upgrade | Connector name doesn't match the Tunnel Security row (case-sensitive), or the bearer belongs to a different row. Nothing local can detect this before dialling |
 | **403 `forbidden: loopback only`** | You aren't arriving as loopback. On Fly, `fly proxy` never will — use `scripts/fly-inspector.sh` |

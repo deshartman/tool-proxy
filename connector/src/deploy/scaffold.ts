@@ -25,12 +25,31 @@ import { stdin as input, stdout as output } from "node:process";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { resolve as resolvePath, join } from "node:path";
-import { render, targetNeedsControllerUrl, type ScaffoldTarget, type ScaffoldVars } from "./templates.js";
+import { render, type ScaffoldTarget, type ScaffoldVars } from "./templates.js";
 
-const TARGETS: ScaffoldTarget[] = ["fargate", "gke", "aca", "compose", "fly", "fly-mock"];
+const TARGETS: ScaffoldTarget[] = ["fargate", "aca", "compose", "fly", "fly-mock"];
+
+// Targets that existed and no longer do, with what to use instead. Keep an
+// entry here rather than deleting it outright — the value of removing a broken
+// target is lost if the operator just gets "unknown target".
+const RETIRED_TARGETS: Record<string, string> = {
+  gke: `Kubernetes is served by the Helm chart, which does the same job correctly:
+
+    helm install my-connector ./deploy/helm/mcp-connector \\
+      --set image.tag=<version> \\
+      --set secrets.connectorKeyB64="$(head -c 32 /dev/urandom | base64)"
+
+If your policy forbids installing Helm releases, render raw manifests from the
+same chart instead of hand-maintaining a second copy:
+
+    helm template my-connector ./deploy/helm/mcp-connector \\
+      --set image.tag=<version> --set secrets.connectorKeyB64=<base64> \\
+      | kubectl apply -f -
+
+See deploy/helm/mcp-connector/README.md.`,
+};
 const DEFAULT_OUT: Record<ScaffoldTarget, string> = {
   fargate: "./deploy/aws-fargate",
-  gke: "./deploy/gke",
   aca: "./deploy/aca",
   compose: "./deploy/compose",
   // fly.toml lives alongside the other per-platform artifacts under
@@ -84,14 +103,19 @@ export async function scaffoldTo(
 // CLI entry.
 const USAGE = `usage: mcp-connector deploy init --target <t> [flags]
 
-Generates cloud-specific deployment manifests for the connector, with your
-CONNECTOR_NAME and CONTROLLER_URL substituted in. Does NOT touch the cloud —
-writes files locally for you to apply with the cloud's native tool
-(aws / kubectl / az / docker compose / fly).
+Generates cloud-specific deployment manifests for the connector, with your name
+and image reference substituted in. Does NOT touch the cloud — writes files
+locally for you to apply with the cloud's native tool
+(aws / az / docker compose / fly).
+
+The manifests carry ONE secret: a 32-byte master key. Controller URL, connector
+name and auth posture are entered in the inspector's Configure Tunnel modal once
+the container is running, so nothing here asks for them.
+
+Kubernetes has no target here — use the Helm chart at deploy/helm/mcp-connector/.
 
 Targets:
-  fargate    AWS Fargate task definition + Secrets Manager hint
-  gke        Kubernetes manifests (Namespace, Secret, ConfigMap, Deployment, PVC)
+  fargate    AWS Fargate task definition + Secrets Manager and EFS hints
   aca        Azure Container Apps bicep template
   compose    docker-compose.yml + .env.example (single-VM prod)
   fly        Fly.io fly.toml + secrets-hint.sh (connector, outbound-only)
@@ -100,15 +124,17 @@ Targets:
 
 Flags:
   --target <t>          required (one of the above)
-  --name <n>            CONNECTOR_NAME (prompts if omitted); the identity
-                        the connector presents to the controller
+  --name <n>            names the emitted resources (task family, log group,
+                        Fly app). Prompts if omitted. Use the same value you
+                        will type into Configure Tunnel, so an operator
+                        debugging at 3am does not have to map one to the other
   --app-name <a>        Fly-only: the Fly.io app name. Defaults to
                         "mcp-connector-<name>" (fly) or "mock-customers-<name>"
                         (fly-mock). Set this if you want a custom, non-prefixed
                         name — e.g. "twilio-tool-sdk". Ignored for non-Fly targets.
-  --controller-url <u>  CONTROLLER_URL (prompts if omitted)
   --image <ref>         OCI image ref (default ghcr.io/twilio/mcp-connector:latest)
-  --auth <a>            "static" (default) or "oauth2"
+  --controller-url <u>  IGNORED (accepted for compatibility; warns)
+  --auth <a>            IGNORED (accepted for compatibility; warns)
   --out <dir>           output directory (default ./deploy/<target>)
   --yes                 non-interactive: use flag values only, no prompts
   --force               overwrite existing files
@@ -145,6 +171,14 @@ export async function runDeployInit(argv: string[]): Promise<number> {
     return 2;
   }
   if (!TARGETS.includes(target)) {
+    // A retired target deserves its replacement, not just a list. Someone
+    // typing `--target gke` is following a runbook we changed under them, and
+    // the generic message would leave them guessing.
+    const retired = RETIRED_TARGETS[target as string];
+    if (retired) {
+      process.stderr.write(`error: the \`${target}\` target was removed.\n\n${retired}\n`);
+      return 2;
+    }
     process.stderr.write(`error: unknown target "${target}" (want one of: ${TARGETS.join(", ")})\n`);
     return 2;
   }
@@ -161,16 +195,27 @@ export async function runDeployInit(argv: string[]): Promise<number> {
         : "CONNECTOR_NAME (must match your controller's Tunnel Security row Name exactly)";
     const name = await resolveField(rl, values.name, namePrompt, nonInteractive, "name");
 
-    // The mock backend doesn't dial anywhere — no controller URL needed.
-    const controllerUrl = targetNeedsControllerUrl(target)
-      ? await resolveField(
-          rl,
-          values["controller-url"],
-          "CONTROLLER_URL (https://...)",
-          nonInteractive,
-          "controller-url",
-        )
-      : (values["controller-url"] ?? "");
+    // No prompt for a controller URL or an auth posture. Nothing in any
+    // template consumes them — CONTROLLER_URL was retired by ENV-TO-DB and the
+    // posture is chosen in the inspector's Configure Tunnel modal — so asking
+    // was bloat, and under --yes it was worse than bloat: resolveField THREW
+    // when --controller-url was absent, so `deploy init --target fargate --yes`
+    // failed on a value it would then have discarded.
+    //
+    // The flags are still ACCEPTED rather than rejected, because runbooks and
+    // CI scripts pass them. A warning is the honest middle: nothing breaks, and
+    // the operator learns the value is unused. (Contrast the Terraform module,
+    // where the equivalent input was deleted outright — there the caller is
+    // editing code and a loud error is the kinder signal.)
+    for (const dead of ["controller-url", "auth"] as const) {
+      if (values[dead]) {
+        process.stderr.write(
+          `warn: --${dead} is ignored and will be removed. Tunnel identity and ` +
+          `auth posture are configured in the inspector's Configure Tunnel modal ` +
+          `after the container is running, not baked into a manifest.\n`,
+        );
+      }
+    }
 
     // Fly app name: `--app-name` wins; otherwise default from target
     // convention (`mcp-connector-<name>` / `mock-customers-<name>`).
@@ -180,9 +225,7 @@ export async function runDeployInit(argv: string[]): Promise<number> {
     const vars: ScaffoldVars = {
       name,
       appName,
-      controllerUrl: normalizeControllerUrl(controllerUrl),
       image: values.image ?? "ghcr.io/twilio/mcp-connector:latest",
-      auth: parseEnum(values.auth, ["static", "oauth2"], "static"),
     };
 
     const outDir = resolvePath(values.out ?? DEFAULT_OUT[target]);
@@ -215,13 +258,6 @@ async function resolveField(
   return value;
 }
 
-function parseEnum<T extends string>(raw: string | undefined, values: readonly T[], fallback: T): T {
-  if (!raw) return fallback;
-  if (!(values as readonly string[]).includes(raw)) {
-    throw new Error(`invalid value "${raw}" (want one of: ${values.join(", ")})`);
-  }
-  return raw as T;
-}
 
 // Default Fly app name convention per target. Non-Fly targets return the
 // bare `name` — they don't reference {{APP_NAME}} in their templates so the
@@ -232,28 +268,10 @@ function defaultAppName(target: ScaffoldTarget, name: string): string {
   return name;
 }
 
-// Defensive normalization for --controller-url. The connector wants the
-// controller's HTTPS ROOT ONLY — it upgrades https:// → wss:// and appends
-// `/mcp-tunnel` itself in tunnel/client.ts. Customers copying the "connect
-// your connector" URL from a controller UI often paste the full path
-// (`https://controller.example.com/mcp-tunnel`), which then double-appends
-// at boot time (`wss://controller.example.com/mcp-tunnel/mcp-tunnel`) and
-// silently fails to dial. Strip the known suffix + warn. Keep the operator
-// noise loud so they know their paste was corrected.
-//
-// This is intentionally NOT a URL parser — it's a targeted defensive strip.
-// Other stray paths (`?query`, `/other-path`) are left alone; a full parser
-// would be over-engineering for the one path we know breaks.
-export function normalizeControllerUrl(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, ""); // strip trailing slashes
-  if (trimmed.endsWith("/mcp-tunnel")) {
-    const stripped = trimmed.slice(0, -"/mcp-tunnel".length);
-    process.stderr.write(
-      `warn: --controller-url should be the HTTPS root only ` +
-      `(the connector appends "/mcp-tunnel" itself). ` +
-      `Stripping "/mcp-tunnel" — using "${stripped}".\n`,
-    );
-    return stripped;
-  }
-  return trimmed;
-}
+// `normalizeControllerUrl` lived here and is gone. It stripped a trailing
+// "/mcp-tunnel" off a pasted controller URL — a real foot-gun, but one this CLI
+// no longer touches, since it does not take a controller URL. The live copy is
+// inspector/tunnel-routes.ts's, reached by the Configure Tunnel modal that now
+// owns the paste, and it is the better one: it also handles "/mcp-tunnel/tunnel",
+// is case-insensitive, and is idempotent. Pinned by
+// tests/inspector/tunnel-routes.test.ts.

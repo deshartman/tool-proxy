@@ -40,8 +40,7 @@ Two commands. That's all most operators need:
 
 ```bash
 # From the repo root:
-mcp-connector deploy init --target fly --name acme-prod \
-  --controller-url https://your-controller.example.com --yes
+mcp-connector deploy init --target fly --name acme-prod --yes
 mcp-connector deploy apply --target fly
 ```
 
@@ -73,8 +72,7 @@ sed -i.bak 's/<CUSTOMER>/acme-prod/g' deploy/fly/fly.toml && rm deploy/fly/fly.t
 Or use the scaffold CLI (writes to `deploy/fly/` by default):
 
 ```bash
-mcp-connector deploy init --target fly --name acme-prod \
-  --controller-url https://your-controller.example.com --yes
+mcp-connector deploy init --target fly --name acme-prod --yes
 ```
 
 ### 2. Create the Fly app (no deploy yet)

@@ -64,9 +64,17 @@ describe("terraform module — filesystem invariants", () => {
   it("provisions Secrets Manager slot without a managed value", () => {
     const main = readFileSync(join(TF_DIR, "main.tf"), "utf8");
     // The value lands via `aws secretsmanager put-secret-value` out-of-band.
-    // If a `secret_string` argument appears, the bearer leaks into tfstate.
-    expect(main).toContain(`aws_secretsmanager_secret" "tunnel_auth_token"`);
+    // If a `secret_string` argument appears, the secret leaks into tfstate —
+    // often an S3 bucket with looser permissions than Secrets Manager itself.
+    //
+    // The secret is now the master key, not a tunnel bearer: the bearer moved
+    // into the inspector's Configure Tunnel modal and is sealed under this key.
+    expect(main).toContain(`aws_secretsmanager_secret" "connector_key"`);
     expect(main).not.toMatch(/^\s*secret_string\s*=/m);
+    // Comments are allowed to name the retired secret to explain its removal;
+    // resources are not.
+    const code = main.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    expect(code).not.toContain("tunnel_auth_token");
   });
 
   const tfTest = toolAvailable("terraform") ? it : it.skip;

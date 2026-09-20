@@ -5,7 +5,7 @@ The connector's dial-out-only shape maps cleanly onto Fly Machines: single Firec
 If you want to skip the walkthrough and copy-paste, the CLI renders both apps' manifests for you:
 
 ```bash
-mcp-connector deploy init --target fly --name <customer> --controller-url https://your-controller.example.com --yes
+mcp-connector deploy init --target fly --name <customer> --yes
 mcp-connector deploy init --target fly-mock --name <customer> --yes  # only for the demo mock backend
 ```
 
@@ -112,8 +112,7 @@ Two commands. That's it.
 #    root with `-c deploy/fly/fly.toml` so the build context (CWD) is
 #    the full repo — Dockerfile paths in the fly.toml resolve to
 #    connector/Dockerfile as expected.
-mcp-connector deploy init --target fly --name acme-prod \
-  --controller-url https://your-controller.example.com --yes
+mcp-connector deploy init --target fly --name acme-prod --yes
 # Result: ./deploy/fly/fly.toml.
 
 # 2. Deploy — creates the Fly app + master key + state volume,
@@ -273,7 +272,7 @@ Fly's defaults would violate the connector's load-bearing invariants. The scaffo
 - **Cross-Fly-org deployment** — the mock's `.internal` DNS is only resolvable from apps in the same org. Split-org forces public exposure, breaking the private-only invariant.
 - **Removing `INSPECTOR_BIND_ADDR = "::"` from the connector's `[env]`** — the default bind is `127.0.0.1`, which the controller cannot reach over `.internal` DNS, so the machine-API routes (`/oauth/token`, `/v1/*`) stop answering. Safe to keep because `fly ips list` is empty — the mesh is Fly-private, same trust surface as `.internal` DNS. Note this override does NOT make the dashboard reachable; that needs the relay above.
 - **Moving `fly.toml` from repo root into a subdirectory** — Fly's build context is locked to the fly.toml's directory (no `--build-context` flag exists), and this connector's Dockerfile needs the repo root as context. Everything breaks with "Dockerfile not found" or missing-source errors.
-- **Pasting the full `/mcp-tunnel` path into `--controller-url`** — the controller UI often shows the WS endpoint as `https://<controller>/mcp-tunnel`, but the connector appends that path itself when dialing. Pasting the full path leads to `wss://.../mcp-tunnel/mcp-tunnel` and silent handshake failure. Use the HTTPS root only (`https://<controller>`). `deploy init` will strip the `/mcp-tunnel` suffix with a loud warn if you paste it, but only that exact suffix — custom paths are left alone.
+- **Pasting the full `/mcp-tunnel` path into Configure Tunnel** — the controller UI often shows the WS endpoint as `https://<controller>/mcp-tunnel`, but the connector appends that path itself when dialing. Pasting the full path would lead to `wss://.../mcp-tunnel/mcp-tunnel` and silent handshake failure. Use the HTTPS root only (`https://<controller>`). The modal strips `/mcp-tunnel` and `/mcp-tunnel/tunnel` for you, case-insensitively and idempotently — but other stray paths (`/api`, a query string) are left alone, so they still break the dial. (`deploy init` used to do this stripping too; it no longer takes a controller URL at all.)
 - **Local port collision on `fly proxy`** — if you have a local dev inspector running (from `npm run start` in the connector repo), a proxy onto the same local port fails with `bind: address already in use`. Either kill the local process (`lsof -i :9090` → `kill <PID>`) or pick a different LOCAL port: `fly proxy 19099:9099 -a <app>` → `http://localhost:19099`.
 
 ## Reference

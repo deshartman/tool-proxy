@@ -16,7 +16,8 @@ commands:
   start                   run the connector (default). Auto-registers with the controller on first connect.
   discover                connect to MCP servers and print tools/list
   doctor                  run preflight checks against the deployment env
-  deploy init             generate cloud deployment manifests (fargate/gke/aca/compose/fly).
+  deploy init             generate cloud deployment manifests (fargate/aca/compose/fly).
+                          Kubernetes: use the Helm chart at deploy/helm/mcp-connector/.
                           Does NOT touch the cloud — writes files for the operator to apply.
   deploy apply            actually deploy to the cloud (fly today; other targets forthcoming).
   version                 print the connector version

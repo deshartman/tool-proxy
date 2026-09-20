@@ -48,8 +48,9 @@ Targets (today):
           volume, then runs \`fly deploy\`. Idempotent — skips resources
           that already exist.
 
-Not yet implemented: fargate, gke, aca, compose. For those, apply manually
-with the cloud's native tool (aws / kubectl / az / docker compose).
+Not yet implemented: fargate, aca, compose. For those, apply manually with the
+cloud's native tool (aws / az / docker compose). Kubernetes has no deploy-init
+target — use the Helm chart at deploy/helm/mcp-connector/.
 
 Flags:
   --target <t>          required
@@ -89,7 +90,6 @@ export async function runDeployApply(argv: string[]): Promise<number> {
     case "fly":
       return applyFly();
     case "fargate":
-    case "gke":
     case "aca":
     case "compose":
     case "fly-mock":

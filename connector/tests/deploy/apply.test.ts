@@ -344,10 +344,12 @@ describe("runDeployApply (CLI parsing)", () => {
   });
 
   it("prints the not-implemented notice for future targets", async () => {
-    // fargate/gke/aca/compose don't have a deploy apply yet — the CLI must
+    // fargate/aca/compose don't have a deploy apply yet — the CLI must
     // acknowledge them (they ARE valid deploy init targets) but exit 2 with
-    // a pointer to deploy init + apply-with-native-tool.
-    for (const target of ["fargate", "gke", "aca", "compose", "fly-mock"] as const) {
+    // a pointer to deploy init + apply-with-native-tool. `gke` is absent from
+    // this list because the target no longer exists at all; scaffold.ts answers
+    // it with the helm commands instead.
+    for (const target of ["fargate", "aca", "compose", "fly-mock"] as const) {
       const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       const code = await runDeployApply(["--target", target]);
       expect(code, `${target} should exit 2`).toBe(2);

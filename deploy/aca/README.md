@@ -48,36 +48,96 @@ az containerapp create \
   --image "$IMAGE" \
   --min-replicas 1 \
   --max-replicas 1 \
+  --cpu 1.0 --memory 2Gi \
   --ingress disabled \
-  --secrets tunnel-auth-token="$TUNNEL_AUTH_TOKEN" \
+  --secrets connector-key-b64="$(head -c 32 /dev/urandom | base64)" \
   --env-vars \
-      TUNNEL_AUTH_TOKEN=secretref:tunnel-auth-token \
-      CONNECTOR_NAME=prod-customer \
+      CONNECTOR_KEY_B64=secretref:connector-key-b64 \
+      CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key \
       CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
       # INSPECTOR_PORT defaults to 9090 (binds 127.0.0.1 only). Required for
       # any MCP using createWebhookEndpoint — disabling it (INSPECTOR_PORT=0)
       # also disables webhook ingress.
 ```
 
-For an OAuth 2.0 row swap the secret + env block:
+**That is the whole credential surface: one secret.** `TUNNEL_AUTH_TOKEN`,
+`OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_TOKEN_URL`, `CONNECTOR_NAME`
+and `CONTROLLER_URL` all used to be set here, and there was a second variant of
+this command for the OAuth2 posture. Both are gone: **the auth posture is chosen
+in the inspector's Configure Tunnel modal**, and the values are sealed into the
+state volume under the master key above. There is no longer an env-var form of
+tunnel identity, so there is nothing here that differs between postures.
+
+In production, source the key from Key Vault rather than inline — inline lands
+it in your shell history and in the ACA revision:
 
 ```bash
-  --secrets oauth-client-id="$OAUTH_CLIENT_ID" oauth-client-secret="$OAUTH_CLIENT_SECRET" \
-  --env-vars \
-      OAUTH_CLIENT_ID=secretref:oauth-client-id \
-      OAUTH_CLIENT_SECRET=secretref:oauth-client-secret \
-      OAUTH_TOKEN_URL=https://controller.example.com/oauth2/token \
-      CONNECTOR_NAME=prod-customer \
-      CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
-      # Same INSPECTOR_PORT note as above — leave on the default.
+az keyvault secret set --vault-name <kv> --name connector-key-b64 \
+  --value "$(head -c 32 /dev/urandom | base64)"
+# then reference it: --secrets connector-key-b64=keyvaultref:<url>,identityref:system
 ```
 
-Then mount the YAML via an Azure File share or build it into the image.
-For per-environment configs (dev/stage/prod) bake `${...}` interpolation
-into a single YAML and set `CONTROLLER_URL` per app. Pick distinct
-`tunnel.name` values per deployment — and remember each one needs its own
-Tunnel Security row on the controller (the Name on that row must match
-`CONNECTOR_NAME` here, case-sensitive).
+`--cpu 1.0 --memory 2Gi` is not padding. The measured floor is 493 MB for the
+connector plus the four bundled MCPs, because each Type 1 child is three
+processes (a `tsx` wrapper node, the real node, and a resident esbuild service).
+A 0.5Gi app cannot boot the shipped image, and the symptom is the fourth child
+dying at its readiness probe with no output — which reads as a broken MCP rather
+than an undersized app. ACA only accepts fixed cpu:memory pairings; 1.0 pairs
+with 2Gi.
+
+## Persist the state volume — this is mandatory
+
+`state/config.json` on `/var/lib/mcp-connector` holds the sealed tunnel bearer
+and the registration token the controller issued. On ACA's default ephemeral
+storage the connector loses its identity on every revision restart: it asks for
+Configure Tunnel again, and the re-register collides on `name_taken` against the
+controller's surviving row. That error is **sticky** — auto-reconnect is
+suppressed and a human must click Reconnect. Unattended restart is impossible
+without a real volume.
+
+```bash
+az storage share-rm create --storage-account <sa> --name mcp-connector-state --quota 1
+az containerapp env storage set --name "$ENV" --resource-group "$RG" \
+  --storage-name mcp-connector-state --azure-file-account-name <sa> \
+  --azure-file-account-key <key> --azure-file-share-name mcp-connector-state \
+  --access-mode ReadWrite
+```
+
+Then attach it to the app. `az containerapp create` cannot express a volume
+mount, so this step needs the YAML/bicep form — which is what
+`mcp-connector deploy init --target aca` emits, already wired up:
+
+```bash
+mcp-connector deploy init --target aca --name prod-customer \
+  --out ./deploy/aca
+az deployment group create --resource-group "$RG" \
+  --template-file ./deploy/aca/containerapp.bicep \
+  --parameters environmentId=<managed-env-id>
+```
+
+**Do not mount anything at `/etc/mcp-connector`.** The entrypoint decodes
+`CONNECTOR_KEY_B64` and writes the key file there; a read-only or shadowing
+mount breaks boot.
+
+## Configure the tunnel
+
+Nothing above set a controller URL or a connector name, because there are no env
+vars for them. Once the app is running, reach the inspector as a **loopback**
+caller and fill in Configure Tunnel:
+
+```bash
+az containerapp exec --name "$APP" --resource-group "$RG" \
+  --command "node dist/index.js doctor"
+```
+
+`az containerapp exec` enters the container, so the connector sees a genuine
+loopback caller. Every dashboard route refuses anything else, permanently and
+with no opt-in — so this hop is not a convenience: a fresh deployment cannot
+complete first-connect without it.
+
+The connector name you type must match the Name on the controller's Tunnel
+Security row exactly (case-sensitive). A mismatch surfaces only as HTTP 401 at
+the WS upgrade; nothing local detects it beforehand.
 
 ## Inspector UI
 

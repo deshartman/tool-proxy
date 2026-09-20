@@ -2,15 +2,27 @@
 
 Run the connector as a one-replica Deployment on GKE.
 
-> **Skip the raw YAML below** if you use Helm — the chart at
-> [`deploy/helm/mcp-connector/`](../../deploy/helm/mcp-connector/README.md)
-> ships Deployment + PVC + Secret templates with sane defaults.
-> Alternatively `mcp-connector deploy init --target gke` renders
-> five hand-editable manifests with your name substituted in.
+> **Use the chart at
+> [`deploy/helm/mcp-connector/`](../../deploy/helm/mcp-connector/README.md).**
+> It is the only supported Kubernetes path and installs with two `--set` flags.
 >
-> `mcp-connector deploy apply --target gke` is **not yet implemented** —
-> apply the emitted YAMLs with `kubectl apply -f namespace.yaml …` (or
-> Helm). Only `--target fly` has a full apply verb today.
+> `mcp-connector deploy init --target gke` **no longer exists.** It rendered raw
+> manifests that duplicated the chart and duplicated it badly: no master-key
+> Secret at all (so the pod could not boot), no resource requests or limits (so
+> it was scheduled anywhere and OOM-killed under the 493 MB floor), a
+> placeholder `mcp_servers` entry pointing at a service that never existed, and
+> a read-only ConfigMap mounted at `/etc/mcp-connector` — which is exactly where
+> `entrypoint.sh` must WRITE the key it decodes from `CONNECTOR_KEY_B64`.
+>
+> If your policy forbids installing Helm releases, render raw manifests from the
+> same chart rather than hand-maintaining a second copy:
+>
+>     helm template my-connector ./deploy/helm/mcp-connector \
+>       --set image.tag=<version> --set secrets.connectorKeyB64=<base64> \
+>       | kubectl apply -f -
+>
+> The raw YAML further down this page is reference material for understanding
+> what the chart produces, not a deployment path to follow.
 
 ## Prereqs
 

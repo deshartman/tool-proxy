@@ -11,8 +11,7 @@ create the app, mint the master key, provision state, and deploy:
 
 ```bash
 mcp-connector deploy init  --target fly \
-  --name prod-us-east-1 --app-name my-connector \
-  --controller-url https://your-controller.example.com --yes
+  --name prod-us-east-1 --app-name my-connector --yes
 mcp-connector deploy apply --target fly
 ```
 
@@ -21,7 +20,6 @@ For docker-compose (single VM):
 ```bash
 mcp-connector deploy init --target compose \
   --name prod-us-east-1 \
-  --controller-url https://your-controller.example.com \
   --out ./deploy/compose
 cd deploy/compose
 mkdir -p secrets
@@ -37,7 +35,8 @@ WORKDIR is `/app/connector` and the workspace bin link at
 `not found`.
 
 For Kubernetes and other public clouds, `deploy init` emits `fargate`,
-`gke`, and `aca` targets. `deploy apply` is Fly-only today; for the
+and `aca` targets. Kubernetes is served by the Helm chart instead of a
+`deploy init` target. `deploy apply` is Fly-only today; for the
 others, apply the emitted manifests with `aws` / `kubectl` / `az`.
 Terraform / Helm users can point straight at the modules under
 [`deploy/terraform/`](../deploy/terraform/) and [`deploy/helm/`](../deploy/helm/)
