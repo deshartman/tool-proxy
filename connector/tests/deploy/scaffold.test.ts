@@ -304,11 +304,24 @@ describe("scaffoldTo — file writes", () => {
     try {
       const result = await scaffoldTo("compose", VARS, outDir);
       expect(result.written).toHaveLength(2);
-      // Assert the files exist on disk and carry the substituted values.
+      // Boot viability, not substitution. This used to assert the connector
+      // NAME appeared in the compose file and `TUNNEL_AUTH_TOKEN=` in the
+      // .env — both retired, and both the kind of assertion that stays green
+      // while the emitted stack crash-loops. What matters is the one env var
+      // requireEnv() demands, and the image reference.
       const compose = readFileSync(join(outDir, "docker-compose.yml"), "utf8");
-      expect(compose).toContain("prod-us-east-1");
+      expect(compose).toContain("CONNECTOR_KEY_FILE:");
+      expect(compose).toContain("ghcr.io/twilio/mcp-connector:0.2.0");
+      // No unsubstituted placeholders survived.
+      expect(compose).not.toMatch(/\{\{[A-Z_]+\}\}/);
       const env = readFileSync(join(outDir, ".env.example"), "utf8");
-      expect(env).toContain("TUNNEL_AUTH_TOKEN=");
+      // The template now carries no assignments at all — every line is a
+      // comment or blank. An uncommented KEY= line means a credential crept
+      // back into a file operators paste into.
+      for (const line of env.split("\n")) {
+        expect(line, `unexpected assignment in .env.example: ${line}`)
+          .not.toMatch(/^\s*[A-Z][A-Z0-9_]*=/);
+      }
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
@@ -334,7 +347,8 @@ describe("scaffoldTo — file writes", () => {
 
       const result = await scaffoldTo("compose", VARS, outDir, { force: true });
       expect(result.written).toHaveLength(2);
-      expect(readFileSync(join(outDir, "docker-compose.yml"), "utf8")).toContain("prod-us-east-1");
+      expect(readFileSync(join(outDir, "docker-compose.yml"), "utf8"))
+        .toContain("CONNECTOR_KEY_FILE:");
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }

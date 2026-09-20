@@ -20,8 +20,10 @@ export function targetNeedsControllerUrl(target: ScaffoldTarget): boolean {
 
 export interface ScaffoldVars {
   name: string;
-  // Fly-only: the Fly.io app name for the connector Machine + its attached
-  // Postgres (`{{APP_NAME}}-db`). Defaults are computed by scaffold.ts based
+  // Fly-only: the Fly.io app name for the connector Machine. (It used to also
+  // name an attached Postgres at `{{APP_NAME}}-db`; the connector needs no
+  // database now, so `deploy apply` creates no such app — the fly-mock target
+  // provisions its own.) Defaults are computed by scaffold.ts based
   // on target — `mcp-connector-<name>` for fly, `mock-customers-<name>` for
   // fly-mock. Non-Fly targets ignore this field (their prefixes are baked
   // into the template — ECS task family, K8s namespace, etc.).
@@ -255,67 +257,63 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
 
 const COMPOSE_YML = `# Production docker-compose for a single-VM shape.
 # Run with: docker compose up -d
-# Before boot: place a 32-byte key at ./secrets/connector.key
+#
+# One container. The config store is a sealed JSON file on the state volume,
+# so there is no database service and no DSN.
+#
+# Before boot:
+#   mkdir -p secrets
 #   head -c 32 /dev/urandom > ./secrets/connector.key && chmod 400 ./secrets/connector.key
+#   printf 'mcp_servers: []\\n' > ./connector.yaml   # the bind-mount SOURCE must
+#                                                   # exist as a FILE, or Docker
+#                                                   # creates a DIRECTORY here
 
 services:
   connector:
     image: {{IMAGE}}
-    env_file: .env
+    env_file:
+      # Long form with required:false. The short form (env_file: .env) makes
+      # "docker compose up" FAIL when the file is absent, and there is nothing
+      # mandatory in it any more.
+      - path: .env
+        required: false
     environment:
-      CONNECTOR_NAME: {{NAME}}
-      CONTROLLER_URL: {{CONTROLLER_URL}}
-      # C8: assemble POSTGRES_URL from the mounted secret file at
-      # container start. See entrypoint.sh. Never put the password in
-      # a compose env string or .env line.
-      POSTGRES_URL_TEMPLATE: postgres://mcp:__PWFILE__@postgres:5432/mcp_connector
-      POSTGRES_PW_FILE: /run/secrets/pg_password
+      # The only required env var. Controller URL, connector name and auth
+      # posture are entered in the inspector's Configure Tunnel modal and
+      # sealed into the state volume — there are no env vars for them.
+      CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
+      CONNECTOR_CONFIG: /etc/mcp-connector/config.yaml
+      INSPECTOR_PORT: "9090"
     volumes:
+      # Holds state/config.json — the sealed tunnel bearer and registration
+      # token. This volume IS the connector's identity; destroy it and the
+      # operator re-runs Configure Tunnel.
       - state:/var/lib/mcp-connector
       - ./connector.yaml:/etc/mcp-connector/config.yaml:ro
       - ./secrets/connector.key:/etc/mcp-connector/connector.key:ro
-    secrets: [pg_password]
     ports:
       # Inspector — 127.0.0.1 only. Do NOT bind to 0.0.0.0.
       - "127.0.0.1:9090:9090"
     restart: unless-stopped
-    depends_on: [postgres]
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: mcp_connector
-      POSTGRES_USER: mcp
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    secrets: [pg_password]
-    restart: unless-stopped
-
-secrets:
-  pg_password:
-    file: ./secrets/pg_password
 
 volumes:
   state:
-  pg_data:
 `;
 
-const COMPOSE_ENV = `# Copy to .env before \`docker compose up\`.
-# One posture: static bearer (TUNNEL_AUTH_TOKEN) OR OAuth2 (OAUTH_*).
-
-# Static-bearer posture — controller-minted \`ts_...\` from the Tunnel Security row.
-TUNNEL_AUTH_TOKEN=
-
-# db mode:
-# POSTGRES_URL is assembled by entrypoint.sh from a mounted secret file —
-# see docker-compose.yml (POSTGRES_URL_TEMPLATE + POSTGRES_PW_FILE). Do
-# NOT put the password in this .env file.
-CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key
+const COMPOSE_ENV = `# Copy to .env before \`docker compose up\`. Nothing here is required.
+#
+# There are no credentials to paste. The connector needs exactly one secret,
+# the 32-byte master key, and it arrives as the read-only file mount at
+# /etc/mcp-connector/connector.key declared in docker-compose.yml.
+#
+# TUNNEL_AUTH_TOKEN and the OAUTH_* trio used to live here. Both postures are
+# now configured in the inspector's Configure Tunnel modal and sealed at rest;
+# setting them here does nothing.
 
 # Optional overrides:
 # INSPECTOR_PORT=9090
 # LOG_LEVEL=info
+# HTTPS_PROXY=http://proxy.corp:3128   # honoured on the WSS dial
 `;
 
 // ---------- fly.io ----------
@@ -379,7 +377,8 @@ primary_region = "iad"
   # MCPs" rescan. Leaving it unset uses the default
   # (/var/lib/mcp-connector/customer-mcps/), which is inside the [[mounts]]
   # volume below — where customer-authored MCPs actually belong.
-  # POSTGRES_URL, CONNECTOR_KEY_B64 are set by \`mcp-connector deploy apply --target fly\`.
+  # CONNECTOR_KEY_B64 is set by \`mcp-connector deploy apply --target fly\`.
+  # It is the only secret; the entrypoint decodes it to CONNECTOR_KEY_FILE.
 
 [[mounts]]
   source = "state"
@@ -540,13 +539,27 @@ deploy/aca/README.md for the full walkthrough.
     ],
     readmeAppendix: `## docker compose (single VM)
 
-Three commands to a running connector:
+Four commands to a running connector — nothing to edit in between:
 
+    mkdir -p secrets
     head -c 32 /dev/urandom > ./secrets/connector.key && chmod 400 ./secrets/connector.key
-    cp .env.example .env  # then edit TUNNEL_AUTH_TOKEN
+    printf 'mcp_servers: []\\n' > ./connector.yaml
     docker compose up -d
 
-Verify: \`docker compose exec connector mcp-connector doctor\`
+The \`.env\` copy is optional — \`.env.example\` holds only comments now. The
+\`connector.yaml\` line is NOT optional: a bind-mount whose source is missing
+makes Docker create a DIRECTORY at that path, and config load then fails.
+
+Verify:
+
+    docker compose exec connector node dist/index.js doctor
+
+\`node dist/index.js\`, not \`mcp-connector\` — the image's WORKDIR is
+/app/connector and the workspace bin link at /app/node_modules/.bin is not on
+PATH, so the bare name fails with "not found".
+
+Then reach the inspector at http://localhost:9090/ (explicit http://) and fill
+in Configure Tunnel. That modal is the only way to set tunnel identity.
 `,
   },
 
@@ -564,17 +577,26 @@ deploy/fly/README.md for the reasoning).
 
     mcp-connector deploy apply --target fly
 
-That's it. Creates the Fly app + Postgres, sets the master key, creates
-the state volume, runs \`fly deploy\`. Idempotent — safe to re-run if a
+That's it. Four idempotent steps: creates the Fly app, mints and sets the
+master key, creates the state volume, runs \`fly deploy\`. Safe to re-run if a
 mid-step failure interrupts the flow.
+
+It used to be five — \`fly postgres create\` + \`attach\` are gone, so no
+separate billable \`{{APP_NAME}}-db\` app is created and nothing here is
+non-idempotent any more.
 
 Reach the inspector: \`./scripts/fly-inspector.sh {{APP_NAME}}\` — prints a URL,
 tears down on Ctrl-C. (\`fly proxy\` alone gets a 403: it arrives from the mesh
 IP and the dashboard requires a loopback caller. API clients don't help either —
 those open the machine API, not the UI.)
 
+**The state volume is the connector's identity.** \`state/config.json\` on it
+holds the sealed tunnel bearer and the registration token. Destroying the
+volume means re-running Configure Tunnel, and the re-register collides on
+\`name_taken\` until the stale controller row is cleared.
+
 See deploy/fly/README.md for the full walkthrough (mock backend, private
-DNS, rotation, graduation to managed Postgres).
+DNS, key rotation).
 `,
   },
 
@@ -591,13 +613,22 @@ via Fly's WireGuard mesh — never publicly.
 
     fly apps create {{APP_NAME}}
 
-\`MOCK_POSTGRES_URL\` is REQUIRED — the mock refuses to boot without it. Point
-it at the \`crm\` database on the connector's existing Postgres app (the
-connector owns \`mcp_connector\` on that same server; the mock owns \`crm\`).
-Create the database first if it doesn't exist.
+\`MOCK_POSTGRES_URL\` is REQUIRED — the mock refuses to boot without it, and
+this app now has to bring its OWN database. Earlier versions pointed it at the
+Postgres app \`deploy apply --target fly\` created for the connector; the
+connector stores its config in a sealed file on its volume and no longer has
+one, so there is nothing to borrow.
+
+    fly postgres create --name {{APP_NAME}}-db --region <region> \\
+      --initial-cluster-size 1 --vm-size shared-cpu-1x --volume-size 1
+    fly postgres attach {{APP_NAME}}-db --app {{APP_NAME}} \\
+      --database-name crm --variable-name MOCK_POSTGRES_URL --yes
+
+Or, if you already have a Postgres reachable on the mesh, set the secret
+directly:
 
     fly secrets set \\
-      MOCK_POSTGRES_URL="postgres://postgres:<pw>@mcp-connector-{{NAME}}-db.flycast:5432/crm" \\
+      MOCK_POSTGRES_URL="postgres://postgres:<pw>@<pg-app>.flycast:5432/crm" \\
       --app {{APP_NAME}}
     fly deploy --app {{APP_NAME}}
 

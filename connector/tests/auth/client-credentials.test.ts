@@ -1,9 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { createServer, type Server } from "node:http";
-import { randomBytes, createHash } from "node:crypto";
-import pg from "pg";
 import { ConfigStore } from "../../src/config-store/index.js";
-import { initSodium } from "../../src/config-store/seal.js";
+import { openTempStore, type StoreFixture } from "../helpers/config-store.js";
 import { handleOauthToken } from "../../src/inspector/oauth-token-route.js";
 import { deriveJwtSigningKey, verifyAccessToken, verifyHs256 } from "../../src/auth/jwt.js";
 
@@ -16,57 +14,28 @@ import { deriveJwtSigningKey, verifyAccessToken, verifyHs256 } from "../../src/a
 // already-issued tokens).
 
 describe("POST /oauth/token — self-issued client_credentials", () => {
-  const TEST_SCHEMA = "test_mcp_connector_oauth_" + Date.now();
+  let fixture: StoreFixture;
   let store: ConfigStore;
-  let pool: pg.Pool | undefined;
-  let masterKey: { bytes: Buffer; fingerprint: string };
   let signingKey: Buffer;
   let server: Server | undefined;
   let port: number;
 
-  beforeAll(async () => {
-    const url = process.env.POSTGRES_URL;
-    if (!url) {
-      throw new Error("POSTGRES_URL must be set for this integration test.");
-    }
-    await initSodium();
-    const keyBytes = randomBytes(32);
-    masterKey = { bytes: keyBytes, fingerprint: createHash("sha256").update(keyBytes).digest("hex") };
-    signingKey = deriveJwtSigningKey(masterKey.bytes);
-
-    process.env.POSTGRES_SCHEMA = TEST_SCHEMA;
-    pool = new pg.Pool({ connectionString: url });
-    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${TEST_SCHEMA}`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.api_clients CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.network_access CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.controllers CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.encryption_meta CASCADE`);
-  });
-
-  afterAll(async () => {
-    // MCP-AUDIT #22: beforeAll throws on its first line when POSTGRES_URL is
-    // unset, so nothing below is assigned yet. Every handle is optional-guarded
-    // so this teardown is a no-op rather than a TypeError masking the real cause.
-    await store?.close();
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    await pool?.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
-    await pool?.end();
-    delete process.env.POSTGRES_SCHEMA;
-  });
-
   beforeEach(async () => {
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.api_clients CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.network_access CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.controllers CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.encryption_meta CASCADE`);
-    store = await ConfigStore.open(masterKey);
+    fixture = await openTempStore();
+    store = fixture.store;
+    signingKey = deriveJwtSigningKey(fixture.masterKey.bytes);
 
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     server = createServer((req, res) => {
       void handleOauthToken(req, res, { configStore: store, signingKey, expiresInSec: 3600 });
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", () => resolve()));
     port = (server.address() as { port: number }).port;
+  });
+
+  afterEach(async () => {
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    server = undefined;
+    await fixture.cleanup();
   });
 
   async function postToken(body: Record<string, string>): Promise<Response> {

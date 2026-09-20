@@ -152,13 +152,41 @@ describe("entrypoint.sh — state volume provisioning", () => {
     }
   });
 
-  it("provisions both directories the connector needs on the volume", () => {
+  it("provisions all three directories the connector needs on the volume", () => {
     // agentic-memory/ — mcp must own the DIRECTORY, since saveState writes a
     //                   sibling .tmp and renames over the target.
     // customer-mcps/  — drop-in scanner's default root; discovery must find an
     //                   empty dir rather than a missing path.
-    expect(script).toMatch(/for d in agentic-memory customer-mcps/);
+    // state/          — the sealed config store, same tmp+rename shape. Unlike
+    //                   the other two this one fails at BOOT, since
+    //                   ConfigStore.open() writes the initial document.
+    expect(script).toMatch(/for d in agentic-memory customer-mcps state/);
     expect(script).toMatch(/chown mcp:mcp "\$state_dir\/\$d"/);
+  });
+
+  // The regression this pins was a real near-miss: DB-TO-FILE first defaulted
+  // the store to the volume ROOT, which the entrypoint deliberately leaves
+  // root-owned. Compose hid it (a named volume keeps the image's ownership) so
+  // dev and the end-to-end test both passed, while every cloud target would
+  // have crash-looped on EACCES. The two files must agree, and nothing else
+  // makes them agree — so assert it directly rather than trusting a comment.
+  it("provisions the SAME directory the config store defaults to", () => {
+    const storeFile = readFileSync(
+      join(__dirname, "../../src/config-store/store-file.ts"),
+      "utf8",
+    );
+    const defaultDir = /DEFAULT_STATE_DIR = "([^"]+)"/.exec(storeFile)?.[1];
+    expect(defaultDir).toBeDefined();
+
+    const root = /state_dir="([^"]+)"/.exec(script)?.[1];
+    expect(root).toBeDefined();
+
+    // The store's default must be one of the subdirectories the loop chowns,
+    // NOT the volume root itself.
+    const loop = /for d in ([a-z0-9 _-]+); do/.exec(script)?.[1]?.split(" ") ?? [];
+    expect(defaultDir).not.toBe(root);
+    expect(loop).toContain(defaultDir!.slice(`${root}/`.length));
+    expect(defaultDir!.startsWith(`${root}/`)).toBe(true);
   });
 
   it("runs the provisioning BEFORE dropping privileges", () => {

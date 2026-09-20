@@ -67,7 +67,7 @@ export type ReconnectPolicyConfig = z.infer<typeof ReconnectPolicy>;
 const ConfigSchema = z.object({
   // The tunnel: block is legacy — retained in the schema so old
   // connector.yaml files parse cleanly, but bootFromDb ignores its contents
-  // entirely (tunnel identity + creds live in the sealed controllers row).
+  // entirely (tunnel identity + creds live in the sealed config store).
   // Empty strings on controller_url / name pass validation so
   // `${CONTROLLER_URL:-}` yaml interpolations don't break parsing.
   tunnel: z

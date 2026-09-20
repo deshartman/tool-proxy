@@ -130,25 +130,102 @@ describe("runChecks — db mode (only mode)", () => {
     }
   });
 
-  it("fails when POSTGRES_URL is missing", async () => {
+  // The config store lives on the state volume, so the failure doctor must
+  // pre-empt is "this uid cannot write there" — which otherwise surfaces on the
+  // operator's FIRST Configure Tunnel submit, long after the deploy looked
+  // healthy. That lazy-write shape is the agentic-memory EACCES bug; these two
+  // cases keep it caught early.
+  it("passes when the state dir is writable and the store is absent", async () => {
     const { root, cleanup } = makeFixture();
     try {
       seedEnvFile(root);
       seedYaml(root);
       const keyPath = join(root, "good.key");
       writeFileSync(keyPath, Buffer.alloc(32));
+      const stateDir = join(root, "state");
+      mkdirSync(stateDir);
 
       const results = await runChecks(
         {
           CONNECTOR_KEY_FILE: keyPath,
           CONNECTOR_CONFIG: join(root, "connector.yaml"),
+          CONNECTOR_STATE_DIR: stateDir,
         },
-        { skipNetwork: true, cwd: root },
+        { cwd: root },
       );
 
-      const pg = results.find((r) => r.name === "postgres-url");
-      expect(pg?.status).toBe("fail");
-      expect(pg?.message).toMatch(/required/);
+      const store = results.find((r) => r.name === "config-store");
+      expect(store?.status).toBe("ok");
+      expect(store?.message).toMatch(/will be created at boot/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("fails when the state dir is not writable", async () => {
+    const { root, cleanup } = makeFixture();
+    try {
+      seedEnvFile(root);
+      seedYaml(root);
+      const keyPath = join(root, "good.key");
+      writeFileSync(keyPath, Buffer.alloc(32));
+      const stateDir = join(root, "readonly");
+      mkdirSync(stateDir);
+      chmodSync(stateDir, 0o500); // r-x: readable, NOT writable
+
+      const results = await runChecks(
+        {
+          CONNECTOR_KEY_FILE: keyPath,
+          CONNECTOR_CONFIG: join(root, "connector.yaml"),
+          CONNECTOR_STATE_DIR: stateDir,
+        },
+        { cwd: root },
+      );
+
+      const store = results.find((r) => r.name === "config-store");
+      expect(store?.status).toBe("fail");
+      expect(store?.message).toMatch(/not writable/);
+
+      chmodSync(stateDir, 0o700); // so cleanup can remove it
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("fails when the store was sealed with a different master key", async () => {
+    const { root, cleanup } = makeFixture();
+    try {
+      seedEnvFile(root);
+      seedYaml(root);
+      const keyPath = join(root, "good.key");
+      writeFileSync(keyPath, Buffer.alloc(32));
+      chmodSync(keyPath, 0o600); // resolveMasterKey refuses group/other-readable keys
+      const stateDir = join(root, "state");
+      mkdirSync(stateDir);
+      writeFileSync(
+        join(stateDir, "config.json"),
+        JSON.stringify({
+          version: 1,
+          keyFingerprint: "0".repeat(64), // not the fingerprint of a 32-zero-byte key
+          controllers: [],
+          networkAccess: { enabled: false },
+          trustedIssuer: null,
+          apiClients: [],
+        }),
+      );
+
+      const results = await runChecks(
+        {
+          CONNECTOR_KEY_FILE: keyPath,
+          CONNECTOR_CONFIG: join(root, "connector.yaml"),
+          CONNECTOR_STATE_DIR: stateDir,
+        },
+        { cwd: root },
+      );
+
+      const store = results.find((r) => r.name === "config-store");
+      expect(store?.status).toBe("fail");
+      expect(store?.message).toMatch(/different master key/);
     } finally {
       cleanup();
     }

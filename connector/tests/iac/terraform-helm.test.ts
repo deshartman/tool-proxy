@@ -16,6 +16,17 @@ const REPO_ROOT = resolvePath(new URL("../../../", import.meta.url).pathname);
 const TF_DIR = resolvePath(REPO_ROOT, "deploy/terraform/aws-fargate");
 const HELM_DIR = resolvePath(REPO_ROOT, "deploy/helm/mcp-connector");
 
+// Every `required` value the chart declares, in one place so a rename touches
+// one line. A render missing any of these fails with Helm's own error, which
+// is why the earlier version of this file silently failed wherever helm was
+// actually installed: it set three retired values and never set image.tag.
+const REQUIRED_SETS = [
+  "--set", "image.tag=9.9.9-test",
+  // 32 zero bytes, base64. A literal is fine — it is never used to seal
+  // anything here, and minting a real key in a test would be theatre.
+  "--set", `secrets.connectorKeyB64=${Buffer.alloc(32).toString("base64")}`,
+];
+
 function toolAvailable(bin: string): boolean {
   try {
     execFileSync(bin, ["--version"], { stdio: "ignore" });
@@ -117,12 +128,7 @@ describe("helm chart — filesystem invariants", () => {
 
   const helmServiceTest = toolAvailable("helm") ? it : it.skip;
   helmServiceTest("`helm template` renders no Service by default, and one when networkAccess.enabled=true", () => {
-    const baseArgs = [
-      "template", "release-name", HELM_DIR,
-      "--set", "connector.name=render-test",
-      "--set", "connector.controllerUrl=https://ctrl.example.com",
-      "--set", "secrets.tunnelAuthToken=ts_render",
-    ];
+    const baseArgs = ["template", "release-name", HELM_DIR, ...REQUIRED_SETS];
     const withoutFlag = execFileSync("helm", baseArgs, { encoding: "utf8" });
     expect(withoutFlag).not.toMatch(/^kind:\s*Service\b/m);
 
@@ -130,38 +136,60 @@ describe("helm chart — filesystem invariants", () => {
     expect(withFlag).toMatch(/^kind:\s*Service\b/m);
   });
 
-  it("requires connector.name and connector.controllerUrl to be set", () => {
+  it("requires exactly the two values a render cannot invent", () => {
+    // Helm's `required` surfaces a clean error at install time instead of
+    // shipping an empty variable. The set shrank: connector.name,
+    // connector.controllerUrl and secrets.tunnelAuthToken / postgresUrl were
+    // all `required` here and all retired — so `helm install` demanded four
+    // values the connector would ignore, and could not succeed at all.
+    // Identity now arrives through the inspector's Configure Tunnel modal.
     const deployment = readFileSync(join(HELM_DIR, "templates/deployment.yaml"), "utf8");
-    // Helm's `required` template function surfaces a clean error at
-    // `helm install` time instead of shipping an empty CONNECTOR_NAME.
-    expect(deployment).toMatch(/required\s+"connector\.name is required"/);
-    expect(deployment).toMatch(/required\s+"connector\.controllerUrl is required"/);
+    const secret = readFileSync(join(HELM_DIR, "templates/secret.yaml"), "utf8");
+    expect(deployment).toMatch(/required\s+"image\.tag is required/);
+    expect(secret).toMatch(/required\s+"secrets\.connectorKeyB64 is required/);
+    for (const dead of ["connector.name", "connector.controllerUrl", "secrets.tunnelAuthToken", "secrets.postgresUrl"]) {
+      expect(deployment + secret, `${dead} is still required`)
+        .not.toContain(`required "${dead}`);
+    }
+  });
+
+  // The helm-gated tests below skip wherever helm is absent — which is most
+  // dev machines and was how REQUIRED_SETS drifted out of sync with the chart
+  // unnoticed, leaving three renders that could only ever fail. This check
+  // needs no helm, so it runs everywhere and keeps the two in step.
+  it("REQUIRED_SETS supplies every value the chart marks required", () => {
+    const templateDir = join(HELM_DIR, "templates");
+    const declared = new Set<string>();
+    for (const f of readdirSync(templateDir).filter((x) => x.endsWith(".yaml"))) {
+      const text = readFileSync(join(templateDir, f), "utf8");
+      for (const m of text.matchAll(/required\s+"(?:[^"\\]|\\.)*"\s+\.Values\.([A-Za-z0-9_.]+)/g)) {
+        declared.add(m[1]!);
+      }
+    }
+    const supplied = new Set(
+      REQUIRED_SETS.filter((a) => a !== "--set").map((a) => a.slice(0, a.indexOf("="))),
+    );
+    expect(declared.size).toBeGreaterThan(0);
+    expect([...declared].sort()).toEqual([...supplied].sort());
   });
 
   const helmTest = toolAvailable("helm") ? it : it.skip;
   helmTest("passes `helm lint`", () => {
-    // Lint uses the default values which have empty connector.name; supply
-    // the required values via --set so the required{} calls succeed.
-    execFileSync("helm", [
-      "lint",
-      HELM_DIR,
-      "--set", "connector.name=lint-test",
-      "--set", "connector.controllerUrl=https://ctrl.example.com",
-      "--set", "secrets.tunnelAuthToken=ts_lint",
-    ], { stdio: "pipe" });
+    // Lint uses the default values, where both `required` keys are empty;
+    // supply them via --set so the required{} calls succeed.
+    execFileSync("helm", ["lint", HELM_DIR, ...REQUIRED_SETS], { stdio: "pipe" });
   });
 
   helmTest("templates into valid k8s manifests", () => {
-    const output = execFileSync("helm", [
-      "template",
-      "release-name",
-      HELM_DIR,
-      "--set", "connector.name=render-test",
-      "--set", "connector.controllerUrl=https://ctrl.example.com",
-      "--set", "secrets.tunnelAuthToken=ts_render",
-    ], { encoding: "utf8" });
-    // Assert the substituted values landed in the render.
-    expect(output).toContain("render-test");
-    expect(output).toContain("https://ctrl.example.com");
+    const output = execFileSync("helm", ["template", "release-name", HELM_DIR, ...REQUIRED_SETS], {
+      encoding: "utf8",
+    });
+    // Boot viability, not substitution. The prior version asserted the
+    // connector name and controller URL landed in the render; neither is an
+    // env var any more, so that check would pass on a chart that renders a
+    // pod which cannot open its config store.
+    expect(output).toContain("name: CONNECTOR_KEY_FILE");
+    expect(output).toContain("CONNECTOR_KEY_B64:");
+    expect(output).toContain("mcp-connector:9.9.9-test");
   });
 });

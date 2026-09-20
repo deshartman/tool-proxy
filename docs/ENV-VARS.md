@@ -10,7 +10,6 @@ at boot with an operator-actionable error if any of these are missing.
 
 | Variable | Purpose |
 |---|---|
-| `POSTGRES_URL` | Full connection string for the connector's Postgres database. Holds the sealed `controllers` row (tunnel identity + creds). |
 | `CONNECTOR_KEY_FILE` *or* `CONNECTOR_KEY_B64` | Path to a 32-byte libsodium master key (former) OR base64-encoded key value (latter — decoded to `$CONNECTOR_KEY_FILE` by the entrypoint script on platforms whose secret store is env-only, e.g. Fly.io / Azure Container Apps). |
 
 ## Optional overrides (defaults baked in the image)
@@ -39,7 +38,7 @@ all; the operator dashboard stays loopback-only unconditionally.
 | `MCP_READINESS_TIMEOUT_MS` | `15000` | How long the supervisor waits for a spawned MCP child's port to accept a connection before it gives up and marks the entry `permanently-failed`. Bump on slower hardware or when many drop-ins boot in sequence (tsx cold-starts compound per-child). Under db mode the failed entry surfaces in the inspector's MCP Status panel; siblings keep booting either way (supervisor's log-and-continue). |
 | `LOG_LEVEL` | `info` | Pino level. `debug` for verbose troubleshooting; `warn` in prod if you want quieter logs. |
 | `CONNECTOR_VERSION` | `dev` | Version string surfaced in the manifest and boot log. CI stamps this at build time. |
-| `POSTGRES_SCHEMA` | `mcp_connector` | Postgres schema for the `controllers` + `encryption_meta` tables. Auto-derived by `scripts/start-connector.sh` in multi-instance mode (see below); an explicit env value wins. |
+| `CONNECTOR_STATE_DIR` | `/var/lib/mcp-connector/state` | Directory holding `config.json`, the sealed config store. **Dev and tests only** — `scripts/start-connector.sh` gives each multi-instance port its own directory, the job `POSTGRES_SCHEMA` used to do. Operators never set it; the container default is correct, and it is a SUBDIRECTORY of the volume on purpose (`entrypoint.sh` chowns it to `mcp` while the volume root stays root-owned). |
 
 ### Multi-instance dev mode (`start-connector.sh <port>`)
 
@@ -49,7 +48,7 @@ When you pass a port arg to the dev launcher, three of the above variables are a
 |---|---|
 | `INSPECTOR_PORT` | `<port>` (CLI arg always wins over `.env`) |
 | `MCP_BASE_PORT` | `7100 + (<port> - 9090) × 100` (spacing avoids drop-in child port collisions across instances) |
-| `POSTGRES_SCHEMA` | `mcp_connector` when `<port>=9090` (historical default, preserves state); else `mcp_connector_<port>`. An explicit env value wins. |
+| `CONNECTOR_STATE_DIR` | `.local/state-<port>` under the repo root. Per-port so instances don't share a config store. The connector's own default is the production path `/var/lib/mcp-connector/state`, which an unprivileged dev user cannot create — which is why the script must set this. |
 
 ## Forward proxy (enterprise egress)
 

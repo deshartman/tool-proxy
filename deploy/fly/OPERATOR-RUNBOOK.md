@@ -1,14 +1,16 @@
 # Fly.io deployment — mcp-connector
 
-Operator runbook. For customer-facing narrative (why Fly.io, when to graduate to
-managed Postgres, etc.) see the sibling [`README.md`](README.md).
+Operator runbook. For customer-facing narrative (why Fly.io, topology, backups)
+see the sibling [`README.md`](README.md).
 
 ## What this deploys
 
 One Fly Machine running `ghcr.io/twilio/mcp-connector:<tag>`, dialing out to a
 controller URL over WSS. No public IP, no `[[services]]`, no `[http_service]`.
-State (registration token) persists in a 1 GB Fly volume; tunnel identity +
-sealed creds live in a Fly Postgres attached as `POSTGRES_URL`.
+Tunnel identity, sealed creds and the registration token all live in
+`state/config.json` on a 1 GB Fly volume — sealed with libsodium under the
+master key from `CONNECTOR_KEY_B64`. **There is no database app.** That volume
+is therefore not belt-and-braces; it is the connector's identity.
 
 Reach the inspector with `./scripts/fly-inspector.sh mcp-connector-<CUSTOMER>`.
 `fly proxy` alone returns 403 — it arrives from the mesh address rather than
@@ -44,8 +46,7 @@ mcp-connector deploy apply --target fly
 ```
 
 `init` writes `fly.toml` at the repo root. `apply` runs the five Fly
-operations (`apps create`, `postgres create` + `attach --variable-name
-POSTGRES_URL`, `secrets set CONNECTOR_KEY_B64`, `volumes create state`,
+operations (`apps create`, `secrets set CONNECTOR_KEY_B64`, `volumes create state`,
 `fly deploy`) with idempotency guards — safe to re-run if a step is
 interrupted. Then continue at [step 7 (configure the tunnel)](#7-configure-the-tunnel-via-the-inspector).
 
@@ -84,27 +85,12 @@ fly launch --no-deploy --copy-config -c deploy/fly/fly.toml
 ```
 
 `--copy-config` uses the fly.toml we just edited instead of Fly's generated one.
-When prompted about Postgres/Redis/Sentry, decline — we set them up manually.
+When prompted about Postgres/Redis/Sentry, decline — the connector needs none
+of them. (This runbook used to have a step 3 here that provisioned a Fly
+Postgres cluster and attached it as `POSTGRES_URL`, with a warning about Fly's
+default `DATABASE_URL` name. Both the step and the foot-gun are gone.)
 
-### 3. Provision Fly Postgres and attach
-
-```bash
-# Creates a Postgres cluster (single-node, unmanaged — fine for demos).
-fly postgres create --name mcp-connector-acme-prod-db --region iad --initial-cluster-size 1
-
-# Attach it to the connector app, creating the `mcp_connector` database, and
-# exposing the URL as POSTGRES_URL (NOT the default DATABASE_URL).
-fly postgres attach mcp-connector-acme-prod-db \
-  --app mcp-connector-acme-prod \
-  --database-name mcp_connector \
-  --variable-name POSTGRES_URL
-```
-
-**Why `--variable-name POSTGRES_URL`.** The connector reads `POSTGRES_URL`, not
-`DATABASE_URL`. Attaching without this flag will set `DATABASE_URL` and boot
-will fail with `POSTGRES_URL is required`.
-
-### 4. Mint the master key and set as a Fly secret
+### 3. Mint the master key and set as a Fly secret
 
 ```bash
 # 32 raw bytes → base64. Save the base64 somewhere safe (e.g. 1Password);
@@ -116,17 +102,25 @@ fly secrets set CONNECTOR_KEY_B64="$KEY_B64" --app mcp-connector-acme-prod
 The entrypoint decodes this into `/etc/mcp-connector/connector.key` at boot.
 See `connector/entrypoint.sh` for the decode logic.
 
-### 5. Create the state volume
+### 4. Create the state volume
 
 ```bash
 fly volumes create state --region iad --size 1 --app mcp-connector-acme-prod
 ```
 
-Holds `.connector-state.json` (env-mode legacy) and any other writable state.
-Under `db` mode the registration token lives sealed in Postgres, so this
-volume is belt-and-braces — see D3 in the `CODE-DEPLOY` design record.
+**This volume is load-bearing, not belt-and-braces.** It holds
+`state/config.json`: the sealed tunnel bearer, the OAuth secret if that is the
+posture, and the registration token the controller issued. Destroy it and the
+operator must re-run Configure Tunnel, and the re-register then collides on
+`name_taken` until someone clears the stale controller row.
 
-### 6. Deploy
+Note the subdirectory. Fly mounts the volume `uid: 0, gid: 0, chmod 0755`,
+which shadows everything the image created at that path; the connector runs as
+`mcp` and cannot write the volume ROOT. `entrypoint.sh` creates and chowns
+`state/` (alongside `agentic-memory/` and `customer-mcps/`) while it is still
+root, which is why the store defaults to a subdirectory rather than the root.
+
+### 5. Deploy
 
 `fly deploy` silently buffers stdout when piped through `2>&1 | tail` —
 Fly's Depot builder only flushes on a real TTY. Redirect to a file so
@@ -146,11 +140,11 @@ authToken: "…"    # or "oauth2 (clientId=…)" — depending on posture
 inspector listening on 127.0.0.1:9090
 ```
 
-Because there's no bearer configured yet (creds live in the DB, which is
-empty), you'll see the connector waiting on the Configure Tunnel step. That's
-expected.
+Because there's no bearer configured yet (creds live in the config store, which
+is empty on a first deploy), you'll see the connector waiting on the Configure
+Tunnel step. That's expected.
 
-### 7. Configure the tunnel via the inspector
+### 6. Configure the tunnel via the inspector
 
 One command, from a checkout of this repo:
 
@@ -213,7 +207,7 @@ The script is idempotent — each of the five steps checks for existing state
 before creating (see `applyFly()` in
 [`connector/src/deploy/apply.ts`](../../connector/src/deploy/apply.ts) — the
 `appExists` / `secretExists` / `volumeExists` guards, plus the "already
-exists" swallow on `fly postgres attach`). Deleting only Machines does NOT
+exists" swallows are needed any more). Deleting only Machines does NOT
 require this path — `fly deploy` alone (or the CI's `--redeploy-only`)
 recreates them against the existing app.
 
@@ -233,7 +227,7 @@ Then trigger CI to verify: any `main` push (or
 `gh workflow run deploy-main.yml`) exercises the redeploy path against the
 new app.
 
-Tunnel identity + creds sit in the fresh Postgres (empty). Reconfigure via
+Tunnel identity + creds sit in the fresh config store (empty). Reconfigure via
 the inspector's Configure Tunnel modal — same flow as
 [step 7](#7-configure-the-tunnel-via-the-inspector).
 
@@ -242,18 +236,33 @@ the inspector's Configure Tunnel modal — same flow as
 ### Master key rotation (rare — only if the master key is compromised)
 
 ```bash
-# 1. Wipe the Postgres schema on the connector's Fly Postgres:
-fly ssh console -a mcp-connector-acme-prod-db -C "psql -U postgres -d mcp_connector -c 'DROP SCHEMA mcp_connector CASCADE'"
+# 1. Destroy the state volume. There is NO re-seal path: ConfigStore.open()
+#    compares a SHA-256 fingerprint of the key against the one recorded in
+#    config.json and refuses to start on a mismatch, so the old store is
+#    unusable and must go.
+MACHINE=$(fly machines list -a mcp-connector-acme-prod -j | jq -r '.[0].id')
+fly machine stop "$MACHINE" --app mcp-connector-acme-prod
+VOL=$(fly volumes list -a mcp-connector-acme-prod -j | jq -r '.[] | select(.name=="state") | .id')
+fly volumes destroy "$VOL" --yes
+fly volumes create state --region iad --size 1 --app mcp-connector-acme-prod
+
 # 2. Mint and set the new key:
 NEW_KEY_B64=$(head -c 32 /dev/urandom | base64)
 fly secrets set CONNECTOR_KEY_B64="$NEW_KEY_B64" --app mcp-connector-acme-prod
-# 3. `fly secrets set` auto-deploys — the entrypoint writes the new key file,
-#    the connector recreates the schema. Reconfigure the tunnel via the
-#    inspector (Postgres is empty again).
+
+# 3. `fly secrets set` auto-deploys — the entrypoint writes the new key file and
+#    the connector writes a fresh empty store. Reconfigure the tunnel via the
+#    inspector, and expect a `name_taken` rejection until the stale controller
+#    row is cleared (the registration token went with the volume).
 ```
 
-The connector fails-fast at boot if the master key changes without wiping
-the schema — the fingerprint check in `encryption_meta` guarantees this.
+The connector fails-fast at boot if the master key changes without the store
+going with it — the `keyFingerprint` field in `config.json` guarantees this. It
+replaced the `encryption_meta` table and does the same job.
+
+**This is why the key belongs in a password manager.** Rotating it is not a
+key-swap, it is a full re-onboarding of the connector, including a click on the
+controller. Losing it is the same operation.
 
 ### Tunnel bearer / OAuth secret rotation
 
@@ -276,11 +285,20 @@ Postgres store. The design lives in `MOCK-BACKEND-DB` (design record).
 
 Three pieces to stand up:
 
-1. **`crm` database on the connector's Fly Postgres.**
+1. **A Postgres for the mock, with a `crm` database.** The connector has none
+   to share — its config is a sealed file on its own volume — so the mock brings
+   its own:
 
    ```bash
-   fly ssh console -a <DB-APP> -C 'sh -c "PGPASSWORD=\$OPERATOR_PASSWORD psql -h localhost -U postgres -c \"CREATE DATABASE crm;\""'
+   fly postgres create --name <MOCK-APP>-db --region iad \
+     --initial-cluster-size 1 --vm-size shared-cpu-1x --volume-size 1
+   fly postgres attach <MOCK-APP>-db --app <MOCK-APP> \
+     --database-name crm --variable-name MOCK_POSTGRES_URL --yes
    ```
+
+   That `attach` sets `MOCK_POSTGRES_URL` for you, so the manual
+   `fly secrets set` in step 2 is only needed if you are pointing at a Postgres
+   you already run. `<DB-APP>` below refers to whichever Postgres you used.
 
 2. **Deploy `twilio-tool-sdk-mock` (or your own name) as a private-only Fly app.**
    Scaffold the fly.toml + Dockerfile:
@@ -327,18 +345,28 @@ COPY is the only path). If a symlink there points at an absolute host
 path, forgetting the ignore rule would ship a broken symlink and the
 connector would ENOENT at drop-in scan time.
 
-### Postgres graduation (demo → prod)
+### State volume snapshots (demo → prod)
 
-Fly Postgres is unmanaged. For production, migrate to a managed service:
+This section used to be "Postgres graduation" — how to migrate the connector off
+unmanaged Fly Postgres onto Neon / RDS / CloudSQL. Deleted rather than
+rewritten: there is nothing to graduate.
+
+The durability question it was answering still exists, in a smaller form.
+`state/config.json` holds the sealed bearer and the registration token, so:
 
 ```bash
-# Point at the managed URL. The connector's schema is re-created idempotently.
-fly secrets set POSTGRES_URL="postgres://user:pass@managed-host:5432/mcp_connector" --app mcp-connector-acme-prod
-# Delete the Fly Postgres cluster once you've confirmed the connector is happy.
-fly apps destroy mcp-connector-acme-prod-db
+VOL=$(fly volumes list -a mcp-connector-acme-prod -j | jq -r '.[] | select(.name=="state") | .id')
+fly volumes snapshots list "$VOL"      # Fly snapshots daily, retains 5 days
+fly volumes snapshots create "$VOL"    # on demand, e.g. before an upgrade
 ```
 
-Reconfigure the tunnel via the inspector (fresh empty DB).
+A snapshot is only half a backup: without `CONNECTOR_KEY_B64` it decrypts to
+nothing. Keep the key in a password manager and treat the pair as the unit.
+
+Restoring is rarely the fastest path, though. Re-running Configure Tunnel takes
+a minute; the cost of losing the volume is the `name_taken` collision against
+the controller's surviving row, which needs one operator click to clear. Weigh
+that against maintaining a restore procedure.
 
 ## What NOT to do
 
@@ -349,4 +377,6 @@ Reconfigure the tunnel via the inspector (fresh empty DB).
   second Machine. Multi-replica is a future workstream.
 - **Do NOT run this app in a different Fly org from the mock** — cross-org apps
   can't reach each other's `.internal` DNS, so the crm drop-in fails.
+- **Do NOT destroy or recreate the `state` volume casually.** It is the
+  connector's identity, not a cache. See the snapshot section above.
 - **Do NOT enable `auto_stop_machines`** — kills the outbound WSS.

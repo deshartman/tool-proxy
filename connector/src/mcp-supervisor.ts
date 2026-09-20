@@ -144,13 +144,19 @@ const CHILD_LOG_MAX_LINES_PER_WINDOW = 200;
 const MIN_MASKABLE_SECRET_LEN = 8;
 
 // Connector-only secrets that must NOT reach a spawned child by inheritance
-// (MCP-AUDIT #2). boot/require-env.ts requires exactly two env vars and both
-// are secrets or paths to secrets: POSTGRES_URL is the DSN *with the password*
-// for the database holding the sealed `controllers` row, and CONNECTOR_KEY_FILE
-// points at the 32-byte libsodium master key that seals it. Children run as the
-// SAME uid as the connector (the entrypoint drops privileges once, before any
-// spawn), so a mode-0400 key file is readable by any child that learns its
-// path — enough to decrypt the tunnel bearer and registration token.
+// (MCP-AUDIT #2). boot/require-env.ts requires exactly ONE env var now, and it
+// is a path to a secret: CONNECTOR_KEY_FILE points at the 32-byte libsodium
+// master key that seals the config store. Children run as the SAME uid as the
+// connector (the entrypoint drops privileges once, before any spawn), so a
+// mode-0400 key file is readable by any child that learns its path — enough to
+// decrypt the tunnel bearer and registration token.
+//
+// The four POSTGRES_* entries below are deliberately KEPT even though
+// DB-TO-FILE removed the connector's database. This set is a deny-list for
+// credential-shaped names, and removing an entry can only ever CREATE a leak
+// path, never close one: a leftover POSTGRES_URL in an operator's environment
+// is still a DSN with a password in it, and still should not be handed to a
+// customer's MCP that did not ask for it. Do not tidy them out.
 //
 // SCOPE: this filters the `process.env` INHERITANCE layer only. The later
 // layers (spec.env / dir/.env, sessionEnv, controllerEnv) may still set these

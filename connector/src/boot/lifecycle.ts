@@ -61,9 +61,12 @@ export async function boot(): Promise<void> {
 }
 
 // bootFromEnv() was deleted with the env-mode removal (see fix/env-mode-removal
-// branch). Tunnel identity + creds now live exclusively in the sealed
-// controllers row, managed via the inspector Configure Tunnel UI. bootFromDb
-// is the sole boot path.
+// branch). Tunnel identity + creds now live exclusively in the sealed config
+// store, managed via the inspector Configure Tunnel UI. bootFromDb is the sole
+// boot path — the name is now a slight misnomer (DB-TO-FILE swapped Postgres
+// for a sealed JSON file on the state volume), kept because the lifecycle-tdz
+// test and several comments key on it and the shape of the function did not
+// change: it reads one controller record and returns early when there is none.
 
 
 

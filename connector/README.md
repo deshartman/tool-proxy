@@ -45,25 +45,25 @@ The WS handshake is gated by per-tunnel auth that the controller mints. Before b
 
 ### Configure tunnel creds
 
-Tunnel identity lives in a Postgres row, sealed at rest. The operator pastes creds via the inspector UI — no shell edits, no restart on rotation. There is no env-var alternative: an earlier `CONNECTOR_CREDS_SOURCE=env` mode was removed, and `POSTGRES_URL` + `CONNECTOR_KEY_FILE` are now the only env vars the connector requires at boot.
+Tunnel identity lives in a sealed JSON file on the state volume (`${CONNECTOR_STATE_DIR}/config.json`, default `/var/lib/mcp-connector/state/`), each secret sealed at rest with libsodium. The operator pastes creds via the inspector UI — no shell edits, no restart on rotation. There is no env-var alternative: an earlier `CONNECTOR_CREDS_SOURCE=env` mode was removed, and `CONNECTOR_KEY_FILE` is now the **only** env var the connector requires at boot (`POSTGRES_URL` went with the database).
 
 ```bash
 # from repo root
 npm install
 npm run build
 
-# Provision Postgres (or reuse an existing instance — the connector's
-# tables live in a dedicated `mcp_connector` schema, safe to coexist).
-docker run --rm -d --name pg -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16-alpine
-
-# Mint the 32-byte master key that seals row secrets at rest.
+# Mint the 32-byte master key that seals the store's secrets at rest.
+# That is the whole setup — there is no database to provision.
 mkdir -p .local && head -c 32 /dev/urandom > .local/master.key && chmod 0600 .local/master.key
 
-# Point the connector at Postgres + the key file.
+# Point the connector at the key file.
 cp .env.example .env
 # edit .env:
-#   POSTGRES_URL=postgres://postgres:dev@localhost:5432/postgres
 #   CONNECTOR_KEY_FILE=./.local/master.key
+#
+# start-connector.sh sets CONNECTOR_STATE_DIR to .local/state-<port> for you.
+# It has to: the connector's own default is the production path
+# /var/lib/mcp-connector/state, which an unprivileged dev user cannot create.
 
 # Copy the yaml example — mcp_servers + policy blocks only (a legacy
 # tunnel: block is never read; leave it in place harmless, or delete).
@@ -72,9 +72,9 @@ cp connector.yaml.example connector.yaml
 ./scripts/start-connector.sh
 ```
 
-First boot: schema created, empty `controllers` table, connector logs `"no controller row; waiting for inspector configuration at http://127.0.0.1:9090/"` and holds. Open the inspector at http://127.0.0.1:9090/, click **Configure tunnel** in the top-left panel. The modal takes **two required fields — Controller URL and Tunnel auth token** — plus one optional Display name (defaults to the URL hostname if left blank). Trailing `/mcp-tunnel[/tunnel]` on the URL is auto-stripped, so pasting the controller's full WS endpoint is safe. OAuth2 posture is available via a disclosure link. Hit **Save & connect**. The connector seals the values, upserts the row, dials the tunnel, waits for register-ack. Success → the readout flips to the configured state showing `SET` / `BOUND (LEN=N)` badges (never the values themselves). Failure → a red 409 banner inline in the modal; row is rolled back on INSERT so you can retry cleanly.
+First boot: an empty `config.json` is written immediately — so an unwritable state directory fails now rather than on your first Save — and the connector logs `"no controller row; waiting for inspector configuration at http://127.0.0.1:9090/"` and holds. Open the inspector at http://127.0.0.1:9090/, click **Configure tunnel** in the top-left panel. The modal takes **two required fields — Controller URL and Tunnel auth token** — plus one optional Display name (defaults to the URL hostname if left blank). Trailing `/mcp-tunnel[/tunnel]` on the URL is auto-stripped, so pasting the controller's full WS endpoint is safe. OAuth2 posture is available via a disclosure link. Hit **Save & connect**. The connector seals the values, upserts the row, dials the tunnel, waits for register-ack. Success → the readout flips to the configured state showing `SET` / `BOUND (LEN=N)` badges (never the values themselves). Failure → a red 409 banner inline in the modal; the store is written only after validation passes, so a failed submit leaves the previous state intact and you can retry cleanly.
 
-Rotate later via **Edit** on the same panel — paste a new bearer to replace the sealed value, or leave the field blank to keep the existing one. `cycleTunnel` reloads the row from Postgres before redialing so the fresh bearer is presented on the very next WS upgrade (no restart required). **Force re-registration** clears the current `registrationToken` and redials — read the confirm dialog carefully, since it can strand the connector against a controller row that already exists.
+Rotate later via **Edit** on the same panel — paste a new bearer to replace the sealed value, or leave the field blank to keep the existing one. `cycleTunnel` re-reads the store before redialing so the fresh bearer is presented on the very next WS upgrade (no restart required). **Force re-registration** clears the current `registrationToken` and redials — read the confirm dialog carefully, since it can strand the connector against a controller row that already exists.
 
 ### Under the hood — WS handshake
 
@@ -244,7 +244,7 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 | Subcommand | Use |
 |---|---|
 | `start` (default) | run the connector. Spawns Type 1 children, dials Type 2 entries, opens the tunnel. Flags: `--config <path>`, `--inspector-port <n>`, `--no-inspector` |
-| `doctor` | preflight checks against the deployment env (Postgres reachability, master-key file readable, required env vars set). Exit 0 all-ok, 1 any fail, 2 any warn no fail. Designed for `doctor && start` runbooks. |
+| `doctor` | preflight checks against the deployment env (master-key file readable, config store present / writable / sealed by the same key, required env vars set). Exit 0 all-ok, 1 any fail, 2 any warn no fail. Designed for `doctor && start` runbooks. |
 | `discover` | non-interactive: print `tools/list` per server. `--config <path>` |
 | `deploy init` | generate cloud deployment manifests. Does NOT touch the cloud. |
 | `deploy apply` | actually deploy to Fly.io (other targets forthcoming). |

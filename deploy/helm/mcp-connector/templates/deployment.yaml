@@ -26,11 +26,14 @@ spec:
           image: "{{ .Values.image.repository }}:{{ required "image.tag is required — pin an explicit version (do NOT use 'latest'). Set via --set image.tag=<version> or values override." .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: CONNECTOR_NAME
-              value: {{ required "connector.name is required" .Values.connector.name | quote }}
-            - name: CONTROLLER_URL
-              value: {{ required "connector.controllerUrl is required" .Values.connector.controllerUrl | quote }}
+            # CONNECTOR_NAME and CONTROLLER_URL used to be `required` here.
+            # Both were retired by ENV-TO-DB — identity is entered in the
+            # inspector's Configure Tunnel modal and sealed into the PVC — so
+            # the chart was demanding values it would then ignore.
             - name: CONNECTOR_CONFIG
+              # Optional yaml. Nothing in this chart mounts it; loadConfig
+              # tolerates the file being absent, and the only shape that still
+              # needs an entry is a hand-written Type 1 MCP.
               value: /etc/mcp-connector/config.yaml
             - name: INSPECTOR_PORT
               # Load-bearing: never expose this port via a Service. The
@@ -38,7 +41,15 @@ spec:
               # is the intended access path.
               value: "9090"
             - name: CONNECTOR_KEY_FILE
-              value: {{ .Values.secrets.connectorKeyFile | quote }}
+              # The one variable requireEnv() demands. Must be set explicitly
+              # even though entrypoint.sh defaults to the same path internally:
+              # the entrypoint does not EXPORT its default, so leaving this
+              # unset writes the key and then fails the preflight.
+              #
+              # The bytes arrive as CONNECTOR_KEY_B64 via envFrom below; the
+              # entrypoint decodes to this path at 0400 and unsets the variable
+              # before dropping privileges.
+              value: /etc/mcp-connector/connector.key
           envFrom:
             - secretRef:
                 name: {{ include "mcp-connector.fullname" . }}-auth
@@ -48,6 +59,10 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
+            # Holds state/config.json — the sealed config store. The PVC root
+            # arrives root-owned (as every CSI driver mounts it), which is why
+            # entrypoint.sh creates and chowns the state/ subdirectory while it
+            # is still root. See DEFAULT_STATE_DIR in src/config-store/store-file.ts.
             - name: state
               mountPath: /var/lib/mcp-connector
       volumes:

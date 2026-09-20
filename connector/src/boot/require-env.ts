@@ -3,10 +3,11 @@
 // failure that an admin can fix in one .env edit pass instead of
 // boot-fail-fix-reboot-repeat across scattered errors.
 //
-// db mode is the only mode: tunnel identity + creds live in the sealed
-// controllers row in Postgres, editable via the inspector Configure Tunnel
-// UI. Env-var-based identity ("env mode") was removed — POSTGRES_URL and
-// CONNECTOR_KEY_FILE are the only env requirements now.
+// Tunnel identity + creds live in the sealed config store — a JSON file on
+// the state volume, sealed with libsodium — and are edited via the inspector's
+// Configure Tunnel UI. Env-var-based identity ("env mode") was removed by
+// ENV-TO-DB; DB-TO-FILE then removed POSTGRES_URL, leaving CONNECTOR_KEY_FILE
+// as the single env requirement.
 //
 // CONNECTOR_CONFIG defaults to `./connector.yaml` (resolved from CWD). Same
 // with `.env`: `import "dotenv/config"` at the entrypoint reads from CWD. So a
@@ -57,14 +58,14 @@ export function requireEnv(env: NodeJS.ProcessEnv = process.env): void {
 
   const findings: MissingEnvFinding[] = [];
 
-  // db mode is the only mode. Requires the Postgres URL + the master key file.
-  // Tunnel identity (CONTROLLER_URL, CONNECTOR_NAME) + auth (TUNNEL_AUTH_TOKEN
-  // or OAUTH_*) live in the sealed controllers row — not in env vars.
-  if (!envOptional("POSTGRES_URL", env)) {
-    findings.push({
-      message: "  POSTGRES_URL is required (e.g. postgres://user:pass@host:5432/mcp). Set in .env or container env.",
-    });
-  }
+  // The master key file is the ONLY required env var. Tunnel identity
+  // (controller URL, connector name) and auth creds live in the sealed config
+  // store and are set through the inspector's Configure Tunnel modal. The
+  // store itself is a file on the state volume, so there is no DSN to supply
+  // — see architectural-plans/DB-TO-FILE.md.
+  //
+  // One is the floor, not a preference: the process needs the key to open the
+  // sealed store BEFORE it can serve the UI that would otherwise supply it.
   if (!envOptional("CONNECTOR_KEY_FILE", env)) {
     findings.push({
       message: "  CONNECTOR_KEY_FILE is required (path to a 32-byte master key file, mode 0600). Set in .env or container env.",
@@ -78,7 +79,8 @@ export function requireEnv(env: NodeJS.ProcessEnv = process.env): void {
     "",
     ...findings.map((finding) => finding.message),
     "",
-    "See .env.example (bundled with the package) for the full template, or run 'mcp-connector init' to scaffold a fresh .env in the current directory.",
+    "Point CONNECTOR_KEY_FILE at a 32-byte key file (mode 0600), or set CONNECTOR_KEY_B64 and let the container entrypoint write it.",
+    "Everything else — controller URL, connector name, auth posture — is configured in the inspector at http://localhost:9090.",
   ];
   throw new Error(lines.join("\n"));
 }

@@ -7,8 +7,7 @@ required for the tunnel itself.
 ## Shortest path
 
 The Fly.io target has the tightest end-to-end story — two CLI commands
-create the app, attach Postgres, mint the master key, provision state,
-and deploy:
+create the app, mint the master key, provision state, and deploy:
 
 ```bash
 mcp-connector deploy init  --target fly \
@@ -25,9 +24,17 @@ mcp-connector deploy init --target compose \
   --controller-url https://your-controller.example.com \
   --out ./deploy/compose
 cd deploy/compose
+mkdir -p secrets
+head -c 32 /dev/urandom > secrets/connector.key && chmod 400 secrets/connector.key
+printf 'mcp_servers: []\n' > connector.yaml
 docker compose up -d
-docker compose exec connector mcp-connector doctor
+docker compose exec connector node dist/index.js doctor
 ```
+
+`node dist/index.js doctor`, **not** `mcp-connector doctor`: the image's
+WORKDIR is `/app/connector` and the workspace bin link at
+`/app/node_modules/.bin` is not on `PATH`, so the bare name fails with
+`not found`.
 
 For Kubernetes and other public clouds, `deploy init` emits `fargate`,
 `gke`, and `aca` targets. `deploy apply` is Fly-only today; for the
@@ -38,15 +45,36 @@ instead — no scaffold step needed.
 
 ## Prereqs (every cloud)
 
+**The connector needs exactly one thing from your cloud's secret manager: a
+32-byte master key.** Everything else — controller URL, connector name, auth
+posture, the tunnel credential itself — is typed into the inspector's Configure
+Tunnel modal after the container is running, and sealed into the state volume
+with that key. Four env vars (`CONNECTOR_NAME`, `CONTROLLER_URL`,
+`TUNNEL_AUTH_TOKEN`, `OAUTH_CLIENT_*`) used to live here and were retired by
+ENV-TO-DB; `POSTGRES_URL` was retired by DB-TO-FILE. If a manifest you are
+carrying still sets any of them, it predates those changes.
+
 1. Build and push the OCI image:
    ```bash
    IMAGE=your-registry/mcp-connector:0.1.0 PUSH=1 ./scripts/build-image.sh
    ```
    (Multi-arch: `linux/amd64,linux/arm64`.)
-2. Pick a unique `tunnel.name` for this connector deployment.
-3. Mint the per-tunnel handshake credential on the controller. Open the controller UI, go to **Tools → Connectors → Tunnel Security → New Tunnel Security**, enter the same Name as step 2 (case-sensitive), pick a security type, paste your Twilio AccountSid + (AuthToken or ApiKey), Save. The controller verifies against Twilio's API and returns one of:
-   - **`ts_<...>`** (Twilio Auth Token / API Key types) — long-lived bearer. Store as `TUNNEL_AUTH_TOKEN` in your cloud's secret manager.
-   - **`client_id` + `client_secret` + token URL** (OAuth 2.0 type) — short-lived JWT minted by the connector at each connect. Store all three as `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` / `OAUTH_TOKEN_URL`. Best when you want a config-flip migration to `oauth.twilio.com` once Twilio takes over as the issuer.
+2. Mint a 32-byte master key into your cloud's secret manager, as a file mount
+   (`CONNECTOR_KEY_FILE`) or an env value (`CONNECTOR_KEY_B64`, which the
+   entrypoint decodes at 0400 and unsets before dropping privileges). Generate
+   it with a command — `head -c 32 /dev/urandom | base64` — never by hand and
+   never into a ticket or chat.
+3. Pick a unique name for this connector deployment. You will type it into
+   Configure Tunnel; it is not an env var.
+4. Mint the per-tunnel handshake credential on the controller. Open the controller UI, go to **Tools → Connectors → Tunnel Security → New Tunnel Security**, enter the same Name as step 3 (case-sensitive), pick a security type, paste your Twilio AccountSid + (AuthToken or ApiKey), Save. The controller verifies against Twilio's API and returns one of:
+   - **`ts_<...>`** (Twilio Auth Token / API Key types) — long-lived bearer. Paste it into Configure Tunnel's static-bearer field.
+   - **`client_id` + `client_secret` + token URL** (OAuth 2.0 type) — short-lived JWT minted by the connector at each connect. Paste all three into Configure Tunnel's OAuth2 fields. Best when you want a config-flip migration to `oauth.twilio.com` once Twilio takes over as the issuer.
+5. Reach the inspector as a **loopback** caller and fill in the modal. Each
+   platform differs: `./scripts/fly-inspector.sh <app>` on Fly,
+   `kubectl port-forward deploy/<name> 9090:9090` on K8s, `ssh -L` to a VM,
+   `docker exec` locally. A forward that merely reaches the host's port does
+   NOT qualify — see the loopback-gate note in
+   [`docs/INSPECTOR.md`](../docs/INSPECTOR.md).
 
 The connector dials the controller with `Authorization: Bearer <bearer>` plus `X-Connector-Name: <name>`; the controller looks up the row by `(tenant_id, name)` and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). Both headers are required — missing or mismatched = HTTP 401 at the WS upgrade.
 

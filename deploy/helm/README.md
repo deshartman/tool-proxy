@@ -59,8 +59,8 @@ metadata: { name: mcp-connector-config }
 data:
   config.yaml: |
     # ── legacy, ignored ──
-    # Tunnel identity lives in a sealed Postgres row managed via the
-    # inspector's Configure Tunnel modal; this block is not read. The
+    # Tunnel identity lives in the sealed config store on the PVC, managed
+    # via the inspector's Configure Tunnel modal; this block is not read. The
     # ${VAR:-} defaults let interpolation succeed with all three env vars
     # unset instead of hard-failing boot; bootFromDb sees the empty-string
     # fields and logs an "ignored" WARN. Safe to delete outright.

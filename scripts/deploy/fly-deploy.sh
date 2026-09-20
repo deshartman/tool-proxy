@@ -5,21 +5,22 @@
 #   1. Preflight: fly CLI on PATH, deploy/fly/fly.toml present
 #   2. `npm install` if node_modules is missing
 #   3. `npm run build` — incremental (tsc -b), no-op when already fresh
-#   4. `mcp-connector deploy apply --target fly` — the five idempotent Fly ops
-#      (apps create, postgres create + attach --variable-name POSTGRES_URL,
-#      secrets set CONNECTOR_KEY_B64, volumes create state, fly deploy)
+#   4. `mcp-connector deploy apply --target fly` — the four idempotent Fly ops
+#      (apps create, secrets set CONNECTOR_KEY_B64, volumes create state,
+#      fly deploy). Was five: `postgres create` + `attach` went away with
+#      DB-TO-FILE, and with them the only non-idempotent step.
 #
 # Local flags:
 #   ./scripts/deploy/fly-deploy.sh --skip-build     # if you know dist is fresh
-#   ./scripts/deploy/fly-deploy.sh --redeploy-only  # skip the 5-op bootstrap;
+#   ./scripts/deploy/fly-deploy.sh --redeploy-only  # skip the 4-op bootstrap;
 #                                                   # just run `fly deploy`.
 #                                                   # Used by CI (see
 #                                                   # .github/workflows/deploy-main.yml)
 #                                                   # because Fly deploy tokens
 #                                                   # are app-scoped and can't
-#                                                   # run `fly postgres create`
-#                                                   # (org-level auth needed).
-#                                                   # The 4 bootstrap ops are
+#                                                   # create org-level resources
+#                                                   # (volumes, secrets).
+#                                                   # The 3 bootstrap ops are
 #                                                   # idempotent + one-time —
 #                                                   # once done locally, CI
 #                                                   # only needs to redeploy.
@@ -93,12 +94,13 @@ if [[ ! -f connector/dist/index.js ]]; then
 fi
 
 # ── Fire ───────────────────────────────────────────────────────────────────
-# --redeploy-only shortcut: skip the 4 bootstrap ops (apps create, postgres
-# create + attach, secrets set, volumes create — all one-time, all
-# org-permission-heavy) and just run step [5/5] of `deploy apply` verbatim.
+# --redeploy-only shortcut: skip the 3 bootstrap ops (apps create, secrets set,
+# volumes create — all one-time, all org-permission-heavy) and just run step
+# [4/4] of `deploy apply` verbatim.
 # This is the CI path — app-scoped Fly deploy tokens can't touch org-level
 # resources, but they CAN run `fly deploy` on the target app.
-# See connector/src/deploy/apply.ts:263 for the reference invocation
+# See the `---- 4. Deploy ----` block in connector/src/deploy/apply.ts for the
+# reference invocation (named, not line-numbered — the line moved once already)
 # — we mirror it exactly (CWD=repo-root, -c deploy/fly/fly.toml).
 if [[ $REDEPLOY_ONLY -eq 1 ]]; then
   if [[ ! -x "$(command -v fly)" ]]; then
