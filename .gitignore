@@ -103,3 +103,7 @@ examples/demos/outbound-demo/config.json
 # memory-event-demo's real config — holds a real phone number / identifier.
 # Same rationale as outbound-demo's entry above.
 examples/demos/memory-event-demo/config.json
+
+# Terraform working directories — provider binaries and lock state, not source.
+deploy/terraform/**/.terraform/
+deploy/terraform/**/.terraform.lock.hcl

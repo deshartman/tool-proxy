@@ -1,15 +1,10 @@
 # Default values for the mcp-connector chart. Override these on
 # `helm install --set` or a values.yaml file.
-
-connector:
-  # CONNECTOR_NAME — must match the controller's Tunnel Security row Name
-  # exactly (case-sensitive). No default; --set connector.name=<value>.
-  name: ""
-  # HTTPS root of the controller. No default; must be set.
-  controllerUrl: ""
-  # Auth posture. "static" reads TUNNEL_AUTH_TOKEN; "oauth2" reads
-  # OAUTH_CLIENT_ID + OAUTH_CLIENT_SECRET + OAUTH_TOKEN_URL.
-  auth: static
+#
+# Note what is NOT here: connector name, controller URL, and auth posture.
+# Those are entered in the inspector's Configure Tunnel modal after the pod is
+# running (`kubectl port-forward`, see README.md) and sealed into the PVC. The
+# chart used to `required` them as env vars and they no longer do anything.
 
 image:
   repository: ghcr.io/twilio/mcp-connector
@@ -22,35 +17,51 @@ image:
   # Optional: list of secret names for private registries.
   pullSecrets: []
 
+# Measured floor is 493 MB — the connector plus the four bundled demo MCPs,
+# where each Type 1 child is THREE processes (a `tsx` wrapper node, the real
+# node, and a resident esbuild service). A 512 Mi limit cannot boot the shipped
+# image, and the symptom is the fourth child dying at its readiness probe with
+# no output, which reads as a broken MCP rather than an undersized pod.
+# MCP_READINESS_TIMEOUT_MS does not help: the memory is absent, not late.
+#
+# The request is the number that matters — it is what the scheduler reserves,
+# and a 256 Mi request on a busy node gets the pod placed somewhere it will be
+# OOM-killed under load.
 resources:
   requests:
-    cpu: 100m
-    memory: 256Mi
+    cpu: 250m
+    memory: 1Gi
   limits:
-    cpu: 500m
-    memory: 512Mi
+    cpu: "1"
+    memory: 2Gi
 
-# Persistent volume for .connector-state.json. ReadWriteOnce is sufficient
-# — the chart hardcodes replicas: 1 by design.
+# Persistent volume for the sealed config store at
+# /var/lib/mcp-connector/state/config.json, plus the bundled agentic-memory
+# MCP's state file. ReadWriteOnce is sufficient — the chart hardcodes
+# replicas: 1 by design.
+#
+# This PVC IS the connector's identity: config.json holds the sealed tunnel
+# bearer and the registration token the controller issued. Delete it and the
+# operator must re-run Configure Tunnel, and the re-register collides on
+# `name_taken` until someone clears the stale controller row.
 persistence:
   size: 64Mi
   storageClassName: ""
 
-# Secret content. For production, prefer using an external secret operator
+# Secret content. For production, prefer an external secret operator
 # (external-secrets, sealed-secrets, CSI driver) — do not commit real
-# values here. This block exists so `helm install` produces a runnable
-# deployment out of the box for testing.
+# values here.
 secrets:
-  # Base64 not required — Helm's default renders stringData for you.
-  tunnelAuthToken: ""
-  oauthClientId: ""
-  oauthClientSecret: ""
-  oauthTokenUrl: ""
-  # Db mode only. Path INSIDE the container where CONNECTOR_KEY_FILE points.
-  # Bring the actual bytes in via a separate secret + volumeMount if you're
-  # using db mode.
-  connectorKeyFile: /etc/mcp-connector/connector.key
-  postgresUrl: ""
+  # The 32-byte libsodium master key, base64-encoded. The ONLY secret the
+  # connector needs. entrypoint.sh decodes it to CONNECTOR_KEY_FILE at boot.
+  #
+  #   head -c 32 /dev/urandom | base64
+  #
+  # Rotating it does NOT re-seal the store — the fingerprint check in
+  # ConfigStore.open() will refuse to start against a store sealed with the
+  # old key. Rotation means: keep the old key, or discard the PVC and
+  # reconfigure the tunnel.
+  connectorKeyB64: ""
 
 # The chart does NOT create a Service for the inspector port by default.
 # The inspector binds 127.0.0.1 inside the pod; expose it via kubectl

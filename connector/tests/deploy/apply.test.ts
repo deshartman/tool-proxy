@@ -104,8 +104,6 @@ describe("applyFly — preflight", () => {
       { match: isFlyCmd("version"), response: { status: 0 } },
       // apps list — return with the app already existing so we skip creates
       { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
-      // postgres attach — already-attached path (idempotent-swallow)
-      { match: (c) => c.args[0] === "postgres" && c.args[1] === "attach", response: { status: 1, stderr: "already exists" } },
       // secrets list — return with the key already set
       { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64      abc      2026-07-23\n" } },
       // volumes list — return with state volume already present
@@ -140,7 +138,7 @@ describe("applyFly — happy path", () => {
     rmSync(outDir, { recursive: true, force: true });
   });
 
-  it("spawns all 5 fly commands in order when nothing exists", () => {
+  it("spawns all 4 fly commands in order when nothing exists", () => {
     const { spawn, calls } = makeSpawn([
       { match: isFlyCmd("version"), response: { status: 0 } },
       // Both apps list calls return empty — nothing exists
@@ -150,23 +148,23 @@ describe("applyFly — happy path", () => {
       // volumes list — no volumes yet
       { match: isFlyCmd("volumes"), response: { stdout: `[]` } },
       // All mutating commands succeed
-      { match: (c) => c.args.includes("create") || c.args.includes("attach") || c.args.includes("set") || c.args[0] === "deploy", response: { status: 0 } },
+      { match: (c) => c.args.includes("create") || c.args.includes("set") || c.args[0] === "deploy", response: { status: 0 } },
     ]);
 
     expect(applyFly(outDir, spawn)).toBe(0);
 
-    // Order matters: preflight → apps create → postgres create → postgres
-    // attach → secrets set → volumes create → fly deploy
+    // Order matters: preflight → apps create → secrets set → volumes create
+    // → fly deploy. DB-TO-FILE removed the two postgres steps that used to
+    // sit between apps create and secrets set.
     const mutations = calls.filter((c) =>
-      c.args.includes("create") || c.args[1] === "attach" || c.args[1] === "set" || c.args[0] === "deploy"
+      c.args.includes("create") || c.args[1] === "set" || c.args[0] === "deploy"
     );
+    expect(mutations).toHaveLength(4);
     expect(mutations[0].args).toEqual(["apps", "create", "twilio-tool-sdk"]);
-    expect(mutations[1].args.slice(0, 4)).toEqual(["postgres", "create", "--name", "twilio-tool-sdk-db"]);
-    expect(mutations[2].args.slice(0, 3)).toEqual(["postgres", "attach", "twilio-tool-sdk-db"]);
-    expect(mutations[3].args[0]).toBe("secrets");
-    expect(mutations[3].args[1]).toBe("set");
-    expect(mutations[4].args.slice(0, 3)).toEqual(["volumes", "create", "state"]);
-    expect(mutations[5].args).toEqual(["deploy", "-c", "deploy/fly/fly.toml"]);
+    expect(mutations[1].args[0]).toBe("secrets");
+    expect(mutations[1].args[1]).toBe("set");
+    expect(mutations[2].args.slice(0, 3)).toEqual(["volumes", "create", "state"]);
+    expect(mutations[3].args).toEqual(["deploy", "-c", "deploy/fly/fly.toml"]);
   });
 
   it("prints an explicit next-steps block to stdout on success", () => {
@@ -216,10 +214,16 @@ describe("applyFly — happy path", () => {
     vi.restoreAllMocks();
   });
 
-  it("attaches Postgres with --variable-name POSTGRES_URL (Bug B3)", () => {
-    // The connector's env reader looks for POSTGRES_URL specifically —
-    // Fly's default variable name (DATABASE_URL) would silently break boot
-    // even though Postgres is attached. Pin the flag as an active argument.
+  it("never invokes `fly postgres` at all (DB-TO-FILE)", () => {
+    // Was: "attaches Postgres with --variable-name POSTGRES_URL (Bug B3)",
+    // pinning that Fly's default DATABASE_URL name would break boot. The
+    // whole subsystem is gone — the connector's store is a sealed JSON file
+    // on the state volume — so the assertion inverts.
+    //
+    // This is the expensive one to get wrong: `fly postgres create`
+    // provisions a separate BILLABLE app named `<app>-db`, so a reintroduced
+    // step costs money silently and collides on that name for a second
+    // connector in the same org.
     const { spawn, calls } = makeSpawn([
       { match: isFlyCmd("version"), response: { status: 0 } },
       { match: isFlyCmd("apps"), response: { stdout: `[]` } },
@@ -229,10 +233,10 @@ describe("applyFly — happy path", () => {
 
     applyFly(outDir, spawn);
 
-    const attach = calls.find((c) => c.args[0] === "postgres" && c.args[1] === "attach");
-    expect(attach).toBeDefined();
-    expect(attach!.args).toContain("--variable-name");
-    expect(attach!.args[attach!.args.indexOf("--variable-name") + 1]).toBe("POSTGRES_URL");
+    expect(calls.find((c) => c.args[0] === "postgres")).toBeUndefined();
+    expect(calls.find((c) => c.args.some((a) => a.includes("POSTGRES")))).toBeUndefined();
+    // And nothing reaches for the `<app>-db` name either.
+    expect(calls.find((c) => c.args.some((a) => a.endsWith("-db")))).toBeUndefined();
   });
 
   it("mints a 32-byte base64 key when CONNECTOR_KEY_B64 is not set", () => {
@@ -283,42 +287,14 @@ describe("applyFly — idempotency", () => {
 
     // No `apps create` invocation
     expect(calls.find((c) => c.args[0] === "apps" && c.args[1] === "create")).toBeUndefined();
-    // No `postgres create` invocation
-    expect(calls.find((c) => c.args[0] === "postgres" && c.args[1] === "create")).toBeUndefined();
+    // No `postgres` invocation of any kind — see the dedicated test above.
+    expect(calls.find((c) => c.args[0] === "postgres")).toBeUndefined();
     // No `secrets set` invocation
     expect(calls.find((c) => c.args[0] === "secrets" && c.args[1] === "set")).toBeUndefined();
     // No `volumes create` invocation
     expect(calls.find((c) => c.args[0] === "volumes" && c.args[1] === "create")).toBeUndefined();
     // But `fly deploy` STILL runs — that's the point of re-run.
     expect(calls.find((c) => c.args[0] === "deploy")).toBeDefined();
-  });
-
-  it("swallows 'already exists' on postgres attach and continues", () => {
-    // Postgres attach is not idempotent — re-run when already attached
-    // returns non-zero with "already exists" on stderr. The wrapper must
-    // treat that as a soft skip, not a hard failure.
-    const { spawn, calls } = makeSpawn([
-      { match: isFlyCmd("version"), response: { status: 0 } },
-      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
-      { match: (c) => c.args[0] === "postgres" && c.args[1] === "attach", response: { status: 1, stderr: "postgres_attachments already exists" } },
-      { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64  x\n" } },
-      { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
-    ]);
-
-    // Continues past attach failure → runs deploy → exit 0.
-    expect(applyFly(outDir, spawn)).toBe(0);
-    expect(calls.find((c) => c.args[0] === "deploy")).toBeDefined();
-  });
-
-  it("fails hard if postgres attach fails with an unrecognized error", () => {
-    const { spawn } = makeSpawn([
-      { match: isFlyCmd("version"), response: { status: 0 } },
-      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
-      { match: (c) => c.args[0] === "postgres" && c.args[1] === "attach", response: { status: 1, stderr: "Error: connection refused" } },
-    ]);
-    // Any error other than "already exists" is a real failure — don't
-    // silently proceed with a broken Postgres connection.
-    expect(applyFly(outDir, spawn)).toBe(1);
   });
 });
 
@@ -368,10 +344,12 @@ describe("runDeployApply (CLI parsing)", () => {
   });
 
   it("prints the not-implemented notice for future targets", async () => {
-    // fargate/gke/aca/compose don't have a deploy apply yet — the CLI must
+    // fargate/aca/compose don't have a deploy apply yet — the CLI must
     // acknowledge them (they ARE valid deploy init targets) but exit 2 with
-    // a pointer to deploy init + apply-with-native-tool.
-    for (const target of ["fargate", "gke", "aca", "compose", "fly-mock"] as const) {
+    // a pointer to deploy init + apply-with-native-tool. `gke` is absent from
+    // this list because the target no longer exists at all; scaffold.ts answers
+    // it with the helm commands instead.
+    for (const target of ["fargate", "aca", "compose", "fly-mock"] as const) {
       const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       const code = await runDeployApply(["--target", target]);
       expect(code, `${target} should exit 2`).toBe(2);

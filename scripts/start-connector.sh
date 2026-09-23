@@ -5,7 +5,7 @@
 # template to copy, no manual pre-boot step.
 #
 # Overrides (all optional):
-#   POSTGRES_URL              — dev-Postgres DSN (default: docker-compose postgres)
+#   CONNECTOR_STATE_DIR       — sealed config store dir (default: .local/state-<port>)
 #   CONNECTOR_KEY_FILE        — libsodium master key path (default: .local/master.key, auto-minted)
 #   MCP_DROPIN_DIR            — customer drop-ins (default: ./customer-mcps)
 #   MCP_BUNDLED_DIR           — Twilio-shipped MCPs (default: ./bundled-mcps)
@@ -51,13 +51,10 @@ echo $$ > "$PIDFILE"
 
 CONNECTOR_DIR="$ROOT/connector"
 CONNECTOR_BIN="$CONNECTOR_DIR/dist/index.js"
-# .env is OPTIONAL in dev — the script auto-provisions POSTGRES_URL +
-# CONNECTOR_KEY_FILE below. Respected if present so devs can override.
+# .env is OPTIONAL in dev — the script auto-provisions CONNECTOR_KEY_FILE
+# below. Respected if present so devs can override.
 ENV_FILE="$ROOT/.env"
 YAML_FILE="$ROOT/connector.yaml"
-COMPOSE_FILE="$ROOT/deploy/compose/docker-compose.dev.yml"
-DEV_PG_CONTAINER="mcp-shim-postgres"
-DEV_PG_URL="postgres://mcp:mcp-dev-password@localhost:5433/mcp_connector"
 DEV_MASTER_KEY="$ROOT/.local/master.key"
 
 # Rebuild if dist/ is missing OR stale relative to source. Without this, a
@@ -127,47 +124,19 @@ for dir in "$ROOT"/bundled-mcps/*/ "$ROOT"/customer-mcps/*/; do
 done
 
 # ─── Env bootstrap (zero-config dev) ──────────────────────────────────────
-# The connector needs POSTGRES_URL + CONNECTOR_KEY_FILE in its process env.
+# The connector needs CONNECTOR_KEY_FILE in its process env — the only
+# required var since DB-TO-FILE. The sealed config store is a file under
+# CONNECTOR_STATE_DIR, defaulted per-port below.
 # Order:
 #   1. .env at repo root (optional) — sourced if present. Lets devs override
 #      the auto-provisioned defaults or wire in additional vars.
 #   2. Auto-provisioned defaults for anything still unset:
-#      - POSTGRES_URL → docker-compose postgres (auto-started if not up)
 #      - CONNECTOR_KEY_FILE → .local/master.key (auto-minted if missing)
 # No .env template to copy, no manual pre-boot step. First-run on a fresh
 # clone works.
 if [ -f "$ENV_FILE" ]; then
   echo "[start-connector] sourcing $ENV_FILE (optional override)"
   set -a; source "$ENV_FILE"; set +a
-fi
-
-# Auto-provision dev Postgres if POSTGRES_URL isn't already set.
-if [ -z "${POSTGRES_URL:-}" ]; then
-  if ! docker ps --filter "name=$DEV_PG_CONTAINER" --format '{{.Names}}' | grep -q .; then
-    echo "[start-connector] starting dev Postgres ($DEV_PG_CONTAINER)..."
-    docker compose -f "$COMPOSE_FILE" up -d postgres
-    echo -n "[start-connector] waiting for Postgres readiness"
-    for _ in $(seq 1 30); do
-      if docker exec "$DEV_PG_CONTAINER" pg_isready -U mcp -d mcp_connector >/dev/null 2>&1; then
-        echo " — ready"
-        break
-      fi
-      echo -n "."
-      sleep 1
-    done
-  fi
-  export POSTGRES_URL="$DEV_PG_URL"
-  echo "[start-connector] POSTGRES_URL auto-set: $POSTGRES_URL"
-else
-  # Diagnostic only — the caller's DSN always wins. Printed with the password
-  # masked so an unexpected inherited value (e.g. injected by a VS Code
-  # terminal env collection) is visible instead of failing later as 28P01.
-  # MCP-AUDIT #11: the character class must be greedy `.*` to the LAST `@`.
-  # `[^/]*` cannot cross a `/`, so a password containing one made the pattern
-  # fail to match and printed the WHOLE DSN unmasked — measured. `.*` also
-  # covers `:` and `@` in the password, and leaves a passwordless DSN alone.
-  echo "[start-connector] POSTGRES_URL inherited from environment: $(printf '%s' "$POSTGRES_URL" | sed -E 's#://([^:/@]+):.*@#://\1:***@#')"
-  echo "[start-connector]   (unset POSTGRES_URL to use the dev default instead)"
 fi
 
 # Auto-mint the 32-byte libsodium master key on first run.
@@ -208,22 +177,28 @@ fi
 
 # ─── Port-derived instance env (applied here, AFTER .env sourcing) ─────────
 # INSPECTOR_PORT and MCP_BASE_PORT: CLI arg always wins over .env — multi-
-# instance mode needs these locked to the port arg. POSTGRES_SCHEMA is
-# .env-overrideable via ${VAR:-default} so a user can pin an explicit
-# schema for one-off cases. Path B derivation:
-#   port 9090 → schema 'mcp_connector' (historical default, preserves state)
-#   other    → schema 'mcp_connector_<port>' (fresh per-port schema)
+# instance mode needs these locked to the port arg. CONNECTOR_STATE_DIR is
+# .env-overrideable via ${VAR:-default} so a dev can pin an explicit path.
+#
+# One state dir per port, which is the job POSTGRES_SCHEMA used to do: each
+# instance gets its own tunnel identity instead of fighting over one row.
+# Unlike the schema naming there is no historical case to preserve — the
+# per-port form applies to 9090 too, because no dev has a file-backed store
+# from before this change.
+#
+# The default MUST be set here. The connector's own default is the production
+# path /var/lib/mcp-connector, which an unprivileged dev user cannot create —
+# that is a `mkdir EACCES` at boot, not a fallback.
+#
 # MCP_BASE_PORT spacing (100 per port) keeps drop-in child ports from
 # initial collision under auto-probe.
 export INSPECTOR_PORT="$PORT"
 export MCP_BASE_PORT="$((7100 + (PORT - 9090) * 100))"
-if [ "$PORT" = "9090" ]; then
-  export POSTGRES_SCHEMA="${POSTGRES_SCHEMA:-mcp_connector}"
-else
-  export POSTGRES_SCHEMA="${POSTGRES_SCHEMA:-mcp_connector_${PORT}}"
-fi
+export CONNECTOR_STATE_DIR="${CONNECTOR_STATE_DIR:-$ROOT/.local/state-${PORT}}"
+mkdir -p "$CONNECTOR_STATE_DIR"
 
-echo "[start-connector] port=$PORT inspector=http://localhost:$PORT schema=$POSTGRES_SCHEMA"
+echo "[start-connector] CONNECTOR_STATE_DIR=$CONNECTOR_STATE_DIR"
+echo "[start-connector] port=$PORT inspector=http://localhost:$PORT"
 echo "[start-connector] starting connector with CONNECTOR_CONFIG=$YAML_FILE"
 CONNECTOR_CONFIG="$YAML_FILE" node "$CONNECTOR_BIN" start &
 

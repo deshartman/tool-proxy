@@ -14,15 +14,40 @@ import { resolve as resolvePath, join } from "node:path";
 
 const REPO_ROOT = resolvePath(new URL("../../../", import.meta.url).pathname);
 const TF_DIR = resolvePath(REPO_ROOT, "deploy/terraform/aws-fargate");
+const TF_SCRATCH_DIR = resolvePath(TF_DIR, "examples/from-scratch");
 const HELM_DIR = resolvePath(REPO_ROOT, "deploy/helm/mcp-connector");
 
+// Every `required` value the chart declares, in one place so a rename touches
+// one line. A render missing any of these fails with Helm's own error, which
+// is why the earlier version of this file silently failed wherever helm was
+// actually installed: it set three retired values and never set image.tag.
+const REQUIRED_SETS = [
+  "--set", "image.tag=9.9.9-test",
+  // 32 zero bytes, base64. A literal is fine — it is never used to seal
+  // anything here, and minting a real key in a test would be theatre.
+  "--set", `secrets.connectorKeyB64=${Buffer.alloc(32).toString("base64")}`,
+];
+
+// Probe with `<bin> version` FIRST, then `--version`.
+//
+// This was `["--version"]` alone, and helm 4 removed that flag — `helm
+// --version` exits 1 while `helm version` exits 0. So on any machine with helm 4
+// installed and working, every helm-gated test below reported itself SKIPPED
+// rather than failing, which is the worst available outcome: a green suite that
+// proved nothing about the chart. CI installs helm, so CI was skipping them too.
+//
+// Both spellings are tried because `terraform version` and `terraform
+// --version` both work, but a future tool may only accept one.
 function toolAvailable(bin: string): boolean {
-  try {
-    execFileSync(bin, ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+  for (const args of [["version"], ["--version"]]) {
+    try {
+      execFileSync(bin, args, { stdio: "ignore" });
+      return true;
+    } catch {
+      // try the next spelling
+    }
   }
+  return false;
 }
 
 describe("terraform module — filesystem invariants", () => {
@@ -53,20 +78,110 @@ describe("terraform module — filesystem invariants", () => {
   it("provisions Secrets Manager slot without a managed value", () => {
     const main = readFileSync(join(TF_DIR, "main.tf"), "utf8");
     // The value lands via `aws secretsmanager put-secret-value` out-of-band.
-    // If a `secret_string` argument appears, the bearer leaks into tfstate.
-    expect(main).toContain(`aws_secretsmanager_secret" "tunnel_auth_token"`);
+    // If a `secret_string` argument appears, the secret leaks into tfstate —
+    // often an S3 bucket with looser permissions than Secrets Manager itself.
+    //
+    // The secret is now the master key, not a tunnel bearer: the bearer moved
+    // into the inspector's Configure Tunnel modal and is sealed under this key.
+    expect(main).toContain(`aws_secretsmanager_secret" "connector_key"`);
     expect(main).not.toMatch(/^\s*secret_string\s*=/m);
+    // Comments are allowed to name the retired secret to explain its removal;
+    // resources are not.
+    const code = main.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    expect(code).not.toContain("tunnel_auth_token");
   });
 
   const tfTest = toolAvailable("terraform") ? it : it.skip;
-  tfTest("passes `terraform validate`", () => {
-    // `terraform init -backend=false` is required before validate; both
-    // must be quick. Test skips entirely when terraform isn't installed.
-    execFileSync("terraform", ["init", "-backend=false", "-input=false"], {
-      cwd: TF_DIR,
-      stdio: "pipe",
+
+  // Both directories, because they fail independently: the example composes the
+  // core module, so it also catches an input the module renamed. Note what
+  // `validate` does NOT catch — every defect the DB-TO-FILE work fixed in the
+  // core module was valid HCL, which is why
+  // tests/iac/terraform-fargate-boot.test.ts exists alongside this.
+  for (const [label, dir] of [["core module", TF_DIR], ["from-scratch example", TF_SCRATCH_DIR]] as const) {
+    tfTest(`passes \`terraform validate\` — ${label}`, () => {
+      // `terraform init -backend=false` is required before validate; both must
+      // be quick. Skips entirely when terraform isn't installed.
+      execFileSync("terraform", ["init", "-backend=false", "-input=false"], {
+        cwd: dir,
+        stdio: "pipe",
+      });
+      execFileSync("terraform", ["validate"], { cwd: dir, stdio: "pipe" });
     });
-    execFileSync("terraform", ["validate"], { cwd: TF_DIR, stdio: "pipe" });
+  }
+});
+
+// The from-scratch example exists because the core module deliberately owns no
+// networking, so an operator with only an AWS account had no complete path. It
+// must keep supplying every input the module requires — a rename on either side
+// breaks the composition, and `terraform validate` only catches that when
+// terraform is installed (it usually is not, on a dev machine).
+describe("terraform from-scratch example — composes the core module completely", () => {
+  const main = readFileSync(join(TF_SCRATCH_DIR, "main.tf"), "utf8");
+  const moduleVars = readFileSync(join(TF_DIR, "variables.tf"), "utf8");
+
+  const requiredInputs = [...moduleVars.matchAll(/variable "([a-z_]+)" \{([^}]*)\}/gs)]
+    .filter((m) => !/^\s*default\s*=/m.test(m[2]!))
+    .map((m) => m[1]!);
+
+  it("finds the module's required inputs (guards against a broken regex)", () => {
+    expect(requiredInputs).toContain("connector_name");
+    expect(requiredInputs).toContain("vpc_id");
+    expect(requiredInputs.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it.each(requiredInputs)("passes %s to the module", (input) => {
+    const block = main.slice(main.indexOf('module "connector"'));
+    expect(block, `module block does not set ${input}`).toMatch(
+      new RegExp(`^\\s*${input}\\s*=`, "m"),
+    );
+  });
+
+  it("creates the resources an IAM-account-only operator lacks", () => {
+    for (const resource of [
+      "aws_vpc",
+      "aws_subnet",
+      "aws_internet_gateway",
+      "aws_route_table",
+      "aws_ecs_cluster",
+      "aws_ecr_repository",
+    ]) {
+      expect(main, `missing ${resource}`).toContain(`resource "${resource}"`);
+    }
+    // Two roles, not one: secret injection is the EXECUTION role's job and the
+    // EFS mount plus ECS Exec are the TASK role's. Conflating them produces a
+    // task that starts and then fails on a missing env var.
+    expect(main).toContain('resource "aws_iam_role" "execution"');
+    expect(main).toContain('resource "aws_iam_role" "task"');
+  });
+
+  it("grants the four ssmmessages actions ECS Exec needs", () => {
+    // Without these, `aws ecs execute-command` fails with a
+    // TargetNotConnectedException that says nothing about IAM — and ECS Exec is
+    // the ONLY way to reach Configure Tunnel, which is the only way to set
+    // tunnel identity. So omitting them makes first-connect impossible.
+    for (const action of [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]) {
+      expect(main, `task role missing ${action}`).toContain(action);
+    }
+  });
+
+  it("opens no inbound port on the task security group", () => {
+    const sg = main.slice(main.indexOf('resource "aws_security_group" "task"'));
+    const body = sg.slice(0, sg.indexOf("\n}"));
+    expect(body).toMatch(/egress\s*\{/);
+    expect(body, "the outbound-only invariant is an ABSENCE of ingress").not.toMatch(/ingress\s*\{/);
+  });
+
+  it("refuses a floating image tag", () => {
+    // A restart would otherwise become an unplanned upgrade of a process whose
+    // whole job is holding one long-lived socket.
+    const variables = readFileSync(join(TF_SCRATCH_DIR, "variables.tf"), "utf8");
+    expect(variables).toMatch(/condition\s*=\s*var\.image_tag != "latest"/);
   });
 });
 
@@ -117,12 +232,7 @@ describe("helm chart — filesystem invariants", () => {
 
   const helmServiceTest = toolAvailable("helm") ? it : it.skip;
   helmServiceTest("`helm template` renders no Service by default, and one when networkAccess.enabled=true", () => {
-    const baseArgs = [
-      "template", "release-name", HELM_DIR,
-      "--set", "connector.name=render-test",
-      "--set", "connector.controllerUrl=https://ctrl.example.com",
-      "--set", "secrets.tunnelAuthToken=ts_render",
-    ];
+    const baseArgs = ["template", "release-name", HELM_DIR, ...REQUIRED_SETS];
     const withoutFlag = execFileSync("helm", baseArgs, { encoding: "utf8" });
     expect(withoutFlag).not.toMatch(/^kind:\s*Service\b/m);
 
@@ -130,38 +240,60 @@ describe("helm chart — filesystem invariants", () => {
     expect(withFlag).toMatch(/^kind:\s*Service\b/m);
   });
 
-  it("requires connector.name and connector.controllerUrl to be set", () => {
+  it("requires exactly the two values a render cannot invent", () => {
+    // Helm's `required` surfaces a clean error at install time instead of
+    // shipping an empty variable. The set shrank: connector.name,
+    // connector.controllerUrl and secrets.tunnelAuthToken / postgresUrl were
+    // all `required` here and all retired — so `helm install` demanded four
+    // values the connector would ignore, and could not succeed at all.
+    // Identity now arrives through the inspector's Configure Tunnel modal.
     const deployment = readFileSync(join(HELM_DIR, "templates/deployment.yaml"), "utf8");
-    // Helm's `required` template function surfaces a clean error at
-    // `helm install` time instead of shipping an empty CONNECTOR_NAME.
-    expect(deployment).toMatch(/required\s+"connector\.name is required"/);
-    expect(deployment).toMatch(/required\s+"connector\.controllerUrl is required"/);
+    const secret = readFileSync(join(HELM_DIR, "templates/secret.yaml"), "utf8");
+    expect(deployment).toMatch(/required\s+"image\.tag is required/);
+    expect(secret).toMatch(/required\s+"secrets\.connectorKeyB64 is required/);
+    for (const dead of ["connector.name", "connector.controllerUrl", "secrets.tunnelAuthToken", "secrets.postgresUrl"]) {
+      expect(deployment + secret, `${dead} is still required`)
+        .not.toContain(`required "${dead}`);
+    }
+  });
+
+  // The helm-gated tests below skip wherever helm is absent — which is most
+  // dev machines and was how REQUIRED_SETS drifted out of sync with the chart
+  // unnoticed, leaving three renders that could only ever fail. This check
+  // needs no helm, so it runs everywhere and keeps the two in step.
+  it("REQUIRED_SETS supplies every value the chart marks required", () => {
+    const templateDir = join(HELM_DIR, "templates");
+    const declared = new Set<string>();
+    for (const f of readdirSync(templateDir).filter((x) => x.endsWith(".yaml"))) {
+      const text = readFileSync(join(templateDir, f), "utf8");
+      for (const m of text.matchAll(/required\s+"(?:[^"\\]|\\.)*"\s+\.Values\.([A-Za-z0-9_.]+)/g)) {
+        declared.add(m[1]!);
+      }
+    }
+    const supplied = new Set(
+      REQUIRED_SETS.filter((a) => a !== "--set").map((a) => a.slice(0, a.indexOf("="))),
+    );
+    expect(declared.size).toBeGreaterThan(0);
+    expect([...declared].sort()).toEqual([...supplied].sort());
   });
 
   const helmTest = toolAvailable("helm") ? it : it.skip;
   helmTest("passes `helm lint`", () => {
-    // Lint uses the default values which have empty connector.name; supply
-    // the required values via --set so the required{} calls succeed.
-    execFileSync("helm", [
-      "lint",
-      HELM_DIR,
-      "--set", "connector.name=lint-test",
-      "--set", "connector.controllerUrl=https://ctrl.example.com",
-      "--set", "secrets.tunnelAuthToken=ts_lint",
-    ], { stdio: "pipe" });
+    // Lint uses the default values, where both `required` keys are empty;
+    // supply them via --set so the required{} calls succeed.
+    execFileSync("helm", ["lint", HELM_DIR, ...REQUIRED_SETS], { stdio: "pipe" });
   });
 
   helmTest("templates into valid k8s manifests", () => {
-    const output = execFileSync("helm", [
-      "template",
-      "release-name",
-      HELM_DIR,
-      "--set", "connector.name=render-test",
-      "--set", "connector.controllerUrl=https://ctrl.example.com",
-      "--set", "secrets.tunnelAuthToken=ts_render",
-    ], { encoding: "utf8" });
-    // Assert the substituted values landed in the render.
-    expect(output).toContain("render-test");
-    expect(output).toContain("https://ctrl.example.com");
+    const output = execFileSync("helm", ["template", "release-name", HELM_DIR, ...REQUIRED_SETS], {
+      encoding: "utf8",
+    });
+    // Boot viability, not substitution. The prior version asserted the
+    // connector name and controller URL landed in the render; neither is an
+    // env var any more, so that check would pass on a chart that renders a
+    // pod which cannot open its config store.
+    expect(output).toContain("name: CONNECTOR_KEY_FILE");
+    expect(output).toContain("CONNECTOR_KEY_B64:");
+    expect(output).toContain("mcp-connector:9.9.9-test");
   });
 });

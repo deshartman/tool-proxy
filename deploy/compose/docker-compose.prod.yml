@@ -1,30 +1,33 @@
 # Production docker-compose for the mcp-connector — single-VM shape.
 #
-# Runs the connector container against a sibling Postgres (used by db mode
-# for the sealed controllers row). Drop customer MCPs at ./customer-mcps/<name>/
+# One container. The connector's config store is a sealed JSON file on the
+# `state` volume (see architectural-plans/DB-TO-FILE.md) — there is no
+# database service and no DSN. Drop customer MCPs at ./customer-mcps/<name>/
 # and they get picked up automatically by the drop-in scanner.
 #
 # Pre-flight (one time), from the repo root:
 #   1. Mint a 32-byte master key:
 #      head -c 32 /dev/urandom > ./deploy/compose/secrets/connector.key
 #      chmod 400 ./deploy/compose/secrets/connector.key
-#   2. Set a Postgres password:
-#      openssl rand -hex 24 > ./deploy/compose/secrets/pg_password
-#      chmod 400 ./deploy/compose/secrets/pg_password
-#   3. Copy the compose env template:
+#   2. Copy the compose env template:
 #      cp deploy/compose/.env.example deploy/compose/.env
 #      # then edit MCP_VERSION if you don't want :latest
 #
 # Bring up (from the repo root):
 #   docker compose -f deploy/compose/docker-compose.prod.yml up -d
-#   docker compose -f deploy/compose/docker-compose.prod.yml exec connector mcp-connector doctor
+#   docker compose -f deploy/compose/docker-compose.prod.yml \
+#     exec connector node dist/index.js doctor
+#
+# `node dist/index.js`, not `mcp-connector`: the image's WORKDIR is
+# /app/connector and the workspace bin link at /app/node_modules/.bin is not
+# on PATH, so the bare name fails with "not found".
 #
 # Reach the inspector (loopback-only on the container — port-mapping stays
 # on 127.0.0.1 on the host too):
 #   open http://localhost:9090/
 #
 # Bind tunnel identity via the inspector's Configure Tunnel modal on first
-# boot. No .env edits needed once creds are in the DB.
+# boot. No .env edits needed — identity is sealed into the state volume.
 
 services:
   connector:
@@ -36,19 +39,12 @@ services:
       - path: .env
         required: false
     environment:
-      # db mode is the recommended default per CLAUDE.md — creds live in
-      # the sealed controllers row, editable via inspector UI.
-      # C8 (security hardening) — assemble POSTGRES_URL from a mounted
-      # secret file at container start, so the password never lives in
-      # a shell env var, .env file, or compose YAML. The entrypoint
-      # substitutes __PWFILE__ with the file contents before exec.
-      POSTGRES_URL_TEMPLATE: postgres://mcp:__PWFILE__@postgres:5432/mcp_connector
-      POSTGRES_PW_FILE: /run/secrets/pg_password
+      # The only required env var. Everything else — controller URL,
+      # connector name, auth posture — is entered in the inspector's
+      # Configure Tunnel modal and sealed into the state volume.
       CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
       CONNECTOR_CONFIG: /etc/mcp-connector/config.yaml
       INSPECTOR_PORT: "9090"
-    secrets:
-      - pg_password
     ports:
       # 127.0.0.1 only. Inspector loopback trust boundary — the Webhooks
       # panel exposes copy-able bcrypt-protected URLs. Do NOT change to
@@ -56,11 +52,22 @@ services:
       #   ssh -L 9090:127.0.0.1:9090 <vm-host>
       - "127.0.0.1:9090:9090"
     volumes:
-      # state — writable, persists registrationToken across restarts.
+      # state — writable. Holds config.json: the sealed controllers record
+      # (tunnel bearer + registration token) plus machine-API clients. This
+      # volume IS the connector's identity now that there is no database.
+      # Destroy it and the operator must re-run Configure Tunnel; the
+      # controller then mints a fresh connectors row on a name collision.
+      #
+      # A docker NAMED volume is the one mount type seeded from the image
+      # with its ownership intact, so the `mcp` uid can write here without
+      # the entrypoint chown the cloud targets need (CLAUDE.md, "A mounted
+      # volume shadows the image directory").
       - state:/var/lib/mcp-connector
       # config — read-only. Ships alongside the compose file.
       - ./connector.yaml:/etc/mcp-connector/config.yaml:ro
-      # master key — read-only, permissions 0400 on the host.
+      # master key — read-only, permissions 0400 on the host. Seals the
+      # credentials in config.json above; a volume snapshot without this
+      # file yields nothing.
       - ./secrets/connector.key:/etc/mcp-connector/connector.key:ro
       # customer drop-in MCPs — read-only. Auto-discovered at boot.
       # Path is relative to this compose file (deploy/compose/) — up two to
@@ -68,33 +75,6 @@ services:
       # directory is absent.
       - ../../customer-mcps:/var/lib/mcp-connector/customer-mcps:ro
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: mcp_connector
-      POSTGRES_USER: mcp
-      # Reads the password from the compose secret. Postgres 16-alpine's
-      # entrypoint supports POSTGRES_PASSWORD_FILE natively.
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    secrets:
-      - pg_password
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mcp -d mcp_connector"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-
-secrets:
-  pg_password:
-    file: ./secrets/pg_password
 
 volumes:
   state:
-  pg_data:

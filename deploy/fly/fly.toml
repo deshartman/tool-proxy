@@ -8,7 +8,10 @@
 #     requires a loopback caller (403 "forbidden: loopback only"). See
 #     deploy/fly/README.md "Reach the inspector dashboard".
 #   - `fly ips list -a twilio-tool-sdk` MUST be empty.
-#   - Single Machine per CONNECTOR_NAME — do not `fly scale count > 1`.
+#   - Single Machine per connector identity — do not `fly scale count > 1`.
+#     (Identity is the sealed `state/config.json` on the volume below, not an
+#     env var; a second Machine sharing it would collide on the controller's
+#     duplicate-name guard.)
 #   - Do not set `auto_stop_machines` — would kill the outbound WSS.
 
 app = "twilio-tool-sdk"
@@ -52,7 +55,10 @@ primary_region = "iad"
   # MCPs" rescan. Leaving it unset uses the default
   # (/var/lib/mcp-connector/customer-mcps/), which is inside the [[mounts]]
   # volume below — where customer-authored MCPs actually belong.
-  # POSTGRES_URL, CONNECTOR_KEY_B64 are set by `mcp-connector deploy apply --target fly`.
+  # CONNECTOR_KEY_B64 is set by `mcp-connector deploy apply --target fly`. It is
+  # the only secret: the entrypoint decodes it into CONNECTOR_KEY_FILE above,
+  # which then unseals state/config.json on the volume. There is no POSTGRES_URL
+  # any more — the config store is that file.
 
 [[mounts]]
   source = "state"
