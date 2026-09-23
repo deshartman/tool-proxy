@@ -379,7 +379,32 @@ describe("terraform aws-ec2 — no IAM, no inbound surface", () => {
     // ghcr issues no anonymous pull token — so a bare local tag leaves compose
     // failing with an auth error that reads as a network problem.
     expect(code).toMatch(/-t ghcr\.io\/twilio\/mcp-connector:local/);
-    expect(code).toMatch(/MCP_VERSION=local docker compose up -d/);
+    // `-f` is REQUIRED: deploy/compose ships docker-compose.prod.yml and
+    // .dev.yml but no docker-compose.yml, so a bare `docker compose up` fails
+    // with "no configuration file provided". Measured on a live instance.
+    expect(code).toMatch(/MCP_VERSION=local docker compose -f docker-compose\.prod\.yml up -d/);
+  });
+
+  it("gives the master key a mode the image's uid can read", () => {
+    // The single hardest-won line in this module. The compose file mounts the
+    // key READ-ONLY, so the entrypoint cannot chown it, and the image's `mcp` is
+    // uid 100. A `chmod 400` file owned by anyone else crash-loops the connector
+    // on `EACCES: permission denied, open '/etc/mcp-connector/connector.key'`.
+    // Docker Desktop on macOS hides this by faking file ownership in its VM;
+    // a real Linux host does not.
+    expect(code).toMatch(/chown 100:101 secrets\/connector\.key/);
+  });
+
+  it("installs the inspector relay before any early exit", () => {
+    // The relay bridges host loopback into the container's netns, which is the
+    // last hop to the dashboard. It is needed however the code arrives, so it
+    // must precede the bootstrap_code early-exit — measured: with the exit
+    // first, a bootstrap_code=false instance came up with no relay.
+    const relayAt = code.indexOf("mcp-inspector-relay");
+    const exitAt = code.indexOf("bootstrap_code ?");
+    expect(relayAt).toBeGreaterThan(-1);
+    expect(exitAt).toBeGreaterThan(-1);
+    expect(relayAt, "relay must install before the early exit").toBeLessThan(exitAt);
   });
 
   it("creates customer-mcps before compose can mount it", () => {
@@ -387,6 +412,10 @@ describe("terraform aws-ec2 — no IAM, no inbound surface", () => {
     // not contain. Docker would create it root-owned and the scanner could not
     // read it.
     expect(code).toMatch(/mkdir -p \/opt\/mcp-shim\/customer-mcps/);
-    expect(code).toMatch(/chown 1000:1000 \/opt\/mcp-shim\/customer-mcps/);
+    // uid 100, NOT 1000. The image's `mcp` user comes from Alpine's
+    // `adduser -S`, which assigns a system uid. Measured on a live instance:
+    // chowning to 1000 left the connector unable to read its own master key and
+    // crash-looping on EACCES.
+    expect(code).toMatch(/chown 100:101 \/opt\/mcp-shim\/customer-mcps/);
   });
 });

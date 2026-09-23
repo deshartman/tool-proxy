@@ -28,14 +28,28 @@ EC2 Instance Connect Endpoint needs none, and gives two properties that matter:
 - **The security group admits only the endpoint, on 22, inside the VPC.** Nothing
   is open to the internet. The connector's defining property is that it opens no
   inbound port; a VM deploy must not quietly break that.
-- **`open-tunnel` forwards arbitrary TCP** via `--remote-port`, so it carries
-  9090 as well as 22 — and the forward terminates **on the instance**, so the
-  connector sees a genuine `127.0.0.1` caller.
+- **The tunnel carries SSH**, and `ssh -L` over it reaches the host's loopback.
 
-That last point is load-bearing and was measured rather than assumed. A plain
-port forward to the *host's* port answers
-`403 {"error":"forbidden: loopback only"}`, because the dashboard's gate judges
-the caller's source address. A forward originating inside the box returns 200.
+**EICE tunnels ONLY ports 22 and 3389.** An earlier version of this README
+claimed `--remote-port` forwards arbitrary TCP. It does not: the CLI accepts the
+flag and AWS refuses it at the websocket upgrade with
+`InvalidParameter: The specified RemotePort is not valid`. Measured.
+
+So the dashboard hop has **three** stages, and all three are needed:
+
+1. `open-tunnel --remote-port 22 --local-port 2222` — EICE to SSH.
+2. `ssh -L 9090:127.0.0.1:9090 -p 2222` through it — reaches the HOST's loopback.
+3. A relay on the host into the **container's** network namespace. The connector
+   binds `127.0.0.1` inside the container and the compose file publishes no port,
+   so host loopback is still one hop short: measured on a live instance,
+   `host->9090` is refused while `container->9090` returns 200.
+
+**Stage 3 is installed for you** by user-data, as `mcp-inspector-relay.service`
+— an `nsenter` + `socat` bridge that resolves the container pid at call time so
+it survives a container restart. Same job as
+`scripts/fly-inspector.sh`, same caveat: while it runs, anything that reaches
+the host's loopback reaches the dashboard. Here that means only someone already
+through EICE.
 
 ## Deploy
 
@@ -98,10 +112,21 @@ quirk, not a deployment fault.
 
 ## The dashboard
 
+Two shells, because of the three-stage hop above:
+
 ```bash
-terraform output -raw open_dashboard    # leave this running
-# then open http://localhost:9090/
+# Shell 1 - EICE tunnel to SSH
+terraform output -raw open_dashboard_step1
+
+# Authorise a throwaway key (valid 60s; nothing is stored on the instance)
+ssh-keygen -t ed25519 -N "" -f /tmp/eice_key
+terraform output -raw send_key
+
+# Shell 2 - forward 9090 through that tunnel
+ssh -i /tmp/eice_key -p 2222 -N -L 9090:127.0.0.1:9090 ec2-user@127.0.0.1
 ```
+
+Then open `http://localhost:9090/`.
 
 The explicit `http://` matters: Chrome's HSTS on `localhost` can force
 `https://`, which the inspector does not serve, and the operator sees
