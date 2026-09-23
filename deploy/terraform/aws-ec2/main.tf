@@ -206,7 +206,51 @@ locals {
     mkdir -p /opt/mcp-shim
     chown 1000:1000 /opt/mcp-shim
 
-    ${var.bootstrap_code ? "" : "echo '[boot] bootstrap_code=false: Docker ready, awaiting an uploaded tree at /opt/mcp-shim'; exit 0"}
+    # ── The dashboard hop ────────────────────────────────────────────────
+    # The connector binds 127.0.0.1 inside the container and the compose file
+    # publishes no port, so nothing on the host can reach the inspector — and
+    # `ssh -L` lands on the HOST. This relay bridges that last hop by entering
+    # the container's network namespace with nsenter, so the connector still
+    # sees a genuine 127.0.0.1 caller and its loopback gate is satisfied
+    # honestly rather than widened.
+    #
+    # Same job as scripts/fly-inspector.sh, and the same caveat: while it runs,
+    # anything that can reach the host's loopback can reach the dashboard. On
+    # this instance that means only someone already through EICE, which is why
+    # it is acceptable here and was not on Fly's shared mesh.
+    dnf -y install socat
+    cat > /usr/local/bin/mcp-relay-inner <<'INNER'
+    #!/bin/sh
+    # Resolved at call time, not install time: the pid changes on every
+    # container restart, and a baked-in pid fails silently after one.
+    CID=$(docker inspect -f '{{.State.Pid}}' compose-connector-1)
+    exec nsenter -t "$CID" -n socat STDIO TCP:127.0.0.1:9090
+    INNER
+    sed -i 's/^    //' /usr/local/bin/mcp-relay-inner
+    chmod 755 /usr/local/bin/mcp-relay-inner
+
+    cat > /etc/systemd/system/mcp-inspector-relay.service <<'UNIT'
+    [Unit]
+    Description=Relay host loopback 9090 into the connector container netns
+    After=docker.service
+    Requires=docker.service
+
+    [Service]
+    ExecStart=/usr/bin/socat TCP-LISTEN:9090,bind=127.0.0.1,reuseaddr,fork EXEC:/usr/local/bin/mcp-relay-inner
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
+    UNIT
+    sed -i 's/^    //' /etc/systemd/system/mcp-inspector-relay.service
+    systemctl daemon-reload
+    systemctl enable --now mcp-inspector-relay
+
+    # The early exit sits AFTER the relay on purpose. The relay is needed however
+    # the code arrives, and it resolves the container pid at call time, so
+    # installing it before the container exists is fine — socat retries.
+    ${var.bootstrap_code ? "" : "echo '[boot] bootstrap_code=false: Docker + relay ready, awaiting an uploaded tree at /opt/mcp-shim'; exit 0"}
 
     git clone "${var.repo_url}" /opt/mcp-shim-src
     mv /opt/mcp-shim-src/* /opt/mcp-shim-src/.git /opt/mcp-shim/ 2>/dev/null || true
@@ -258,47 +302,6 @@ locals {
     # .dev.yml but no docker-compose.yml, so a bare `docker compose up`
     # fails with "no configuration file provided: not found".
     MCP_VERSION=local docker compose -f docker-compose.prod.yml up -d
-
-    # ── The dashboard hop ────────────────────────────────────────────────
-    # The connector binds 127.0.0.1 inside the container and the compose file
-    # publishes no port, so nothing on the host can reach the inspector — and
-    # `ssh -L` lands on the HOST. This relay bridges that last hop by entering
-    # the container's network namespace with nsenter, so the connector still
-    # sees a genuine 127.0.0.1 caller and its loopback gate is satisfied
-    # honestly rather than widened.
-    #
-    # Same job as scripts/fly-inspector.sh, and the same caveat: while it runs,
-    # anything that can reach the host's loopback can reach the dashboard. On
-    # this instance that means only someone already through EICE, which is why
-    # it is acceptable here and was not on Fly's shared mesh.
-    dnf -y install socat
-    cat > /usr/local/bin/mcp-relay-inner <<'INNER'
-    #!/bin/sh
-    # Resolved at call time, not install time: the pid changes on every
-    # container restart, and a baked-in pid fails silently after one.
-    CID=$(docker inspect -f '{{.State.Pid}}' compose-connector-1)
-    exec nsenter -t "$CID" -n socat STDIO TCP:127.0.0.1:9090
-    INNER
-    sed -i 's/^    //' /usr/local/bin/mcp-relay-inner
-    chmod 755 /usr/local/bin/mcp-relay-inner
-
-    cat > /etc/systemd/system/mcp-inspector-relay.service <<'UNIT'
-    [Unit]
-    Description=Relay host loopback 9090 into the connector container netns
-    After=docker.service
-    Requires=docker.service
-
-    [Service]
-    ExecStart=/usr/bin/socat TCP-LISTEN:9090,bind=127.0.0.1,reuseaddr,fork EXEC:/usr/local/bin/mcp-relay-inner
-    Restart=always
-    RestartSec=5
-
-    [Install]
-    WantedBy=multi-user.target
-    UNIT
-    sed -i 's/^    //' /etc/systemd/system/mcp-inspector-relay.service
-    systemctl daemon-reload
-    systemctl enable --now mcp-inspector-relay
 
     echo "[boot] done at $(date -Is). Container:"
     docker compose -f docker-compose.prod.yml ps
