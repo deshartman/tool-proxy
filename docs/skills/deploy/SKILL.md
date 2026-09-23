@@ -149,7 +149,7 @@ the operator to edit `TUNNEL_AUTH_TOKEN` (retired) and omitted files the stack r
 node connector/dist/index.js deploy init --target compose \
   --name <connector-name> \
   --out ./deploy/compose
-cd deploy/compose
+cd deploy/compose      # the repo's own copy — no deploy init needed
 
 mkdir -p secrets                                   # the redirect below fails without this
 
@@ -160,8 +160,19 @@ printf 'mcp_servers: []\n' > connector.yaml         # bind-mount SOURCE must exi
                                                     # Docker silently creates a DIRECTORY otherwise,
                                                     # and config load then fails
 
-docker compose up -d
+docker compose -f docker-compose.prod.yml up -d     # -f IS REQUIRED: that directory has
+                                                    # docker-compose.prod.yml and .dev.yml but
+                                                    # no docker-compose.yml, so a bare
+                                                    # `docker compose up` fails with
+                                                    # "no configuration file provided"
 ```
+
+Every later `docker compose` command in that directory needs the same `-f`. If
+you would rather not repeat it, `export COMPOSE_FILE=docker-compose.prod.yml`
+once — or use `deploy init --target compose --out <a-different-dir>`, which
+writes a plain `docker-compose.yml`. **Don't scaffold into `deploy/compose`
+itself**: two compose files whose differences are invisible at the command line
+is how an operator ends up debugging the wrong stack.
 
 There is no `pg_password` and no `.env` step any more. The whole `POSTGRES_URL_TEMPLATE` +
 `POSTGRES_PW_FILE` + `__PWFILE__` mechanism is gone, and with it a foot-gun worth remembering as a

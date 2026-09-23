@@ -26,15 +26,27 @@
 #   * The security group allows 22 ONLY from the endpoint, inside the VPC.
 #     Nothing is open to the internet. The connector's defining property is that
 #     it opens no inbound port, and a VM deploy must not quietly break that.
-#   * `aws ec2-instance-connect open-tunnel` forwards ARBITRARY TCP via
-#     --remote-port, so it also carries 9090. The forward terminates ON the
-#     instance, so the connector sees a genuine 127.0.0.1 caller and the
-#     dashboard's loopback gate is satisfied honestly rather than bypassed.
+#   * The tunnel carries SSH, and `ssh -L` over it reaches the dashboard.
 #
-# That second point is load-bearing and was measured, not assumed: a plain port
-# mapping into a container answers `403 forbidden: loopback only` because the
-# gate judges the caller's source address. A forward that ORIGINATES inside the
-# box returns 200. Same distinction applies here.
+# CORRECTED AFTER MEASURING. An earlier version of this comment claimed
+# `open-tunnel --remote-port` forwards arbitrary TCP, so it could carry 9090
+# directly. It cannot: the CLI accepts the flag and AWS rejects it at the
+# websocket upgrade with
+#   InvalidParameter: The specified RemotePort is not valid. Specify either 22
+#   or 3389 as the RemotePort
+# So the dashboard hop is a two-stage thing, and BOTH stages are needed:
+#
+#   1. `open-tunnel --remote-port 22 --local-port 2222`, then
+#      `ssh -L 9090:127.0.0.1:9090 -p 2222 ec2-user@127.0.0.1` through it. That
+#      gets you to the HOST's loopback.
+#   2. A relay on the host into the container's network namespace. The connector
+#      binds 127.0.0.1 INSIDE the container, and the compose file publishes no
+#      port (deliberately — a published port cannot reach it and a wide bind
+#      answers 403), so host loopback is still one hop short. Measured on this
+#      instance: host->9090 refused, container->9090 returns 200.
+#
+# user-data installs that relay as a systemd unit, so the operator only does
+# stage 1. See local.relay_unit below.
 
 data "aws_vpc" "default" {
   default = true
@@ -191,7 +203,14 @@ locals {
     chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
     docker compose version
 
-    git clone "${var.repo_url}" /opt/mcp-shim
+    mkdir -p /opt/mcp-shim
+    chown 1000:1000 /opt/mcp-shim
+
+    ${var.bootstrap_code ? "" : "echo '[boot] bootstrap_code=false: Docker ready, awaiting an uploaded tree at /opt/mcp-shim'; exit 0"}
+
+    git clone "${var.repo_url}" /opt/mcp-shim-src
+    mv /opt/mcp-shim-src/* /opt/mcp-shim-src/.git /opt/mcp-shim/ 2>/dev/null || true
+    rmdir /opt/mcp-shim-src 2>/dev/null || true
     cd /opt/mcp-shim
     git checkout "${var.repo_ref}"
     echo "[boot] checked out $(git rev-parse HEAD)"
@@ -204,6 +223,12 @@ locals {
     # network and never appears in Terraform state, a log, or a transcript.
     if [ ! -f secrets/connector.key ]; then
       head -c 32 /dev/urandom > secrets/connector.key
+      # uid 100 is the image's `mcp` user (Alpine `adduser -S`), NOT 1000. The
+      # compose file mounts this read-only, so the entrypoint cannot chown it —
+      # a mode-0400 file owned by anyone else crash-loops the connector on
+      # EACCES: permission denied, open '/etc/mcp-connector/connector.key'.
+      # Measured on a real EC2 host; Docker Desktop on macOS hides it.
+      chown 100:101 secrets/connector.key
       chmod 400 secrets/connector.key
     fi
     # The bind-mount SOURCE must exist as a FILE first — Docker silently creates
@@ -215,7 +240,7 @@ locals {
     # tracked). Docker would create it as a ROOT-OWNED directory, and the
     # scanner then cannot read it. Create it first, owned by the image's uid.
     mkdir -p /opt/mcp-shim/customer-mcps
-    chown 1000:1000 /opt/mcp-shim/customer-mcps
+    chown 100:101 /opt/mcp-shim/customer-mcps
 
     # Build locally rather than pulling: there is no published connector image,
     # and pulling from ECR would need AWS credentials on a box that deliberately
@@ -229,9 +254,54 @@ locals {
     # reference; Docker does not reach out for an image it already has.
     docker build -f /opt/mcp-shim/connector/Dockerfile \
       -t ghcr.io/twilio/mcp-connector:local /opt/mcp-shim
-    MCP_VERSION=local docker compose up -d
+    # -f IS REQUIRED: deploy/compose ships docker-compose.prod.yml and
+    # .dev.yml but no docker-compose.yml, so a bare `docker compose up`
+    # fails with "no configuration file provided: not found".
+    MCP_VERSION=local docker compose -f docker-compose.prod.yml up -d
+
+    # ── The dashboard hop ────────────────────────────────────────────────
+    # The connector binds 127.0.0.1 inside the container and the compose file
+    # publishes no port, so nothing on the host can reach the inspector — and
+    # `ssh -L` lands on the HOST. This relay bridges that last hop by entering
+    # the container's network namespace with nsenter, so the connector still
+    # sees a genuine 127.0.0.1 caller and its loopback gate is satisfied
+    # honestly rather than widened.
+    #
+    # Same job as scripts/fly-inspector.sh, and the same caveat: while it runs,
+    # anything that can reach the host's loopback can reach the dashboard. On
+    # this instance that means only someone already through EICE, which is why
+    # it is acceptable here and was not on Fly's shared mesh.
+    dnf -y install socat
+    cat > /usr/local/bin/mcp-relay-inner <<'INNER'
+    #!/bin/sh
+    # Resolved at call time, not install time: the pid changes on every
+    # container restart, and a baked-in pid fails silently after one.
+    CID=$(docker inspect -f '{{.State.Pid}}' compose-connector-1)
+    exec nsenter -t "$CID" -n socat STDIO TCP:127.0.0.1:9090
+    INNER
+    sed -i 's/^    //' /usr/local/bin/mcp-relay-inner
+    chmod 755 /usr/local/bin/mcp-relay-inner
+
+    cat > /etc/systemd/system/mcp-inspector-relay.service <<'UNIT'
+    [Unit]
+    Description=Relay host loopback 9090 into the connector container netns
+    After=docker.service
+    Requires=docker.service
+
+    [Service]
+    ExecStart=/usr/bin/socat TCP-LISTEN:9090,bind=127.0.0.1,reuseaddr,fork EXEC:/usr/local/bin/mcp-relay-inner
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
+    UNIT
+    sed -i 's/^    //' /etc/systemd/system/mcp-inspector-relay.service
+    systemctl daemon-reload
+    systemctl enable --now mcp-inspector-relay
 
     echo "[boot] done at $(date -Is). Container:"
-    docker compose ps
+    docker compose -f docker-compose.prod.yml ps
+    echo "[boot] relay: $(systemctl is-active mcp-inspector-relay)"
   BASH
 }

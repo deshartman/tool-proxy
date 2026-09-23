@@ -21,7 +21,12 @@ connector needs exactly one secret, the master key, mounted as a file at
 
 ```bash
 mkdir -p secrets
-head -c 32 /dev/urandom > secrets/connector.key && chmod 400 secrets/connector.key
+head -c 32 /dev/urandom > secrets/connector.key
+# Readable by uid 100 — the image's `mcp` user. This mount is read-only, so the
+# entrypoint cannot chown it for you, and `chmod 400` owned by your uid gives
+# EACCES and a crash-loop. Either of these works:
+sudo chown 100:101 secrets/connector.key && sudo chmod 400 secrets/connector.key
+# chmod 444 secrets/connector.key   # simpler; the file is only as safe as the host
 printf 'mcp_servers: []\n' > connector.yaml   # bind-mount SOURCE must exist as a
                                               # FILE first, or Docker creates a
                                               # DIRECTORY and config load fails

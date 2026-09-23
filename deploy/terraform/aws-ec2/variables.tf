@@ -42,3 +42,9 @@ variable "subnet_id" {
   type        = string
   default     = ""
 }
+
+variable "bootstrap_code" {
+  description = "true (default): the instance clones repo_url at repo_ref and builds. false: user-data installs Docker and the compose plugin, creates /opt/mcp-shim, and stops — you then upload a working tree over the EIC tunnel and build there. Use false to test an unpushed branch, or where the box cannot reach a git remote. Note that `false` trades reproducibility away: nobody can recreate the instance from a commit."
+  type        = bool
+  default     = true
+}

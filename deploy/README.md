@@ -18,16 +18,25 @@ mcp-connector deploy apply --target fly
 For docker-compose (single VM):
 
 ```bash
-mcp-connector deploy init --target compose \
-  --name prod-us-east-1 \
-  --out ./deploy/compose
+# Use the file that ships in the repo — no scaffold step needed.
 cd deploy/compose
 mkdir -p secrets
 head -c 32 /dev/urandom > secrets/connector.key && chmod 400 secrets/connector.key
 printf 'mcp_servers: []\n' > connector.yaml
-docker compose up -d
-docker compose exec connector node dist/index.js doctor
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml exec connector node dist/index.js doctor
 ```
+
+**`-f docker-compose.prod.yml` is required, not optional.** That directory ships
+`docker-compose.prod.yml` and `docker-compose.dev.yml` (the latter is the crm
+demo's mock-backend Postgres, unrelated to the connector) and **no**
+`docker-compose.yml`, so a bare `docker compose up -d` there fails with
+`no configuration file provided: not found`. Measured on a fresh clone.
+
+`mcp-connector deploy init --target compose --out <dir>` is the alternative: it
+writes a `docker-compose.yml`, so bare `docker compose` commands work in **that**
+directory. Don't point it at `deploy/compose` — you would end up with two compose
+files whose differences are invisible at the command line.
 
 `node dist/index.js doctor`, **not** `mcp-connector doctor`: the image's
 WORKDIR is `/app/connector` and the workspace bin link at

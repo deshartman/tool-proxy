@@ -6,9 +6,22 @@
 # and they get picked up automatically by the drop-in scanner.
 #
 # Pre-flight (one time), from the repo root:
-#   1. Mint a 32-byte master key:
-#      head -c 32 /dev/urandom > ./deploy/compose/secrets/connector.key
-#      chmod 400 ./deploy/compose/secrets/connector.key
+#   1. Mint a 32-byte master key. The mode matters: the container runs as the
+#      image's `mcp` user, which is **uid 100** (Alpine `adduser -S`), not your
+#      uid. A mode-0400 file owned by you is unreadable by it, and because this
+#      mount is read-only the entrypoint's chown cannot fix it — the connector
+#      then crash-loops on
+#      `EACCES: permission denied, open '/etc/mcp-connector/connector.key'`.
+#      Measured on a fresh Linux host; Docker Desktop on macOS hides it by
+#      faking file ownership inside its VM.
+#
+#      Either chown it to 100 (needs root, and is the tighter option):
+#        head -c 32 /dev/urandom > ./deploy/compose/secrets/connector.key
+#        sudo chown 100:101 ./deploy/compose/secrets/connector.key
+#        sudo chmod 400 ./deploy/compose/secrets/connector.key
+#      or make it world-readable, which is acceptable ONLY because the file is
+#      already only as protected as the host it sits on:
+#        chmod 444 ./deploy/compose/secrets/connector.key
 #   2. Copy the compose env template:
 #      cp deploy/compose/.env.example deploy/compose/.env
 #      # then edit MCP_VERSION if you don't want :latest
@@ -80,9 +93,13 @@ services:
       - state:/var/lib/mcp-connector
       # config — read-only. Ships alongside the compose file.
       - ./connector.yaml:/etc/mcp-connector/config.yaml:ro
-      # master key — read-only, permissions 0400 on the host. Seals the
-      # credentials in config.json above; a volume snapshot without this
-      # file yields nothing.
+      # master key — read-only. Seals the credentials in config.json above, so
+      # a volume snapshot without this file yields nothing.
+      #
+      # It must be READABLE BY UID 100 (the image's `mcp` user). Read-only means
+      # the entrypoint cannot chown it, so the host-side mode is the whole
+      # story: `chmod 400` owned by your own uid crash-loops the connector on
+      # EACCES. See the key-minting note in the header.
       - ./secrets/connector.key:/etc/mcp-connector/connector.key:ro
       # customer drop-in MCPs — read-only. Auto-discovered at boot.
       # Path is relative to this compose file (deploy/compose/) — up two to
