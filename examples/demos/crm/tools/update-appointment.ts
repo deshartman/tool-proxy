@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
+import { MOCK_URL, REQ_TIMEOUT_MS, exampleSlotISO } from "../lib/backend.js";
 
 // Moves an existing appointment to a new start time. The mock service runs
 // the same validation `check_availability` does (working hours, not in the
@@ -58,7 +58,7 @@ export const updateAppointment: Tool = {
             .describe("Identifier returned by get_appointment (e.g. apt_xxxxxxxxxx)."),
           newStart: z
             .string()
-            .describe("New slot start time, ISO 8601 UTC (e.g. 2026-06-22T14:00:00Z)."),
+            .describe(`New slot start time, ISO 8601 UTC (e.g. ${exampleSlotISO(1)}).`),
         },
         outputSchema: OutputSchema,
       },
