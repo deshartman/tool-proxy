@@ -1,6 +1,6 @@
 // CONNECTOR-NETWORK-EXPOSURE step 9 — POST /v1/outbound/calls. The one
 // machine-API route with a real dependency on ControllerApiCoordinator (see
-// architectural-plans/CONNECTOR-NETWORK-EXPOSURE.md "New route"). Gated by
+// the network-access design; see docs/NETWORK-ACCESS.md). Gated by
 // the same JWT bearer the machine API mints via /oauth/token — no loopback
 // requirement, no MCP identity, no isAuthorTwilio check. The controller
 // derives its own trust from the authenticated WS session; this route's own

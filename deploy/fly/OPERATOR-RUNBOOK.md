@@ -231,36 +231,62 @@ the inspector's Configure Tunnel modal — same flow as
 
 ## Rotation
 
-### Master key rotation (rare — only if the master key is compromised)
+### Master key rotation (rare — only if the key is leaked)
+
+Two routes. **Re-seal preserves the connector's identity; destroying the volume
+does not.** An earlier version of this runbook only described the destructive
+one and asserted there was no re-seal path — wrong: the fingerprint check stops
+you *swapping* the key under an existing store, but re-encrypting the values
+under a new key is exactly what the import procedure does.
+
+What the key protects, and therefore all that has to move: the sealed values in
+`state/config.json` — tunnel bearer, OAuth client secret (if that posture),
+registration token, machine-API client secrets. It also derives the
+`/oauth/token` JWT signing key, so rotation invalidates issued machine-API
+tokens. Check what you actually have first:
+
+Read `state/config.json` and look at three things: how many `apiClients` there
+are, whether `trustedIssuer` is set, and which `*Ct` fields are non-null. With no
+API clients and no trusted issuer, rotation costs you exactly two values — the
+tunnel bearer and the registration token.
+
+**Route A — re-seal (preferred).** One session on the Machine, since the old key
+must still be readable when you decrypt:
+
+1. Decrypt the sealed values with the **current** key, in a single script. Never
+   print a secret and never let one reach a terminal or a chat.
+2. `fly secrets set CONNECTOR_KEY_B64="$(head -c 32 /dev/urandom | base64)"`
+3. Delete `state/config.json`, let the connector recreate it under the new key,
+   then write the values back through `ConfigStore`'s `upsertController` +
+   `updateRegistrationToken`.
+4. **`chown 100:101 state/config.json`.** `fly ssh console` runs as ROOT and the
+   connector runs as `mcp` (uid 100). Skip this and it crash-loops on `EACCES` —
+   and because it *exits* rather than retrying, the Machine keeps stopping, which
+   makes getting a shell back in to fix it awkward.
+5. `fly machine restart <id>`. Confirm `/readyz` returns `{"ok":true}` and the
+   log says `register-ack ok — bound to existing record`.
+
+**Route B — destroy and reconfigure.** Correct when the old key is already lost,
+so there is nothing to decrypt with:
 
 ```bash
-# 1. Destroy the state volume. There is NO re-seal path: ConfigStore.open()
-#    compares a SHA-256 fingerprint of the key against the one recorded in
-#    config.json and refuses to start on a mismatch, so the old store is
-#    unusable and must go.
-MACHINE=$(fly machines list -a mcp-connector-acme-prod -j | jq -r '.[0].id')
-fly machine stop "$MACHINE" --app mcp-connector-acme-prod
-VOL=$(fly volumes list -a mcp-connector-acme-prod -j | jq -r '.[] | select(.name=="state") | .id')
+MACHINE=$(fly machines list -a <app> -j | jq -r '.[0].id')
+fly machine stop "$MACHINE" --app <app>
+VOL=$(fly volumes list -a <app> -j | jq -r '.[] | select(.name=="state") | .id')
 fly volumes destroy "$VOL" --yes
-fly volumes create state --region iad --size 1 --app mcp-connector-acme-prod
-
-# 2. Mint and set the new key:
-NEW_KEY_B64=$(head -c 32 /dev/urandom | base64)
-fly secrets set CONNECTOR_KEY_B64="$NEW_KEY_B64" --app mcp-connector-acme-prod
-
-# 3. `fly secrets set` auto-deploys — the entrypoint writes the new key file and
-#    the connector writes a fresh empty store. Reconfigure the tunnel via the
-#    inspector, and expect a `name_taken` rejection until the stale controller
-#    row is cleared (the registration token went with the volume).
+fly volumes create state --region iad --size 1 --app <app>
+fly secrets set CONNECTOR_KEY_B64="$(head -c 32 /dev/urandom | base64)" --app <app>
 ```
 
-The connector fails-fast at boot if the master key changes without the store
-going with it — the `keyFingerprint` field in `config.json` guarantees this. It
-replaced the `encryption_meta` table and does the same job.
+`fly secrets set` auto-deploys; the entrypoint writes the new key file and the
+connector writes a fresh empty store. Then reconfigure the tunnel in the
+inspector — and expect a **sticky** `name_taken` rejection until the stale
+connector row is cleared on the controller, because the registration token went
+with the volume.
 
-**This is why the key belongs in a password manager.** Rotating it is not a
-key-swap, it is a full re-onboarding of the connector, including a click on the
-controller. Losing it is the same operation.
+**Either way, keep the key in a password manager.** Route A needs it; without it
+you are on Route B, which costs a click on the controller and the connector's
+identity.
 
 ### Tunnel bearer / OAuth secret rotation
 

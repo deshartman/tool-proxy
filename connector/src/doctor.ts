@@ -270,7 +270,7 @@ async function checkKeyFile(env: NodeJS.ProcessEnv): Promise<CheckResult> {
 }
 
 // The config store is a sealed JSON file on the state volume (see
-// architectural-plans/DB-TO-FILE.md). Three things can be wrong and all three
+// the sealed JSON store). Three things can be wrong and all three
 // are worth catching BEFORE boot rather than on the operator's first Configure
 // Tunnel submit — that submit is the first write, so a permissions problem
 // would otherwise surface long after the deploy looked healthy. This is the

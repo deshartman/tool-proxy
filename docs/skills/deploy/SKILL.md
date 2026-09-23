@@ -310,9 +310,6 @@ The three failures that get misattributed, and what they actually mean:
 
 ## Reference
 
-- `architectural-plans/DB-TO-FILE.md` — why there is no database, and what the sealed store
-  guarantees. Supersedes `DEPLOY-ARCHITECTURE.md`'s Stage C, which is deleted, not deferred
-- `architectural-plans/DEPLOY-ARCHITECTURE.md` — target statuses and the remaining per-target fixes
 - `deploy/README.md` — per-cloud guides
 - `deploy/fly/OPERATOR-RUNBOOK.md` — the Fly path in full
 - `docs/ENV-VARS.md` — the authoritative env surface. If you are about to mention an env var that

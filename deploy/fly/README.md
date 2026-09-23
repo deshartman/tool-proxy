@@ -246,7 +246,29 @@ Exit 0 = all green. In the inspector, the MCP Server panel should show every MCP
 
 **Tunnel bearer / OAuth secret** — rotate in the controller UI (**Rotate Secret**). Prior value has a 24 h grace window. `fly machine restart` to force the pickup sooner.
 
-**Master key** — rare (only if compromised). There is no re-seal path: `ConfigStore.open()` compares a fingerprint and refuses to start against a store sealed with a different key. So rotation means destroying the state volume, minting a new key, redeploying, and reconfiguring the tunnel. Full recipe in [`OPERATOR-RUNBOOK.md`](OPERATOR-RUNBOOK.md#master-key-rotation-rare--only-if-the-master-key-is-compromised).
+**Master key** — rare (only if leaked). `ConfigStore.open()` compares a fingerprint and refuses to start against a store sealed with a different key, so you cannot just swap the secret. But you do **not** have to destroy the volume: re-seal instead, which preserves the connector's identity.
+
+What the key protects, and therefore all you have to move: the sealed values in `state/config.json` — the tunnel bearer, the OAuth client secret if that is the posture, the registration token, and any machine-API client secrets. It also **derives the `/oauth/token` JWT signing key** (`HMAC-SHA256(key, "mcp-connector:jwt-signing-key:v1")`), so rotating invalidates already-issued machine-API tokens. Nothing else depends on it.
+
+Re-seal, in one session on the Machine — read under the old key, write under the new:
+
+```bash
+# 1. Decrypt the sealed values with the CURRENT key and hold them in memory.
+#    Do this in a single script; never print a secret, and never let one reach
+#    a terminal or a chat.
+# 2. fly secrets set CONNECTOR_KEY_B64="$(head -c 32 /dev/urandom | base64)"
+# 3. Delete state/config.json, let the connector recreate it under the new key,
+#    then write the values back via ConfigStore's upsertController +
+#    updateRegistrationToken.
+# 4. chown 100:101 state/config.json  -- `fly ssh console` runs as ROOT and the
+#    connector runs as mcp (uid 100). Skip this and it crash-loops on EACCES,
+#    and because it EXITS rather than retrying, the Machine keeps stopping and
+#    getting a shell back in to fix it is awkward.
+# 5. fly machine restart <id>, then confirm: /readyz returns {"ok":true} and the
+#    log says `register-ack ok — bound to existing record`.
+```
+
+If you skip the re-seal, the connector crash-loops on the fingerprint mismatch. Recovery is then: clear `state/config.json`, re-run Configure Tunnel, and clear the connector's row on the controller — the re-register presents no token, so it collides on the **sticky** `name_taken` until someone does.
 
 **Full app recovery** — if the Fly app itself is destroyed (not just its Machines), CI can't rebuild (its `FLY_API_TOKEN` is app-scoped and can't create apps). Re-run `./scripts/deploy/fly-deploy.sh` locally against your Fly org — the script is idempotent. See [`OPERATOR-RUNBOOK.md`](OPERATOR-RUNBOOK.md#full-app-recovery-after-fly-apps-destroy-or-accidental-deletion).
 
@@ -279,5 +301,5 @@ Fly's defaults would violate the connector's load-bearing invariants. The scaffo
 
 - [`OPERATOR-RUNBOOK.md`](OPERATOR-RUNBOOK.md) — full operator runbook (rotation recipes, recovery from destroyed apps, common troubleshooting).
 - [`deploy/fly/fly.toml.example`](../../deploy/fly/fly.toml.example) — hand-editable reference config (the CLI generates the same shape).
-- `CODE-DEPLOY` design record (internal) — D1–D5 rationale (why entrypoint script, why 1 GB volume, why single region, why private mock). Its D1 "why Fly Postgres" is superseded by `architectural-plans/DB-TO-FILE.md`.
+- [`../../CLAUDE.md`](../../CLAUDE.md) — the architecture invariants this deployment must not break: outbound-only, loopback-only inspector, one replica, 1 GB memory floor.
 - [`README.md`](README.md) — umbrella deploy doc, common prereqs.

@@ -1,7 +1,7 @@
 // On-disk shape for the connector's config store, plus atomic read/write.
 //
 // Replaces config-store/schema.ts (Postgres DDL). See
-// architectural-plans/DB-TO-FILE.md for why: the store holds five kinds of
+// Why a file rather than a database: the store holds five kinds of
 // record totalling under ten rows in any real deployment — one controller,
 // one key fingerprint, one network-access flag, one trusted-issuer config and
 // a handful of API clients. No joins, no queries, no concurrency beyond a

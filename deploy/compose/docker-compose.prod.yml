@@ -1,7 +1,7 @@
 # Production docker-compose for the mcp-connector — single-VM shape.
 #
 # One container. The connector's config store is a sealed JSON file on the
-# `state` volume (see architectural-plans/DB-TO-FILE.md) — there is no
+# `state` volume — there is no
 # database service and no DSN. Drop customer MCPs at ./customer-mcps/<name>/
 # and they get picked up automatically by the drop-in scanner.
 #

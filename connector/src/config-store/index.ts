@@ -64,7 +64,7 @@ const unb64 = (s: string): Buffer => Buffer.from(s, "base64");
 
 /**
  * The connector's configuration store, backed by a sealed JSON file on the
- * state volume. See architectural-plans/DB-TO-FILE.md.
+ * state volume.
  *
  * Every public method signature is unchanged from the Postgres implementation
  * this replaced, so no caller moved. Methods stay `async` even though the

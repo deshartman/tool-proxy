@@ -77,12 +77,26 @@ carrying still sets any of them, it predates those changes.
 4. Mint the per-tunnel handshake credential on the controller. Open the controller UI, go to **Tools → Connectors → Tunnel Security → New Tunnel Security**, enter the same Name as step 3 (case-sensitive), pick a security type, paste your Twilio AccountSid + (AuthToken or ApiKey), Save. The controller verifies against Twilio's API and returns one of:
    - **`ts_<...>`** (Twilio Auth Token / API Key types) — long-lived bearer. Paste it into Configure Tunnel's static-bearer field.
    - **`client_id` + `client_secret` + token URL** (OAuth 2.0 type) — short-lived JWT minted by the connector at each connect. Paste all three into Configure Tunnel's OAuth2 fields. Best when you want a config-flip migration to `oauth.twilio.com` once Twilio takes over as the issuer.
-5. Reach the inspector as a **loopback** caller and fill in the modal. Each
-   platform differs: `./scripts/fly-inspector.sh <app>` on Fly,
-   `kubectl port-forward deploy/<name> 9090:9090` on K8s, `ssh -L` to a VM,
-   `docker exec` locally. A forward that merely reaches the host's port does
-   NOT qualify — see the loopback-gate note in
-   [`docs/INSPECTOR.md`](../docs/INSPECTOR.md).
+5. Reach the inspector as a **loopback** caller and fill in the modal. The
+   dashboard refuses every non-loopback caller, permanently, so this is a
+   required step and not a convenience — a deployment cannot complete
+   first-connect without it.
+
+   | Platform | Command |
+   |---|---|
+   | Fly | `./scripts/fly-inspector.sh <app>` — **not** bare `fly proxy`, which 403s |
+   | Kubernetes | `kubectl port-forward deploy/<name> 9090:9090` |
+   | Remote VM | `ssh -L 9090:127.0.0.1:9090 <host>` |
+   | ECS / Fargate | ECS Exec, then an in-task relay (see the aws-ec2 module's README) |
+   | ACA | `az containerapp exec` |
+   | compose, locally | **no host port is published** — `docker compose exec connector wget -qO- http://127.0.0.1:9090/` to smoke-test, or run the connector directly rather than containerised |
+
+   What makes a forward qualify: it must *originate inside* the box. `ssh -L`
+   works because the remote sshd dials localhost itself; `kubectl port-forward`
+   enters the pod's netns. A forward that merely reaches the host's published
+   port does not — measured: the mapping is refused, and a widened
+   `INSPECTOR_BIND_ADDR` answers `403 forbidden: loopback only` because the gate
+   judges the caller's source address.
 
 The connector dials the controller with `Authorization: Bearer <bearer>` plus `X-Connector-Name: <name>`; the controller looks up the row by `(tenant_id, name)` and verifies the bearer (bcrypt-compare for `ts_<...>`, JWT signature + claims for OAuth2). Both headers are required — missing or mismatched = HTTP 401 at the WS upgrade.
 

@@ -62,7 +62,7 @@ export function requireEnv(env: NodeJS.ProcessEnv = process.env): void {
   // (controller URL, connector name) and auth creds live in the sealed config
   // store and are set through the inspector's Configure Tunnel modal. The
   // store itself is a file on the state volume, so there is no DSN to supply
-  // — see architectural-plans/DB-TO-FILE.md.
+  // — the store is a sealed JSON file on the state volume.
   //
   // One is the floor, not a preference: the process needs the key to open the
   // sealed store BEFORE it can serve the UI that would otherwise supply it.
