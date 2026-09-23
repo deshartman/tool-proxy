@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
+import { MOCK_URL, REQ_TIMEOUT_MS, exampleSlotISO } from "../lib/backend.js";
 
 // Validates a candidate slot. Returns whether the slot is free, plus nearby
 // suggestions when it isn't — every free hourly slot across the next 3 working
@@ -56,7 +56,7 @@ export const checkAvailability: Tool = {
           start: z
             .string()
             .optional()
-            .describe("Optional slot start time, ISO 8601 UTC (e.g. 2026-06-22T14:00:00Z). Defaults to the current UTC time if omitted."),
+            .describe(`Optional slot start time, ISO 8601 UTC (e.g. ${exampleSlotISO(1)}). Defaults to the current UTC time if omitted.`),
         },
         outputSchema: OutputSchema,
       },

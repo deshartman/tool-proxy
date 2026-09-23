@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tool } from "@mcp-shim/connector/sdk";
-import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
+import { MOCK_URL, REQ_TIMEOUT_MS, exampleSlotISO } from "../lib/backend.js";
 
 // Operator-facing write tool. Books an appointment for an existing
 // customer at a given start time. Backed by the mock-backend's
@@ -53,7 +53,7 @@ export const createAppointment: Tool = {
             .describe("Customer's phone in E.164 (e.g. +15551239999). Must match an existing customer."),
           start: z
             .string()
-            .describe("Slot start time, ISO 8601 UTC (e.g. 2026-08-04T14:00:00Z). Mon-Fri, on the hour, 09:00-16:00 UTC."),
+            .describe(`Slot start time, ISO 8601 UTC (e.g. ${exampleSlotISO(1)}). Mon-Fri, on the hour, 09:00-16:00 UTC.`),
         },
         outputSchema: OutputSchema,
       },
