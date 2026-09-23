@@ -20,3 +20,16 @@ export const MOCK_URL = envString("MOCK_CUSTOMERS_URL", "http://localhost:7400")
 // an AbortController armed with this — a hung backend must surface as a tool
 // error well inside the controller's own RPC timeout, not hang the dispatcher.
 export const REQ_TIMEOUT_MS = 4000;
+
+// A future example slot for the tool schemas' .describe() text, computed fresh
+// on every module load (i.e. every drop-in child spawn) instead of a hardcoded
+// literal — a baked-in ISO date goes stale exactly like the old in-memory
+// fixtures did, and an operator (or model) reading the schema can copy it
+// literally, landing on `in_the_past` every time.
+export function exampleSlotISO(daysOut: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + daysOut);
+  d.setUTCHours(14, 0, 0, 0);
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString();
+}
