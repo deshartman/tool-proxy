@@ -11,7 +11,7 @@ import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 // to quote the old slot back to the customer). Error envelope
 // ({ error: "no_appointment" }) goes via content[] only — see plan rule #5.
 const OutputSchema = {
-  appointmentId: z.string().describe("Stable appointment identifier (apt_<hex>)."),
+  appointmentId: z.string().describe("Stable appointment identifier — a UUID, e.g. 3fa85f64-5717-4562-b3fc-2c963f66afa6."),
   customerPhone: z.string().describe("Customer's phone in E.164."),
   customerName: z.string().describe("Customer's given name."),
   agentName: z.string().describe("Assigned technician's name."),

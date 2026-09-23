@@ -55,7 +55,7 @@ export const updateAppointment: Tool = {
         inputSchema: {
           appointmentId: z
             .string()
-            .describe("Identifier returned by get_appointment (e.g. apt_xxxxxxxxxx)."),
+            .describe("Identifier returned by get_appointment's appointmentId field — a UUID (e.g. 3fa85f64-5717-4562-b3fc-2c963f66afa6). Never a phone number, order id, or guessed value; if get_appointment returned no appointment, call create_appointment instead."),
           newStart: z
             .string()
             .describe(`New slot start time, ISO 8601 UTC (e.g. ${exampleSlotISO(1)}).`),
