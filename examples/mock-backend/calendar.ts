@@ -97,7 +97,13 @@ export async function findAppointmentByPhone(phone: string): Promise<Appointment
   return rows.length > 0 ? rowToAppointment(rows[0]) : undefined;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function findAppointmentById(id: string): Promise<Appointment | undefined> {
+  // A caller passing a non-UUID id (a stale tool-schema example, a wrong field
+  // pulled from another response) must see "not found," not a raw Postgres
+  // 22P02 surfaced as a 500 — treating this as a plain query miss.
+  if (!UUID_RE.test(id)) return undefined;
   const { rows } = await query<AppointmentRow>(
     `${APPOINTMENT_JOIN_SELECT} WHERE a.id = $1 LIMIT 1`,
     [id],
