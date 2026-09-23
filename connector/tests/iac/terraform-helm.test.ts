@@ -14,6 +14,7 @@ import { resolve as resolvePath, join } from "node:path";
 
 const REPO_ROOT = resolvePath(new URL("../../../", import.meta.url).pathname);
 const TF_DIR = resolvePath(REPO_ROOT, "deploy/terraform/aws-fargate");
+const TF_SCRATCH_DIR = resolvePath(TF_DIR, "examples/from-scratch");
 const HELM_DIR = resolvePath(REPO_ROOT, "deploy/helm/mcp-connector");
 
 // Every `required` value the chart declares, in one place so a rename touches
@@ -27,13 +28,26 @@ const REQUIRED_SETS = [
   "--set", `secrets.connectorKeyB64=${Buffer.alloc(32).toString("base64")}`,
 ];
 
+// Probe with `<bin> version` FIRST, then `--version`.
+//
+// This was `["--version"]` alone, and helm 4 removed that flag — `helm
+// --version` exits 1 while `helm version` exits 0. So on any machine with helm 4
+// installed and working, every helm-gated test below reported itself SKIPPED
+// rather than failing, which is the worst available outcome: a green suite that
+// proved nothing about the chart. CI installs helm, so CI was skipping them too.
+//
+// Both spellings are tried because `terraform version` and `terraform
+// --version` both work, but a future tool may only accept one.
 function toolAvailable(bin: string): boolean {
-  try {
-    execFileSync(bin, ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+  for (const args of [["version"], ["--version"]]) {
+    try {
+      execFileSync(bin, args, { stdio: "ignore" });
+      return true;
+    } catch {
+      // try the next spelling
+    }
   }
+  return false;
 }
 
 describe("terraform module — filesystem invariants", () => {
@@ -78,14 +92,96 @@ describe("terraform module — filesystem invariants", () => {
   });
 
   const tfTest = toolAvailable("terraform") ? it : it.skip;
-  tfTest("passes `terraform validate`", () => {
-    // `terraform init -backend=false` is required before validate; both
-    // must be quick. Test skips entirely when terraform isn't installed.
-    execFileSync("terraform", ["init", "-backend=false", "-input=false"], {
-      cwd: TF_DIR,
-      stdio: "pipe",
+
+  // Both directories, because they fail independently: the example composes the
+  // core module, so it also catches an input the module renamed. Note what
+  // `validate` does NOT catch — every defect the DB-TO-FILE work fixed in the
+  // core module was valid HCL, which is why
+  // tests/iac/terraform-fargate-boot.test.ts exists alongside this.
+  for (const [label, dir] of [["core module", TF_DIR], ["from-scratch example", TF_SCRATCH_DIR]] as const) {
+    tfTest(`passes \`terraform validate\` — ${label}`, () => {
+      // `terraform init -backend=false` is required before validate; both must
+      // be quick. Skips entirely when terraform isn't installed.
+      execFileSync("terraform", ["init", "-backend=false", "-input=false"], {
+        cwd: dir,
+        stdio: "pipe",
+      });
+      execFileSync("terraform", ["validate"], { cwd: dir, stdio: "pipe" });
     });
-    execFileSync("terraform", ["validate"], { cwd: TF_DIR, stdio: "pipe" });
+  }
+});
+
+// The from-scratch example exists because the core module deliberately owns no
+// networking, so an operator with only an AWS account had no complete path. It
+// must keep supplying every input the module requires — a rename on either side
+// breaks the composition, and `terraform validate` only catches that when
+// terraform is installed (it usually is not, on a dev machine).
+describe("terraform from-scratch example — composes the core module completely", () => {
+  const main = readFileSync(join(TF_SCRATCH_DIR, "main.tf"), "utf8");
+  const moduleVars = readFileSync(join(TF_DIR, "variables.tf"), "utf8");
+
+  const requiredInputs = [...moduleVars.matchAll(/variable "([a-z_]+)" \{([^}]*)\}/gs)]
+    .filter((m) => !/^\s*default\s*=/m.test(m[2]!))
+    .map((m) => m[1]!);
+
+  it("finds the module's required inputs (guards against a broken regex)", () => {
+    expect(requiredInputs).toContain("connector_name");
+    expect(requiredInputs).toContain("vpc_id");
+    expect(requiredInputs.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it.each(requiredInputs)("passes %s to the module", (input) => {
+    const block = main.slice(main.indexOf('module "connector"'));
+    expect(block, `module block does not set ${input}`).toMatch(
+      new RegExp(`^\\s*${input}\\s*=`, "m"),
+    );
+  });
+
+  it("creates the resources an IAM-account-only operator lacks", () => {
+    for (const resource of [
+      "aws_vpc",
+      "aws_subnet",
+      "aws_internet_gateway",
+      "aws_route_table",
+      "aws_ecs_cluster",
+      "aws_ecr_repository",
+    ]) {
+      expect(main, `missing ${resource}`).toContain(`resource "${resource}"`);
+    }
+    // Two roles, not one: secret injection is the EXECUTION role's job and the
+    // EFS mount plus ECS Exec are the TASK role's. Conflating them produces a
+    // task that starts and then fails on a missing env var.
+    expect(main).toContain('resource "aws_iam_role" "execution"');
+    expect(main).toContain('resource "aws_iam_role" "task"');
+  });
+
+  it("grants the four ssmmessages actions ECS Exec needs", () => {
+    // Without these, `aws ecs execute-command` fails with a
+    // TargetNotConnectedException that says nothing about IAM — and ECS Exec is
+    // the ONLY way to reach Configure Tunnel, which is the only way to set
+    // tunnel identity. So omitting them makes first-connect impossible.
+    for (const action of [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]) {
+      expect(main, `task role missing ${action}`).toContain(action);
+    }
+  });
+
+  it("opens no inbound port on the task security group", () => {
+    const sg = main.slice(main.indexOf('resource "aws_security_group" "task"'));
+    const body = sg.slice(0, sg.indexOf("\n}"));
+    expect(body).toMatch(/egress\s*\{/);
+    expect(body, "the outbound-only invariant is an ABSENCE of ingress").not.toMatch(/ingress\s*\{/);
+  });
+
+  it("refuses a floating image tag", () => {
+    // A restart would otherwise become an unplanned upgrade of a process whose
+    // whole job is holding one long-lived socket.
+    const variables = readFileSync(join(TF_SCRATCH_DIR, "variables.tf"), "utf8");
+    expect(variables).toMatch(/condition\s*=\s*var\.image_tag != "latest"/);
   });
 });
 

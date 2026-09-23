@@ -18,27 +18,41 @@ backing infrastructure it does not.
 
 ## Before anything — which targets actually work
 
-Verified 2026-09-20. Two targets are exercised, four are rewritten but unrun, one is gone. There are
-no longer any known-broken targets — before DB-TO-FILE, three of them emitted a manifest that omitted
-both required env vars while still setting four retired ones, so the container crash-looped in
-`requireEnv()` and the logs pointed misleadingly at the operator's secret wiring.
+Verified 2026-09-23. No known-broken targets — before DB-TO-FILE, three of them emitted a manifest
+that omitted both required env vars while still setting four retired ones, so the container
+crash-looped in `requireEnv()` and the logs pointed misleadingly at the operator's secret wiring.
+
+**Distinguish three levels of proof** and say which one applies, because "works" is doing a lot of
+work in that word:
+
+- **exercised** — a connector actually reached `open` this way.
+- **renders clean** — the tool that consumes the manifest accepts it (`terraform validate`,
+  `helm lint`, `helm template`, `docker compose config`). Catches syntax and schema errors, and
+  nothing about whether the cloud behaves. Every defect DB-TO-FILE fixed in the Terraform module was
+  valid HCL.
+- **static only** — our own tests read the file as text. Weakest, and the only level available for a
+  target whose tool nobody has installed.
 
 | Target | Status | Notes |
 |---|---|---|
-| `fly` | ✅ **exercised end-to-end** | `deploy apply` automates the whole bootstrap (4 steps) |
-| `compose` | ✅ **exercised locally** | One service, one secret. Manifest and generated runbook both correct |
-| Helm chart (`deploy/helm/`) | ⚠️ **unverified** | Installs with two `--set` flags; memory floor 1 Gi; key as `CONNECTOR_KEY_B64` |
-| `fargate` (`deploy init`) | ⚠️ **unverified** | Task definition only — assumes you already have VPC/cluster/roles |
-| Terraform `aws-fargate` | ⚠️ **unverified** | Provisions EFS + secret + task + service. Use this for a from-zero AWS deploy |
-| `aca` | ⚠️ **unverified** | Bicep; needs an Azure Files share registered on the environment first |
-| `gke` | ⛔ **removed** | Kubernetes is the Helm chart. `deploy init --target gke` now errors with the `helm install` / `helm template` commands |
+| `fly` | ✅ **exercised** | `deploy apply` automates the whole bootstrap (4 steps) |
+| `compose` | ✅ **exercised** | One service, one secret. `docker compose config` also clean |
+| Helm chart (`deploy/helm/`) | ◐ **renders clean** | `helm lint` + `helm template` pass under helm 4. Two `--set` flags; memory floor 1 Gi; key as `CONNECTOR_KEY_B64`. Never installed to a cluster |
+| Terraform `aws-fargate/examples/from-scratch` | ◐ **renders clean** | `terraform validate` passes. **The from-zero AWS path** — creates VPC, subnets, IGW, cluster, both IAM roles, ECR, then calls the core module. Never applied |
+| Terraform `aws-fargate` (core) | ◐ **renders clean** | `terraform validate` passes. Needs a VPC + cluster + roles supplied; use the example above if you have none |
+| `fargate` (`deploy init`) | ○ **static only** | Task definition alone. Needs EFS ids pasted in, and assumes you have VPC/cluster/roles |
+| `aca` | ○ **static only** | Bicep; needs an Azure Files share registered on the environment first |
+| `gke` | ⛔ **removed** | Kubernetes is the Helm chart. `deploy init --target gke` errors with the `helm install` / `helm template` commands |
 
-**Read "unverified" literally, and say it to the operator.** Those four were rewritten for
-DB-TO-FILE and pass static checks — required env vars, memory floors, volume persistence, no retired
-vars — but **nobody has run them against a real cloud**, and neither `helm` nor `terraform` is
-installed in this repo's dev environment, so their tool-gated tests skip. A first deploy IS the
-verification. Do not present them as known-good; do offer to walk the operator through one and treat
-any failure as a finding rather than as their mistake.
+**Nothing below `exercised` has touched a real cloud.** Say that to the operator before starting, and
+treat the first deploy as the verification — any failure is a finding about our manifests, not their
+mistake. Do not hand-patch a generated manifest to get past it: fix the template and regenerate, or
+the customer ends up with a deployment nobody can reproduce.
+
+**A skipped tool-gated test is worse than a failing one**, and this bit us: `toolAvailable()` probed
+`<bin> --version`, which helm 4 removed, so every helm-gated test reported SKIPPED on a machine where
+helm worked — a green suite proving nothing about the chart. If a target claims "renders clean",
+confirm the tool is actually on PATH rather than trusting the suite was green.
 
 **None of them is blocked on infrastructure any more.** Removing Postgres deleted the hard part — a
 managed database per cloud, its networking, its credential rotation. What was left was wiring one
