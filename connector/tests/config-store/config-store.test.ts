@@ -1,100 +1,49 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
 import { ConfigStore, type ControllerInput } from "../../src/config-store/index.js";
-import { initSodium } from "../../src/config-store/seal.js";
-import { randomBytes, createHash } from "node:crypto";
-import pg from "pg";
+import { makeMasterKey, openTempStore, type StoreFixture } from "../helpers/config-store.js";
+
+// Post DB-TO-FILE: the store is a sealed JSON file in a tmpdir. No Postgres, no
+// POSTGRES_URL, no schema teardown — the suite now runs anywhere.
 
 describe("ConfigStore", () => {
-  const TEST_SCHEMA = "test_mcp_connector_" + Date.now();
-  let store: ConfigStore | undefined;
-  let pool: pg.Pool;
+  let fixture: StoreFixture;
+  let store: ConfigStore;
   let masterKey: { bytes: Buffer; fingerprint: string };
 
-  beforeAll(async () => {
-    // Inherit POSTGRES_URL from shell environment
-    const url = process.env.POSTGRES_URL;
-    if (!url) {
-      throw new Error(
-        "POSTGRES_URL must be set for the ConfigStore integration test. Example: postgres://mcp:{PASSWORD}@localhost:5433/mcp_connector"
-      );
-    }
-
-    await initSodium();
-
-    // Generate a random 32-byte key
-    const keyBytes = randomBytes(32);
-    const fingerprint = createHash("sha256").update(keyBytes).digest("hex");
-    masterKey = { bytes: keyBytes, fingerprint };
-
-    // Set the test schema name
-    process.env.POSTGRES_SCHEMA = TEST_SCHEMA;
-
-    // Create test schema
-    pool = new pg.Pool({ connectionString: url });
-    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${TEST_SCHEMA}`);
-
-    // Clean up any existing test data
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.controllers CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.encryption_meta CASCADE`);
-  });
-
-  afterAll(async () => {
-    // Clean up: close store first, then drop schema, then end pool
-    if (store) {
-      await store.close();
-      store = undefined;
-    }
-    if (pool) {
-      await pool.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
-      await pool.end();
-    }
-    delete process.env.POSTGRES_SCHEMA;
-  });
-
   beforeEach(async () => {
-    // Close any existing store from the previous test
-    if (store) {
-      await store.close();
-      store = undefined;
-    }
+    fixture = await openTempStore();
+    store = fixture.store;
+    masterKey = fixture.masterKey;
+  });
 
-    // Clean tables between tests
-    if (pool) {
-      await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.controllers CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.encryption_meta CASCADE`);
-    }
-
-    // Re-create store for each test
-    store = await ConfigStore.open(masterKey);
+  afterEach(async () => {
+    await fixture.cleanup();
   });
 
   describe("open()", () => {
-    it("populates encryption_meta on first open", async () => {
-      const { rows } = await pool.query(
-        `SELECT key_fingerprint FROM ${TEST_SCHEMA}.encryption_meta WHERE id=1`
-      );
-      expect(rows).toHaveLength(1);
-      expect(rows[0].key_fingerprint).toBe(masterKey.fingerprint);
+    it("records the key fingerprint on first open", async () => {
+      const doc = JSON.parse(readFileSync(fixture.path, "utf8"));
+      expect(doc.keyFingerprint).toBe(masterKey.fingerprint);
+      expect(doc.version).toBe(1);
+    });
+
+    // The file is written at open(), not lazily on first mutation. That is what
+    // turns an unwritable state volume into a boot failure instead of a failure
+    // on the operator's first Configure Tunnel submit.
+    it("creates the store file immediately, before any mutation", async () => {
+      expect(() => readFileSync(fixture.path)).not.toThrow();
     });
 
     it("succeeds on second open with same key", async () => {
-      // First open already happened in beforeEach
-      // Second open should succeed
-      const store2 = await ConfigStore.open(masterKey);
+      const store2 = await fixture.reopen();
       expect(store2).toBeDefined();
       await store2.close();
     });
 
     it("throws on open with wrong key", async () => {
-      // Generate a different key
-      const wrongKeyBytes = randomBytes(32);
-      const wrongFingerprint = createHash("sha256")
-        .update(wrongKeyBytes)
-        .digest("hex");
-      const wrongKey = { bytes: wrongKeyBytes, fingerprint: wrongFingerprint };
-
-      await expect(ConfigStore.open(wrongKey)).rejects.toThrow(
-        /master key does not match the fingerprint recorded on first migration/
+      await expect(fixture.reopen(makeMasterKey())).rejects.toThrow(
+        /master key does not match the fingerprint/
       );
     });
   });
@@ -344,13 +293,16 @@ describe("ConfigStore", () => {
       expect(row!.environment).toBe("staging");
       expect(row!.tunnelAuthToken).toBe("secret-bearer-token");
 
-      // Verify encrypted in DB
-      const { rows: dbRows } = await pool.query(
-        `SELECT tunnel_auth_token_ct FROM ${TEST_SCHEMA}.controllers LIMIT 1`
-      );
-      const encrypted = dbRows[0].tunnel_auth_token_ct;
-      expect(encrypted).toBeInstanceOf(Buffer);
-      expect(encrypted.toString("utf8")).not.toBe("secret-bearer-token");
+      // Sealed at rest: the bearer must not be recoverable from the file
+      // without the key. Checks the raw bytes AND the whole serialised
+      // document, so a future field that accidentally stored the plaintext
+      // alongside the ciphertext would still fail this.
+      const raw = readFileSync(fixture.path, "utf8");
+      expect(raw).not.toContain("secret-bearer-token");
+      const doc = JSON.parse(raw);
+      const ct = doc.controllers[0].tunnelAuthTokenCt;
+      expect(typeof ct).toBe("string");
+      expect(Buffer.from(ct, "base64").toString("utf8")).not.toBe("secret-bearer-token");
     });
   });
 

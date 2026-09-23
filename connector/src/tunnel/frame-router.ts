@@ -24,7 +24,7 @@ import type { InboundTunnelFrame, RegisterAckFrame } from "./frames.js";
 export interface FrameRouterOpts {
   webhooks: WebhookRegistry;
   // Current registration token as-of the last register-ack. Post
-  // env-mode-removal this lives in the sealed controllers row; the
+  // env-mode-removal this lives in the sealed config store; the
   // frame-router just updates it in memory for the inspector's setIdentity
   // call. Persistence is the caller's responsibility via onTokenMinted /
   // onTokenCleared below.
@@ -132,7 +132,7 @@ function handleRegisterAckError(frame: RegisterAckFrame, opts: FrameRouterOpts):
       // mistake. Stay sticky and log an action-oriented message.
       //
       // The remedy must NOT name an env var. Identity lives in the sealed
-      // controllers row and is set only through the inspector's Configure
+      // config store and is set only through the inspector's Configure
       // Tunnel modal; CONNECTOR_NAME is warned about and ignored at boot
       // (see the legacy-env loop in bootFromDb). This is the one path that
       // suppresses auto-reconnect, so it is also the path where a wrong

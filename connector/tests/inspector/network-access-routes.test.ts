@@ -1,9 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { createServer, type Server } from "node:http";
-import { randomBytes, createHash } from "node:crypto";
-import pg from "pg";
 import { ConfigStore } from "../../src/config-store/index.js";
-import { initSodium } from "../../src/config-store/seal.js";
+import { openTempStore, type StoreFixture } from "../helpers/config-store.js";
 import { createNetworkAccessRoutes } from "../../src/inspector/network-access-routes.js";
 
 // CONNECTOR-NETWORK-EXPOSURE — handleAddClient's core new behavior after
@@ -17,54 +15,23 @@ import { createNetworkAccessRoutes } from "../../src/inspector/network-access-ro
 const CSRF_HEADERS = { "content-type": "application/json", "x-inspector-request": "1" };
 
 describe("POST /internal/network-access/clients — auto-enable on first add", () => {
-  const TEST_SCHEMA = "test_mcp_connector_addclient_" + Date.now();
+  let fixture: StoreFixture;
   let store: ConfigStore;
-  let pool: pg.Pool | undefined;
-  let masterKey: { bytes: Buffer; fingerprint: string };
   let server: Server | undefined;
   let port: number;
   let rebindCallCount: number;
 
-  beforeAll(async () => {
-    const url = process.env.POSTGRES_URL;
-    if (!url) {
-      throw new Error("POSTGRES_URL must be set for this integration test.");
-    }
-    await initSodium();
-    const keyBytes = randomBytes(32);
-    masterKey = { bytes: keyBytes, fingerprint: createHash("sha256").update(keyBytes).digest("hex") };
-
-    process.env.POSTGRES_SCHEMA = TEST_SCHEMA;
-    pool = new pg.Pool({ connectionString: url });
-    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${TEST_SCHEMA}`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.api_clients CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.network_access CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.trusted_issuer_config CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.controllers CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.encryption_meta CASCADE`);
-  });
-
-  afterAll(async () => {
-    // MCP-AUDIT #22: beforeAll throws on its first line when POSTGRES_URL is
-    // unset, so nothing below is assigned yet. Every handle is optional-guarded
-    // so this teardown is a no-op rather than a TypeError masking the real cause.
-    await store?.close();
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    await pool?.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
-    await pool?.end();
-    delete process.env.POSTGRES_SCHEMA;
+  afterEach(async () => {
+    if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
+    server = undefined;
+    await fixture.cleanup();
   });
 
   beforeEach(async () => {
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.api_clients CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.network_access CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.trusted_issuer_config CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.controllers CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.encryption_meta CASCADE`);
-    store = await ConfigStore.open(masterKey);
+    fixture = await openTempStore();
+    store = fixture.store;
     rebindCallCount = 0;
 
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     const routes = createNetworkAccessRoutes({
       configStore: store,
       rebindNonLoopback: () => { rebindCallCount++; },

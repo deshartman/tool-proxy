@@ -190,7 +190,7 @@ Off by default; there is no admin login anywhere in this flow.
    Every client after the first is just another credential; the rebind is a no-op once it's already happened.
 3. **Loopback access never changes.** A request from `127.0.0.1` / `::1` is always trusted, forever, regardless of how many API clients exist — the dashboard is not reachable non-loopback under any configuration.
 4. **Non-loopback traffic reaches exactly one route**, `POST /oauth/token` — see [Machine API](#machine-api). Everything else 403s, unconditionally, from off-box.
-5. **State persists across restarts.** If `network_access.enabled` is already `true` in Postgres, the next boot binds non-loopback directly — the loopback-first-then-add-a-client sequence above is one-time, not something repeated on every restart.
+5. **State persists across restarts.** If `network_access.enabled` is already `true` in the config store, the next boot binds non-loopback directly — the loopback-first-then-add-a-client sequence above is one-time, not something repeated on every restart.
 
 No env var is involved anywhere in this flow — it's entirely DB/UI-driven, deliberately, so onboarding never requires a redeploy.
 

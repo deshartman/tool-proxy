@@ -96,22 +96,50 @@ describe("C7 — .dockerignore excludes secrets, state files, key material, sess
 });
 
 // ── docker-compose.prod.yml invariants ───────────────────────────────────
-describe("docker-compose.prod.yml — inspector loopback + no shell-eval POSTGRES_URL", () => {
-  it("binds inspector to 127.0.0.1 only", () => {
-    expect(COMPOSE_PROD).toMatch(/["']127\.0\.0\.1:9090:9090["']/);
-    expect(COMPOSE_PROD).not.toMatch(/^\s*-\s*["']?9090:9090\b/m);
-    expect(COMPOSE_PROD).not.toMatch(/["']0\.0\.0\.0:9090:9090["']/);
+describe("docker-compose.prod.yml — inspector loopback + no inline credentials", () => {
+  it("publishes no inspector port, and does not widen the bind", () => {
+    // Was: assert the "127.0.0.1:9090:9090" mapping is present. That mapping
+    // cannot reach the connector (loopback bind inside the container's
+    // namespace) and widening INSPECTOR_BIND_ADDR gets a reachable port that
+    // answers 403 — both measured. Publishing nothing is the stronger
+    // invariant: the Webhooks panel's bcrypt-protected URLs and the machine API
+    // are what a wider bind would expose.
+    const config = COMPOSE_PROD.split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(config).not.toMatch(/^\s*ports:/m);
+    expect(config).not.toMatch(/9090:9090/);
+    expect(config).not.toContain("INSPECTOR_BIND_ADDR");
+    expect(config).not.toContain("INSPECTOR_ALLOW_NONLOOPBACK");
   });
 
-  it("does not shell-eval POSTGRES_URL (C8 — broken in prior scaffold)", () => {
-    expect(COMPOSE_PROD).not.toMatch(/POSTGRES_URL[^\n]*\$\(cat/);
-    // Positive: template + secret file are wired through
-    expect(COMPOSE_PROD).toMatch(/POSTGRES_URL_TEMPLATE:/);
-    expect(COMPOSE_PROD).toMatch(/POSTGRES_PW_FILE:/);
-  });
+  // C8 originally protected a Postgres password from landing in this YAML as
+  // a string, and from being shell-eval'd out of a file with $(cat ...).
+  // DB-TO-FILE deleted the DSN, so there is no password to protect. The
+  // hazard class it guarded — a credential that reaches the container as a
+  // VALUE rather than a mount — still applies to the one secret that remains.
+  it("carries no credential as a value; the master key arrives as a mount", () => {
+    // COMPOSE_TMPL is the whole templates.ts, which legitimately still names
+    // Postgres for the fly-mock target (the mock CRM backend IS
+    // Postgres-backed). Slice out just the compose template's body.
+    const composeTemplate = COMPOSE_TMPL.slice(
+      COMPOSE_TMPL.indexOf("const COMPOSE_YML = `"),
+      COMPOSE_TMPL.indexOf("const COMPOSE_ENV = `"),
+    );
+    expect(composeTemplate, "COMPOSE_YML marker moved — fix the slice").toContain("services:");
 
-  it("compose scaffold template also does not shell-eval POSTGRES_URL", () => {
-    expect(COMPOSE_TMPL).not.toMatch(/POSTGRES_URL=postgres:[^\n]*\$\(cat/);
+    for (const [label, text] of [["prod", COMPOSE_PROD], ["scaffold", composeTemplate]] as const) {
+      // No command substitution anywhere — that was the C8 failure shape.
+      expect(text, `${label}: shell substitution in compose`).not.toMatch(/\$\(/);
+      // The key is referenced only as a read-only file mount, never assigned.
+      expect(text, `${label}: key path assigned as a value`)
+        .not.toMatch(/CONNECTOR_KEY_B64\s*[:=]/);
+      expect(text, `${label}: no key mount`)
+        .toMatch(/connector\.key:\/etc\/mcp-connector\/connector\.key:ro/);
+    }
+    // And the retired DSN plumbing is gone from both.
+    expect(COMPOSE_PROD).not.toMatch(/POSTGRES/);
+    expect(composeTemplate).not.toMatch(/POSTGRES/);
   });
 });
 
@@ -134,10 +162,14 @@ describe("F3 — CSRF guard on inspector state-changing routes", () => {
 });
 
 // ── F4 — .connector-state.json (env mode) ─────────────────────────────────
-// F4 was retired with env-mode removal — the registration token now lives
-// exclusively in the sealed controllers row in Postgres, so there's no
-// plaintext state file to protect. .dockerignore still excludes any
-// leftover file on an upgrading host as belt-and-braces (see C7 above).
+// F4 was retired with env-mode removal. The registration token lives in the
+// sealed config store, which DB-TO-FILE moved from a Postgres row back to a
+// FILE — but not the same file and not in the same shape: it is
+// /var/lib/mcp-connector/state/config.json, written 0600, with every
+// credential inside it sealed by libsodium under the master key. The thing F4
+// protected against was a PLAINTEXT token on disk, and that remains absent.
+// .dockerignore still excludes any leftover .connector-state.json on an
+// upgrading host as belt-and-braces (see C7 above).
 
 // ── F7 — per-MCP webhook token ───────────────────────────────────────────
 describe("F7 — webhook stream + revoke enforce per-MCP identity", () => {

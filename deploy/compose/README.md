@@ -1,30 +1,63 @@
 # Docker Compose
 
-Two compose files ship here:
+Two compose files ship here, and they are unrelated:
 
-- **`docker-compose.prod.yml`** — single-VM production shape. Connector +
-  sibling Postgres (for db mode) + a Docker-managed secret file for the
-  master key. Bind the inspector to `127.0.0.1:9090` only. Never expose it
-  to a public interface — the Webhooks panel surfaces bcrypt-protected
-  URLs by design.
-- **`docker-compose.dev.yml`** — the dev-time Postgres the connector uses as
-  its own config store (sealed `controllers` row), on host port 5433 so it
-  doesn't collide with another local Postgres. `scripts/start-connector.sh`
-  starts it for you; you rarely invoke this file directly. Pair with the prod
-  file if you do: `docker compose -f docker-compose.prod.yml -f
-  docker-compose.dev.yml up`.
+- **`docker-compose.prod.yml`** — single-VM production shape. **One
+  container.** The connector's config store is a sealed JSON file on the
+  `state` volume, so there is no database service, no DSN, and no password
+  secret. Bind the inspector to `127.0.0.1:9090` only. Never expose it to a
+  public interface — the Webhooks panel surfaces bcrypt-protected URLs by
+  design.
+- **`docker-compose.dev.yml`** — a dev-only Postgres for the **`crm` demo's
+  mock backend** (`examples/mock-backend/`), on host port 5433 so it doesn't
+  collide with another local Postgres. `scripts/start-mock-server.sh` starts
+  it for you. It has nothing to do with the connector, which needs no
+  database — it used to double as the connector's config store and no longer
+  does.
 
-Copy `.env.example` → `.env` and fill in `POSTGRES_URL`, `CONNECTOR_KEY_FILE`
-(or `CONNECTOR_KEY_B64` if your host mounts secrets as env vars), and any
-per-MCP creds you don't manage through the controller UI.
+Copy `.env.example` → `.env` — the only thing in it is the image tag. The
+connector needs exactly one secret, the master key, mounted as a file at
+`/etc/mcp-connector/connector.key`:
+
+```bash
+mkdir -p secrets
+head -c 32 /dev/urandom > secrets/connector.key
+# Readable by uid 100 — the image's `mcp` user. This mount is read-only, so the
+# entrypoint cannot chown it for you, and `chmod 400` owned by your uid gives
+# EACCES and a crash-loop. Either of these works:
+sudo chown 100:101 secrets/connector.key && sudo chmod 400 secrets/connector.key
+# chmod 444 secrets/connector.key   # simpler; the file is only as safe as the host
+printf 'mcp_servers: []\n' > connector.yaml   # bind-mount SOURCE must exist as a
+                                              # FILE first, or Docker creates a
+                                              # DIRECTORY and config load fails
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Everything else — controller URL, connector name, auth posture — is entered in
+the inspector's Configure Tunnel modal on first boot and sealed into the state
+volume. There are no env vars for them.
 
 ## Load-bearing invariants
 
 The compose files hardcode a few properties the connector relies on. Don't
 edit them out:
 
-- `127.0.0.1:9090:9090` inspector port binding — inspector is loopback-only.
-- Postgres password sourced from a file secret, not baked inline.
+- **No `ports:` mapping.** The connector binds `127.0.0.1:9090` inside the
+  container's namespace, so a published port reaches an interface nothing
+  listens on — `curl localhost:9090` on the host gets connection refused.
+  Widening `INSPECTOR_BIND_ADDR` does not help: the gate judges the source
+  address and Docker's NAT rewrites it, so you get `403 forbidden: loopback
+  only`. Both measured. Reach the dashboard through a forward that originates
+  inside the box (`ssh -L` to a VM, `docker compose exec` for a smoke test).
+- The master key mounted read-only. It seals the credentials in
+  `config.json`; a volume snapshot without it yields nothing.
+- The `state:` named volume. Post-`DB-TO-FILE` this volume **is** the
+  connector's identity: `config.json` holds the sealed tunnel bearer and the
+  registration token. Destroy it and the operator must re-run Configure
+  Tunnel, and the controller will reject the re-register as `name_taken`
+  until someone clears the old row. A named volume is also the one mount type
+  Docker seeds from the image with ownership intact, which is why compose
+  needs no entrypoint `chown` where the cloud targets do.
 - No `restart: always` on the connector container (systemd / K8s handle
   supervision; docker's restart policy would mask a fail-fast during
   early boot).

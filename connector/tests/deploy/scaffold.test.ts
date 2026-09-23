@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { scaffoldTo, normalizeControllerUrl } from "../../src/deploy/scaffold.js";
+import { scaffoldTo } from "../../src/deploy/scaffold.js";
 import { render, type ScaffoldVars } from "../../src/deploy/templates.js";
 import { vi } from "vitest";
 
@@ -19,53 +19,136 @@ const VARS: ScaffoldVars = {
   // override with `{ ...VARS, appName: "mock-customers-prod-us-east-1" }`.
   // Non-Fly targets ignore this field — their templates use {{NAME}}.
   appName: "mcp-connector-prod-us-east-1",
-  controllerUrl: "https://controller.example.com",
   image: "ghcr.io/twilio/mcp-connector:0.2.0",
-  auth: "static",
 };
 
 describe("render — variable substitution", () => {
-  it("substitutes NAME + CONTROLLER_URL + IMAGE into fargate task def", () => {
+  // Boot viability, not substitution. The prior version asserted the connector
+  // NAME and CONTROLLER_URL appeared as env values in the task definition —
+  // both retired, and an assertion that stays green while the emitted task
+  // crash-loops in requireEnv(). What matters is the one required var, the key
+  // secret, and that the retired four are absent.
+  it("renders a fargate task def that can actually boot", () => {
     const { files } = render("fargate", VARS);
     const task = files.find((f) => f.path === "task-definition.json");
     expect(task).toBeDefined();
+
+    const def = JSON.parse(task!.content) as {
+      cpu: string;
+      memory: string;
+      containerDefinitions: {
+        environment: { name: string; value: string }[];
+        secrets: { name: string }[];
+        mountPoints: { containerPath: string }[];
+        healthCheck?: unknown;
+      }[];
+      volumes: { name: string; efsVolumeConfiguration?: unknown }[];
+    };
+    const container = def.containerDefinitions[0]!;
+
+    expect(container.environment.map((e) => e.name)).toContain("CONNECTOR_KEY_FILE");
+    expect(container.secrets.map((s) => s.name)).toEqual(["CONNECTOR_KEY_B64"]);
+    for (const retired of ["CONNECTOR_NAME", "CONTROLLER_URL", "TUNNEL_AUTH_TOKEN", "POSTGRES_URL"]) {
+      expect(container.environment.map((e) => e.name), `still emits ${retired}`).not.toContain(retired);
+      expect(container.secrets.map((s) => s.name), `still emits ${retired}`).not.toContain(retired);
+    }
+
+    // Measured 493 MB floor; 512 cannot boot the shipped image.
+    expect(Number(def.memory)).toBeGreaterThanOrEqual(1024);
+
+    // The state volume is the connector's identity — a bare `{"name": "state"}`
+    // with no efsVolumeConfiguration loses it on every task restart.
+    const state = def.volumes.find((v) => v.name === "state");
+    expect(state?.efsVolumeConfiguration).toBeDefined();
+
+    // Nothing may mount over /etc/mcp-connector: the entrypoint writes the
+    // decoded master key there.
+    expect(container.mountPoints.map((m) => m.containerPath)).toEqual(["/var/lib/mcp-connector"]);
+
+    // Loopback probe from inside the container — the only shape the inspector's
+    // gate admits.
+    expect(container.healthCheck).toBeDefined();
+
+    // Substitution still has to work; assert it where it is load-bearing.
     expect(task!.content).toContain("mcp-connector-prod-us-east-1");
     expect(task!.content).toContain("ghcr.io/twilio/mcp-connector:0.2.0");
-    expect(task!.content).toContain('"value": "prod-us-east-1"');
-    expect(task!.content).toContain('"value": "https://controller.example.com"');
   });
 
-  it("emits secrets-hint.sh with the connector name interpolated for aws cli", () => {
+  // Stage A. Before this, every emitted manifest probed the inspector's "/" —
+  // which only proves the HTTP server answers, and cannot be reached at all from
+  // outside the container (the inspector binds 127.0.0.1 and 403s non-loopback
+  // callers). A probe that cannot distinguish a connector with no controller
+  // from a healthy one is worse than none: it reports green through an outage.
+  it("probes /readyz on HEALTH_PORT, not the inspector", () => {
     const { files } = render("fargate", VARS);
-    const hint = files.find((f) => f.path === "secrets-hint.sh");
-    expect(hint!.content).toContain("mcp-connector/prod-us-east-1/tunnel-auth-token");
+    const def = JSON.parse(files.find((f) => f.path === "task-definition.json")!.content) as {
+      containerDefinitions: {
+        environment: { name: string; value: string }[];
+        healthCheck: { command: string[]; startPeriod: number };
+      }[];
+    };
+    const c = def.containerDefinitions[0]!;
+    expect(c.environment.find((e) => e.name === "HEALTH_PORT")?.value).toBe("9100");
+
+    const probe = c.healthCheck.command.join(" ");
+    expect(probe).toContain("9100/readyz");
+    // The old probe. Named so a revert is loud rather than silent.
+    expect(probe).not.toContain("9090/");
+
+    // /readyz stays 503 until Configure Tunnel is done — a human step on a
+    // first deploy. A 30s grace kills the task before the operator reaches the
+    // modal.
+    expect(c.healthCheck.startPeriod).toBeGreaterThanOrEqual(90);
   });
 
-  it("substitutes across all five gke manifests", () => {
-    const { files } = render("gke", VARS);
-    expect(files.map((f) => f.path)).toEqual([
-      "namespace.yaml",
-      "secret.yaml",
-      "configmap.yaml",
-      "deployment.yaml",
-      "pvc.yaml",
-    ]);
-    // Every manifest carries the connector name in its namespace field.
-    for (const file of files) {
-      expect(file.content, `${file.path} should reference the namespace`).toContain("mcp-connector-prod-us-east-1");
-    }
-    const deployment = files.find((f) => f.path === "deployment.yaml")!;
-    expect(deployment.content).toContain("ghcr.io/twilio/mcp-connector:0.2.0");
+  it("gives aca both probes, and keeps liveness off the tunnel", () => {
+    const bicep = render("aca", VARS).files[0]!.content;
+    expect(bicep).toContain("HEALTH_PORT");
+    expect(bicep).toMatch(/type: 'Liveness'[\s\S]*?path: '\/livez'/);
+    expect(bicep).toMatch(/type: 'Readiness'[\s\S]*?path: '\/readyz'/);
+    // Liveness on /readyz would make one controller outage restart the fleet.
+    expect(bicep, "liveness must not probe /readyz").not.toMatch(
+      /type: 'Liveness'[\s\S]{0,120}\/readyz/,
+    );
   });
 
-  it("preserves ${VAR} yaml interpolation in the configmap (do not substitute at scaffold time)", () => {
-    const { files } = render("gke", VARS);
-    const cm = files.find((f) => f.path === "configmap.yaml")!;
-    // These are runtime yaml interpolations — the customer's connector
-    // resolves them at boot. Scaffold must NOT touch them.
-    expect(cm.content).toContain("${CONTROLLER_URL:-}");
-    expect(cm.content).toContain("${CONNECTOR_NAME:-}");
-    expect(cm.content).toContain("${TUNNEL_AUTH_TOKEN:-}");
+  it("carries no JSON comment keys — the AWS CLI rejects unknown parameters", () => {
+    // `aws ecs register-task-definition --cli-input-json` validates against the
+    // API shape, so a documentation field like "//memory" fails the call. JSON
+    // has no comments; the rationale lives in the README appendix instead.
+    const { files } = render("fargate", VARS);
+    const def = JSON.parse(files.find((f) => f.path === "task-definition.json")!.content) as Record<string, unknown>;
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) return node.forEach((v, i) => walk(v, `${path}[${i}]`));
+      if (node && typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) {
+          expect(k.startsWith("//"), `comment key at ${path}.${k}`).toBe(false);
+          walk(v, `${path}.${k}`);
+        }
+      }
+    };
+    walk(def, "$");
+  });
+
+  it("emits both hint files, naming the master key rather than a bearer", () => {
+    const { files } = render("fargate", VARS);
+    const secrets = files.find((f) => f.path === "secrets-hint.sh")!;
+    const efs = files.find((f) => f.path === "efs-hint.sh")!;
+    expect(secrets.content).toContain("mcp-connector/prod-us-east-1/connector-key-b64");
+    expect(secrets.content).not.toContain("tunnel-auth-token");
+    // The EFS hint is the one that explains why an ephemeral volume is fatal.
+    expect(efs.content).toContain("create-access-point");
+    expect(efs.content).toContain("name_taken");
+  });
+
+  it("no longer offers the gke target", () => {
+    // The raw manifests duplicated deploy/helm/mcp-connector and duplicated it
+    // badly: no master-key Secret (so the pod could not boot), no resource
+    // limits, a placeholder mcp_servers entry pointing at a service that never
+    // existed, and a read-only ConfigMap mounted at /etc/mcp-connector — the
+    // exact path the entrypoint must WRITE the decoded key to. Kubernetes has
+    // one path now; `helm template` covers anyone who cannot install releases.
+    expect(() => render("gke" as never, VARS)).toThrow();
   });
 
   it("emits a single-file aca bicep template", () => {
@@ -80,19 +163,28 @@ describe("render — variable substitution", () => {
     expect(bicep).toContain("minReplicas: 1"); // single connector — no HPA
   });
 
-  it("emits compose files with 127.0.0.1 inspector binding", () => {
+  it("emits a compose file that publishes no inspector port", () => {
     const { files } = render("compose", VARS);
     expect(files.map((f) => f.path)).toEqual(["docker-compose.yml", ".env.example"]);
     const compose = files.find((f) => f.path === "docker-compose.yml")!;
-    // Load-bearing: exposing the inspector on 0.0.0.0 would leak
-    // webhook URLs. The scaffold MUST pin the bind to loopback.
-    expect(compose.content).toContain(`"127.0.0.1:9090:9090"`);
-    expect(compose.content).not.toContain(`"0.0.0.0:9090`);
+    // This asserted the presence of `"127.0.0.1:9090:9090"`. Measured in a real
+    // container: that mapping cannot work — the connector binds loopback inside
+    // the container's namespace, so a published port reaches an interface
+    // nothing listens on. Widening the bind makes it reachable and still 403s,
+    // because the gate judges the source address and Docker NATs it. So the
+    // mapping only implied to operators that localhost:9090 would work.
+    const config = compose.content
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(config).not.toMatch(/^\s*ports:/m);
+    expect(config).not.toMatch(/9090:9090/);
+    expect(config).not.toContain("INSPECTOR_BIND_ADDR");
     expect(compose.content).toContain("mcp-connector"); // image is the connector
   });
 
   it("emits a readme appendix telling the customer what to do next", () => {
-    for (const target of ["fargate", "gke", "aca", "compose", "fly", "fly-mock"] as const) {
+    for (const target of ["fargate", "aca", "compose", "fly", "fly-mock"] as const) {
       const { readmeAppendix } = render(target, VARS);
       expect(readmeAppendix.length, `${target} appendix`).toBeGreaterThan(50);
     }
@@ -231,72 +323,14 @@ describe("render — variable substitution", () => {
 
 });
 
-describe("normalizeControllerUrl", () => {
-  // Customer-facing UX lesson (2026-07-23): operators paste the "connect
-  // your connector" URL from the controller UI verbatim, which includes
-  // the `/mcp-tunnel` path. The connector appends that path itself in
-  // tunnel/client.ts, so the yaml/env value must be the HTTPS root only.
-  // Without normalization, the connector dials wss://.../mcp-tunnel/mcp-tunnel
-  // and silently fails to open the WS — no boot error, no obvious symptom.
-  //
-  // Defensive strip lives in scaffold.ts. Not a URL parser — only handles
-  // the one path we know breaks. Loud warn to stderr so the operator
-  // notices we corrected their paste.
-
-  it("strips a trailing /mcp-tunnel path from the controller URL", () => {
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    expect(normalizeControllerUrl("https://controller.example.com/mcp-tunnel")).toBe(
-      "https://controller.example.com",
-    );
-    // Warning must be visible — silent strip would confuse operators
-    // whose paste doesn't match the emitted config.
-    const stderrText = stderrSpy.mock.calls.map((c) => c[0]).join("");
-    expect(stderrText).toContain('Stripping "/mcp-tunnel"');
-    vi.restoreAllMocks();
-  });
-
-  it("strips trailing slashes even when path is present", () => {
-    // `https://controller.example.com/mcp-tunnel/` — trailing slash after
-    // the path we want to strip. Normalize the slash first, then strip.
-    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    expect(normalizeControllerUrl("https://controller.example.com/mcp-tunnel/")).toBe(
-      "https://controller.example.com",
-    );
-    vi.restoreAllMocks();
-  });
-
-  it("leaves the URL alone when it's already the bare root", () => {
-    // No warning, no changes — this is the happy path.
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    expect(normalizeControllerUrl("https://controller.example.com")).toBe(
-      "https://controller.example.com",
-    );
-    expect(stderrSpy).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
-  });
-
-  it("strips a bare trailing slash", () => {
-    // `https://controller.example.com/` — common shell autocomplete
-    // artifact. No warning; just a hygiene trim.
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    expect(normalizeControllerUrl("https://controller.example.com/")).toBe(
-      "https://controller.example.com",
-    );
-    expect(stderrSpy).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
-  });
-
-  it("does NOT touch unrelated paths (defensive, not aggressive)", () => {
-    // Only /mcp-tunnel is the known-broken suffix. Other paths might be
-    // legitimate custom routes; the connector will fail-loud on those
-    // rather than silently mangling them. If a customer needs to point
-    // at something other than /mcp-tunnel, that's a controller-side
-    // configuration story, not a scaffold input.
-    expect(normalizeControllerUrl("https://controller.example.com/custom-path")).toBe(
-      "https://controller.example.com/custom-path",
-    );
-  });
-});
+// The `normalizeControllerUrl` suite that lived here is gone with the function.
+// `deploy init` no longer takes a controller URL — nothing in any template
+// consumed {{CONTROLLER_URL}} once ENV-TO-DB retired the env var — so the CLI's
+// copy of the "/mcp-tunnel" strip was dead, and a duplicate besides. The live
+// one is inspector/tunnel-routes.ts's, reached by the Configure Tunnel modal
+// that now owns the paste, and it is strictly better: it also handles
+// "/mcp-tunnel/tunnel", is case-insensitive, and is idempotent. Its coverage is
+// in tests/inspector/tunnel-routes.test.ts — ten cases against these five.
 
 describe("scaffoldTo — file writes", () => {
   it("writes all target files to the given outDir", async () => {
@@ -304,11 +338,24 @@ describe("scaffoldTo — file writes", () => {
     try {
       const result = await scaffoldTo("compose", VARS, outDir);
       expect(result.written).toHaveLength(2);
-      // Assert the files exist on disk and carry the substituted values.
+      // Boot viability, not substitution. This used to assert the connector
+      // NAME appeared in the compose file and `TUNNEL_AUTH_TOKEN=` in the
+      // .env — both retired, and both the kind of assertion that stays green
+      // while the emitted stack crash-loops. What matters is the one env var
+      // requireEnv() demands, and the image reference.
       const compose = readFileSync(join(outDir, "docker-compose.yml"), "utf8");
-      expect(compose).toContain("prod-us-east-1");
+      expect(compose).toContain("CONNECTOR_KEY_FILE:");
+      expect(compose).toContain("ghcr.io/twilio/mcp-connector:0.2.0");
+      // No unsubstituted placeholders survived.
+      expect(compose).not.toMatch(/\{\{[A-Z_]+\}\}/);
       const env = readFileSync(join(outDir, ".env.example"), "utf8");
-      expect(env).toContain("TUNNEL_AUTH_TOKEN=");
+      // The template now carries no assignments at all — every line is a
+      // comment or blank. An uncommented KEY= line means a credential crept
+      // back into a file operators paste into.
+      for (const line of env.split("\n")) {
+        expect(line, `unexpected assignment in .env.example: ${line}`)
+          .not.toMatch(/^\s*[A-Z][A-Z0-9_]*=/);
+      }
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
@@ -334,7 +381,8 @@ describe("scaffoldTo — file writes", () => {
 
       const result = await scaffoldTo("compose", VARS, outDir, { force: true });
       expect(result.written).toHaveLength(2);
-      expect(readFileSync(join(outDir, "docker-compose.yml"), "utf8")).toContain("prod-us-east-1");
+      expect(readFileSync(join(outDir, "docker-compose.yml"), "utf8"))
+        .toContain("CONNECTOR_KEY_FILE:");
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
@@ -344,8 +392,9 @@ describe("scaffoldTo — file writes", () => {
     const parent = mkdtempSync(join(tmpdir(), "scaffold-"));
     try {
       const nested = join(parent, "deep", "nested", "path");
-      const result = await scaffoldTo("gke", VARS, nested);
-      expect(result.written).toHaveLength(5);
+      // fargate is the multi-file target now that gke is gone.
+      const result = await scaffoldTo("fargate", VARS, nested);
+      expect(result.written).toHaveLength(3);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
@@ -393,7 +442,7 @@ describe("scaffoldTo — file writes", () => {
 // writable file on the state volume, and that /var/lib/mcp-connector must be
 // mounted for the tunnel identity to survive a restart. Neither is true.
 describe("render — no dead CONNECTOR_STATE_PATH in any target", () => {
-  const TARGETS = ["fargate", "gke", "aca", "compose", "fly", "fly-mock"] as const;
+  const TARGETS = ["fargate", "aca", "compose", "fly", "fly-mock"] as const;
 
   for (const target of TARGETS) {
     it(`${target} sets no CONNECTOR_STATE_PATH`, () => {

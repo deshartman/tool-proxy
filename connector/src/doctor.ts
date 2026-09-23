@@ -15,6 +15,8 @@ import { resolve as resolvePath } from "node:path";
 import { createServer } from "node:net";
 import { envOptional } from "./env.js";
 import { loadConfig } from "./config.js";
+import { readDoc, resolveStatePath } from "./config-store/store-file.js";
+import { resolveMasterKey } from "./config-store/master-key.js";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -27,6 +29,11 @@ export interface CheckResult {
 
 export interface DoctorOptions {
   // Skip network I/O (DNS, TCP dials). Useful for hermetic tests.
+  /**
+   * Inert since the config store became a local file — no check reaches the
+   * network any more. Retained so `doctor --skip-network` in existing
+   * runbooks and tests keeps working rather than erroring on an unknown flag.
+   */
   skipNetwork?: boolean;
   // Override where we probe for state files / key files. Tests pass this;
   // production runs use process.cwd() defaults.
@@ -48,7 +55,7 @@ export async function runChecks(
   results.push(await checkInspectorPort(env));
   results.push(await checkMcpTree(env, opts.cwd ?? process.cwd()));
   results.push(await checkKeyFile(env));
-  results.push(await checkPostgresUrl(env, opts.skipNetwork));
+  results.push(await checkConfigStore(env));
 
   return results;
 }
@@ -129,12 +136,73 @@ async function checkInspectorPort(env: NodeJS.ProcessEnv): Promise<CheckResult> 
   // Bind-probe to 127.0.0.1: same address the inspector actually binds to.
   const available = await probePort(port);
   if (available) return { name: "inspector-port", status: "ok", message: `:${port} free` };
+
+  // The port is taken — but by WHAT? This check was written for the
+  // `doctor && start` runbook, where anything holding the port is a real
+  // conflict. It is also run against a RUNNING container ("is my deployment
+  // healthy?"), and there the holder is the connector being checked, so a
+  // plain `fail` made every healthy deploy exit 1. Observed on the live AWS
+  // deploy, where it was the only non-ok line on a working connector.
+  //
+  // Ask the holder who it is. The inspector answers its own dashboard on `/`,
+  // and nothing else in this system does — so a 200 carrying the dashboard
+  // title means we are inspecting a live connector, not colliding with one.
+  // A 403 counts too: that is the loopback gate refusing a non-loopback
+  // caller, which only the inspector does.
+  const holder = await identifyInspector(port);
+  if (holder) {
+    return {
+      name: "inspector-port",
+      status: "ok",
+      message: `:${port} serving the inspector (this connector is already running)`,
+    };
+  }
   return {
     name: "inspector-port",
     status: "fail",
-    message: `:${port} already in use`,
+    message: `:${port} already in use by something else`,
     remediation: `set INSPECTOR_PORT to a free port (or --inspector-port on start)`,
   };
+}
+
+/**
+ * Is the process holding `port` our own inspector? Deliberately narrow: a
+ * generous check would mask a genuine conflict with an unrelated service, which
+ * is the failure this whole check exists to catch.
+ */
+async function identifyInspector(port: number): Promise<boolean> {
+  try {
+    // 750ms, not longer. This is a loopback request to a process on the same
+    // host — if it has not answered by then it is not our inspector. The budget
+    // matters because a socket that ACCEPTS and never replies (a hung service,
+    // or a raw TCP listener) makes fetch wait the whole timeout, and `doctor`
+    // is a preflight an operator runs interactively and CI runs before boot.
+    // AbortSignal.timeout covers that case; a connection-refused rejects
+    // immediately and never reaches the deadline.
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      signal: AbortSignal.timeout(750),
+      // Do not keep the socket alive. Without this, undici pools the
+      // connection and the listener we just probed cannot be closed until the
+      // pool times out — a hung service would leave `doctor` holding a socket
+      // open against it. Caught by a test whose own `server.close()` blocked
+      // waiting for exactly that connection to drain.
+      headers: { connection: "close" },
+    });
+    // The gate refusing a non-loopback caller is itself proof of identity —
+    // no other service in this system answers 403 on `/`.
+    if (res.status === 403) return true;
+    if (!res.ok) {
+      // Drain, so the socket is released rather than left to the pool.
+      await res.arrayBuffer().catch(() => undefined);
+      return false;
+    }
+    const body = await res.text();
+    return body.includes("MCP Connector Inspector");
+  } catch {
+    // Not HTTP, or not answering. A raw TCP listener on our port is exactly
+    // the conflict this check is for.
+    return false;
+  }
 }
 
 async function checkMcpTree(env: NodeJS.ProcessEnv, cwd: string): Promise<CheckResult> {
@@ -201,131 +269,93 @@ async function checkKeyFile(env: NodeJS.ProcessEnv): Promise<CheckResult> {
   }
 }
 
-async function checkPostgresUrl(
-  env: NodeJS.ProcessEnv,
-  skipNetwork = false,
-): Promise<CheckResult> {
-  const url = envOptional("POSTGRES_URL", env);
-  if (!url) {
-    return {
-      name: "postgres-url",
-      status: "fail",
-      message: "POSTGRES_URL is required in db mode",
-      remediation: "point at a Postgres 14+ instance (or run docker-compose.prod.yml which brings one up)",
-    };
-  }
-  if (skipNetwork) return { name: "postgres-url", status: "ok", message: `${redact(url)} (reachability check skipped)` };
-  // Two-stage on purpose. The TCP dial fails fast and cheaply when nothing is
-  // listening; the auth probe then catches the case a dial cannot see — right
-  // host and port, wrong credentials or missing database. That case used to
-  // report `ok` here, so `doctor && start` green-lit a boot that then died on
-  // `password authentication failed`, which is precisely the failure doctor
-  // exists to pre-empt. `pg` is already a connector dependency and is imported
-  // dynamically so it stays off the boot path.
-  const parsed = safeParseUrl(url);
-  if (!parsed) {
-    return {
-      name: "postgres-url",
-      status: "fail",
-      message: `POSTGRES_URL=${redact(url)} is not a valid URL`,
-    };
-  }
-  const host = parsed.hostname;
-  const port = parsed.port ? Number(parsed.port) : 5432;
-  const reachable = await tcpProbe(host, port, 2_000);
-  if (!reachable) {
-    return {
-      name: "postgres-url",
-      status: "warn",
-      message: `${host}:${port} not reachable — schema may not exist yet`,
-      remediation: "if this is a fresh install, run the connector once to seed the schema",
-    };
-  }
-  return await authProbe(url, host, port);
-}
+// The config store is a sealed JSON file on the state volume (see
+// architectural-plans/DB-TO-FILE.md). Three things can be wrong and all three
+// are worth catching BEFORE boot rather than on the operator's first Configure
+// Tunnel submit — that submit is the first write, so a permissions problem
+// would otherwise surface long after the deploy looked healthy. This is the
+// agentic-memory EACCES failure shape; don't let it come back.
+async function checkConfigStore(env: NodeJS.ProcessEnv): Promise<CheckResult> {
+  const path = resolveStatePath(env);
+  const dir = resolvePath(path, "..");
 
-// Connect for real, so wrong credentials or a missing database are caught here
-// rather than as a FATAL at boot. Anything we can't classify is a `warn`, not a
-// `fail` — doctor must not block a boot over an unrecognized libpq error.
-async function authProbe(url: string, host: string, port: number): Promise<CheckResult> {
-  let pg: typeof import("pg");
+  // Absent file is a VALID state — a fresh install configures itself through
+  // the inspector. What matters is that the directory is writable by THIS uid,
+  // because that is who will create the file.
+  let exists = true;
   try {
-    pg = await import("pg");
+    await access(path, fsConstants.F_OK);
   } catch {
-    return { name: "postgres-url", status: "ok", message: `${host}:${port} reachable (auth check unavailable)` };
+    exists = false;
   }
-  const client = new pg.default.Client({ connectionString: url, connectionTimeoutMillis: 3_000 });
-  try {
-    await client.connect();
-    await client.end();
-    return { name: "postgres-url", status: "ok", message: `${host}:${port} reachable, credentials accepted` };
-  } catch (err) {
+
+  if (!exists) {
     try {
-      await client.end();
+      await access(dir, fsConstants.W_OK);
     } catch {
-      // already failed to connect; nothing to close
-    }
-    const code = (err as { code?: string }).code;
-    const detail = err instanceof Error ? err.message : String(err);
-    if (code === "28P01" || code === "28000") {
       return {
-        name: "postgres-url",
+        name: "config-store",
         status: "fail",
-        message: `${host}:${port} rejected the credentials in POSTGRES_URL`,
+        message: `${dir} is not writable by uid ${process.getuid?.() ?? "?"} — the config store cannot be created`,
         remediation:
-          "fix the user/password in POSTGRES_URL — or, for local dev, `unset POSTGRES_URL` and let scripts/start-connector.sh supply the default",
+          "chown the state volume to the connector's user (the container entrypoint does this before dropping privileges; a pre-provisioned or read-only mount does not)",
       };
     }
-    if (code === "3D000") {
-      return {
-        name: "postgres-url",
-        status: "fail",
-        message: `${host}:${port} has no such database (${redact(url)})`,
-        remediation:
-          "create the database, or `unset POSTGRES_URL` for local dev so scripts/start-connector.sh picks the compose default",
-      };
-    }
+    return { name: "config-store", status: "ok", message: `${path} absent — will be created at boot (configure via the inspector)` };
+  }
+
+  try {
+    await access(path, fsConstants.R_OK | fsConstants.W_OK);
+  } catch {
     return {
-      name: "postgres-url",
-      status: "warn",
-      message: `${host}:${port} reachable but the connection failed: ${detail}`,
+      name: "config-store",
+      status: "fail",
+      message: `${path} exists but is not readable+writable by uid ${process.getuid?.() ?? "?"}`,
+      remediation: "chown the file to the connector's user and set mode 0600",
     };
   }
+
+  let doc;
+  try {
+    doc = readDoc(path);
+  } catch (error) {
+    return {
+      name: "config-store",
+      status: "fail",
+      message: (error as Error).message,
+      remediation: "restore from a backup, or move the file aside to start fresh (this discards the tunnel identity)",
+    };
+  }
+
+  // Fingerprint mismatch is fatal at boot, so surface it here. Only checked
+  // when the key itself resolves — checkKeyFile already owns that failure and
+  // reporting it twice would just be noise.
+  try {
+    const key = resolveMasterKey(env);
+    if (doc.keyFingerprint !== key.fingerprint) {
+      return {
+        name: "config-store",
+        status: "fail",
+        message: `${path} was sealed with a different master key`,
+        remediation: "restore the original CONNECTOR_KEY_FILE, or move the store aside and re-add the controller via the inspector",
+      };
+    }
+  } catch {
+    return { name: "config-store", status: "warn", message: `${path} parsed; key fingerprint unverified (see connector-key-file)` };
+  }
+
+  const controllers = doc.controllers.length;
+  return {
+    name: "config-store",
+    status: "ok",
+    message: `${path} valid, key matches${controllers === 0 ? ", no controller configured yet" : ""}`,
+  };
 }
 
 // ---- helpers ----
 
-function safeParseUrl(raw: string): URL | null {
-  try {
-    return new URL(raw);
-  } catch {
-    return null;
-  }
-}
 
-function redact(url: string): string {
-  // Postgres URLs typically embed the password; strip it for log output.
-  return url.replace(/(:\/\/[^:]+:)[^@]+@/, "$1***@");
-}
 
-async function tcpProbe(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  const net = await import("node:net");
-  return new Promise<boolean>((resolveP) => {
-    const socket = new net.Socket();
-    let done = false;
-    const finish = (ok: boolean) => {
-      if (done) return;
-      done = true;
-      socket.destroy();
-      resolveP(ok);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once("connect", () => finish(true));
-    socket.once("timeout", () => finish(false));
-    socket.once("error", () => finish(false));
-    socket.connect(port, host);
-  });
-}
 
 async function probePort(port: number): Promise<boolean> {
   return new Promise<boolean>((resolveP) => {

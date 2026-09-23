@@ -1,8 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { ConfigStore } from "../../src/config-store/index.js";
-import { initSodium } from "../../src/config-store/seal.js";
-import { randomBytes, createHash } from "node:crypto";
-import pg from "pg";
+import { openTempStore, type StoreFixture } from "../helpers/config-store.js";
 
 // CONNECTOR-NETWORK-EXPOSURE — network_access.enabled gates ONLY the
 // machine API (POST /oauth/token) being reachable non-loopback. There is
@@ -10,59 +8,17 @@ import pg from "pg";
 // unconditionally, forever.
 
 describe("ConfigStore — network access state + API clients", () => {
-  const TEST_SCHEMA = "test_mcp_connector_netaccess_" + Date.now();
+  let fixture: StoreFixture;
   let store: ConfigStore | undefined;
-  let pool: pg.Pool;
-  let masterKey: { bytes: Buffer; fingerprint: string };
-
-  beforeAll(async () => {
-    const url = process.env.POSTGRES_URL;
-    if (!url) {
-      throw new Error(
-        "POSTGRES_URL must be set for this integration test. Example: postgres://mcp:{PASSWORD}@localhost:5433/mcp_connector"
-      );
-    }
-
-    await initSodium();
-
-    const keyBytes = randomBytes(32);
-    const fingerprint = createHash("sha256").update(keyBytes).digest("hex");
-    masterKey = { bytes: keyBytes, fingerprint };
-
-    process.env.POSTGRES_SCHEMA = TEST_SCHEMA;
-
-    pool = new pg.Pool({ connectionString: url });
-    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${TEST_SCHEMA}`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.network_access CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.api_clients CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.controllers CASCADE`);
-    await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.encryption_meta CASCADE`);
-  });
-
-  afterAll(async () => {
-    if (store) {
-      await store.close();
-      store = undefined;
-    }
-    if (pool) {
-      await pool.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
-      await pool.end();
-    }
-    delete process.env.POSTGRES_SCHEMA;
-  });
 
   beforeEach(async () => {
-    if (store) {
-      await store.close();
-      store = undefined;
-    }
-    if (pool) {
-      await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.network_access CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.api_clients CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.controllers CASCADE`);
-      await pool.query(`DROP TABLE IF EXISTS ${TEST_SCHEMA}.encryption_meta CASCADE`);
-    }
-    store = await ConfigStore.open(masterKey);
+    fixture = await openTempStore();
+    store = fixture.store;
+  });
+
+  afterEach(async () => {
+    await fixture.cleanup();
+    store = undefined;
   });
 
   describe("getNetworkAccessState()", () => {

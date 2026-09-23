@@ -29,10 +29,11 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Auto-provision the dev Postgres + crm DB if MOCK_POSTGRES_URL isn't already
-# set. Mirrors scripts/start-connector.sh's POSTGRES_URL bootstrap so either
-# script can run first on a fresh clone. The compose file only seeds
-# `mcp_connector`; `crm` is the mock-backend's DB and needs a separate
-# CREATE (idempotent — the pg_database probe skips it on subsequent runs).
+# set. This script is now the ONLY consumer of the dev Postgres — the connector
+# used to bootstrap it too for its own config store, until DB-TO-FILE made that
+# a sealed JSON file. The compose file only seeds `mcp_connector` (a vestigial
+# name kept for the readiness probe); `crm` is the mock-backend's DB and needs a
+# separate CREATE (idempotent — the pg_database probe skips it on later runs).
 if [ -z "${MOCK_POSTGRES_URL:-}" ]; then
   if ! docker ps --filter "name=$DEV_PG_CONTAINER" --format '{{.Names}}' | grep -q .; then
     echo "[mock-customers] starting dev Postgres ($DEV_PG_CONTAINER)..."

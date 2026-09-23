@@ -1,3 +1,18 @@
+# Dev-only Postgres for the `crm` demo's mock backend
+# (examples/mock-backend/). Started for you by scripts/start-mock-server.sh.
+#
+# NOT the connector's config store. It used to be — the connector kept its
+# sealed `controllers` row here — but DB-TO-FILE replaced that with a sealed
+# JSON file on the state volume, so the connector needs no database at all.
+# This file survives only because the mock CRM backend is genuinely
+# Postgres-backed (swapping it for a real Salesforce/Zendesk is a mock-side
+# change; the drop-in stays a `fetch` client).
+#
+# POSTGRES_DB below seeds `mcp_connector` and that name is now vestigial —
+# start-mock-server.sh uses it for the readiness probe and then CREATEs the
+# `crm` database it actually wants. Renaming it would only reseed on a fresh
+# volume, so it is left alone deliberately.
+
 services:
   postgres:
     image: postgres:16

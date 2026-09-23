@@ -306,10 +306,10 @@ export class Inspector {
     this.broadcast({ kind: "identity", identity });
   }
 
-  // Update the controller URL shown in the top-of-page header. Under db
-  // mode the inspector is constructed with a placeholder URL before the
-  // controllers row loads; bootFromDb calls this once the row is
-  // available (initial dial + inspector-triggered configure/rotate).
+  // Update the controller URL shown in the top-of-page header. The inspector
+  // is constructed with a placeholder URL before the config store's controller
+  // record loads; bootFromDb calls this once the record is available (initial
+  // dial + inspector-triggered configure/rotate).
   setControllerUrl(controllerUrl: string): void {
     this.current.controllerUrl = controllerUrl;
     this.broadcast({ kind: "controllerUrl", controllerUrl });

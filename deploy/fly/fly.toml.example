@@ -10,8 +10,8 @@
 # See CODE-DEPLOY design record §B1 for the full analysis. The
 # scaffold CLI (`mcp-connector deploy init --target fly`) writes to
 # `.` by default for this reason. To then actually deploy, use
-# `mcp-connector deploy apply --target fly` (creates the app, attaches
-# Postgres, mints the master key, provisions the state volume, and runs
+# `mcp-connector deploy apply --target fly` (creates the app, mints the
+# master key, provisions the state volume, and runs
 # `fly deploy` — idempotent, safe to re-run).
 #
 # ── Load-bearing invariants ────────────────────────────────────────────
@@ -31,7 +31,7 @@
 #     min_machines_running block. If you ever add [[services]], you MUST
 #     also set auto_stop_machines = false to keep the WSS alive.
 #
-#   - Single Machine per CONNECTOR_NAME. `fly scale count 1` — the
+#   - Single Machine per connector identity. `fly scale count 1` — the
 #     controller's dup-name guard 409s a second registration under the
 #     same name. Multi-replica is a future workstream.
 
@@ -55,7 +55,7 @@ primary_region = "iad"
   # C4 (security hardening) — acknowledge non-loopback bind explicitly.
   # The connector refuses to start otherwise. Requires `fly ips list` empty.
   INSPECTOR_ALLOW_NONLOOPBACK = "1"
-  # POSTGRES_URL and CONNECTOR_KEY_B64 arrive via `fly secrets set` — see README.
+  # CONNECTOR_KEY_B64 arrives via `fly secrets set` — the only secret. See README.
 
 [[mounts]]
   source = "state"

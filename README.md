@@ -78,7 +78,7 @@ Three shapes, in order of increasing surface area:
 
 1. **Single VM / docker compose.** See [`deploy/compose/README.md`](deploy/compose/README.md).
 2. **CLI-driven deploy.** Two commands: `mcp-connector deploy init --target
-   {fargate|gke|aca|compose|fly}` emits manifests with your `CONNECTOR_NAME` +
+   {fargate|aca|compose|fly}` emits manifests with your image reference
    `CONTROLLER_URL` substituted in; then `mcp-connector deploy apply --target
    <t>` actually applies to the cloud. `apply` is implemented for `--target
    fly` today (spawns Fly's CLI directly with idempotency guards); other

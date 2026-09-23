@@ -1,9 +1,17 @@
-import pg from "pg";
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { envString, envOptional } from "../env.js";
-import { schemaSql } from "./schema.js";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { existsSync } from "node:fs";
 import { MasterKey } from "./master-key.js";
 import { seal, open } from "./seal.js";
+import {
+  ensureStateDir,
+  emptyDoc,
+  readDoc,
+  resolveStatePath,
+  writeDocAtomic,
+  type ApiClientDoc,
+  type ControllerDoc,
+  type StoreDoc,
+} from "./store-file.js";
 import type { TrustedIssuerConfig } from "../auth/jwt.js";
 
 export interface ControllerRow {
@@ -48,155 +56,224 @@ export interface ApiClientSummary {
   revokedAt: Date | null;
 }
 
+const iso = (d: Date): string => d.toISOString();
+const toDate = (s: string): Date => new Date(s);
+const toDateOrNull = (s: string | null): Date | null => (s === null ? null : new Date(s));
+const b64 = (buf: Buffer): string => buf.toString("base64");
+const unb64 = (s: string): Buffer => Buffer.from(s, "base64");
+
+/**
+ * The connector's configuration store, backed by a sealed JSON file on the
+ * state volume. See architectural-plans/DB-TO-FILE.md.
+ *
+ * Every public method signature is unchanged from the Postgres implementation
+ * this replaced, so no caller moved. Methods stay `async` even though the
+ * backend is synchronous file I/O — changing signatures would touch every
+ * caller for no benefit, and leaves room for a future backend.
+ */
 export class ConfigStore {
-  constructor(private pool: pg.Pool, private schema: string, private key: MasterKey) {}
+  /**
+   * Serialises mutations. Postgres was arbitrating writes for us and this is
+   * the one thing lost in the swap, so it is designed in rather than patched
+   * on: two in-process writers exist — the inspector's routes, and the
+   * frame-router persisting a registration token after register-ack. With
+   * whole-file read-modify-write, an interleaving would let the frame-router
+   * write back a stale document and silently discard an operator's Configure
+   * Tunnel submit.
+   *
+   * The read happens INSIDE the lock (see `mutate`), which is what makes this
+   * correct — a read taken before queueing would reintroduce the same race.
+   */
+  private writeQueue: Promise<unknown> = Promise.resolve();
+
+  constructor(private path: string, private key: MasterKey) {}
 
   static async open(masterKey: MasterKey): Promise<ConfigStore> {
-    const url = envString("POSTGRES_URL", "");
-    if (!url) throw new Error("POSTGRES_URL is required.");
-    const schema = envOptional("POSTGRES_SCHEMA") ?? "mcp_connector";
-    const pool = new pg.Pool({ connectionString: url, max: 5 });
-    await pool.query(schemaSql(schema));
-    // Fingerprint check
-    const { rows } = await pool.query(`SELECT key_fingerprint FROM ${schema}.encryption_meta WHERE id=1`);
-    if (rows.length === 0) {
-      await pool.query(`INSERT INTO ${schema}.encryption_meta (id, key_fingerprint) VALUES (1, $1)`, [masterKey.fingerprint]);
-    } else if (rows[0].key_fingerprint !== masterKey.fingerprint) {
-      throw new Error("master key does not match the fingerprint recorded on first migration. Restore the original key or wipe the mcp_connector schema and re-add via the inspector.");
+    const path = resolveStatePath();
+    ensureStateDir(path);
+
+    if (!existsSync(path)) {
+      // Write the initial document NOW rather than on first mutation. Parity
+      // with the old `INSERT INTO encryption_meta` on first boot, and it turns
+      // an unwritable state directory into a boot failure instead of a failure
+      // on the operator's first Configure Tunnel submit — the lazy-write trap
+      // that made agentic-memory's EACCES look like a healthy deploy.
+      writeDocAtomic(path, emptyDoc(masterKey.fingerprint));
+      return new ConfigStore(path, masterKey);
     }
-    return new ConfigStore(pool, schema, masterKey);
+
+    const doc = readDoc(path);
+    if (doc.keyFingerprint !== masterKey.fingerprint) {
+      throw new Error(
+        `master key does not match the fingerprint recorded in ${path}. ` +
+        `Restore the original key, or move that file aside and re-add the ` +
+        `controller via the inspector (which discards the sealed tunnel identity).`,
+      );
+    }
+    return new ConfigStore(path, masterKey);
   }
 
-  async getController(): Promise<ControllerRow | null> {
-    const { rows } = await this.pool.query(
-      `SELECT * FROM ${this.schema}.controllers LIMIT 1`
-    );
-    if (rows.length === 0) return null;
-    const r = rows[0];
+  private read(): StoreDoc {
+    return readDoc(this.path);
+  }
+
+  /**
+   * Read-modify-write under the queue. `fn` mutates the document in place and
+   * may return a value; the document is written once `fn` resolves.
+   */
+  private mutate<T>(fn: (doc: StoreDoc) => T): Promise<T> {
+    const run = this.writeQueue.then(() => {
+      const doc = this.read();
+      const result = fn(doc);
+      writeDocAtomic(this.path, doc);
+      return result;
+    });
+    // Keep the chain alive after a rejection, else one failed mutation would
+    // wedge every later write. Callers still see their own rejection via `run`.
+    this.writeQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private hydrate(c: ControllerDoc): ControllerRow {
     return {
-      id: r.id,
-      name: r.name,
-      controllerUrl: r.controller_url,
-      connectorName: r.connector_name,
-      environment: r.environment,
-      authMode: r.auth_mode,
-      tunnelAuthToken: r.tunnel_auth_token_ct ? open(r.tunnel_auth_token_ct, this.key.bytes).toString("utf8") : null,
-      oauthClientId: r.oauth_client_id,
-      oauthClientSecret: r.oauth_client_secret_ct ? open(r.oauth_client_secret_ct, this.key.bytes).toString("utf8") : null,
-      oauthTokenUrl: r.oauth_token_url,
-      registrationToken: r.registration_token_ct ? open(r.registration_token_ct, this.key.bytes).toString("utf8") : null,
-      enabled: r.enabled,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      lastConnectedAt: r.last_connected_at,
-      lastDisconnectReason: r.last_disconnect_reason,
+      id: c.id,
+      name: c.name,
+      controllerUrl: c.controllerUrl,
+      connectorName: c.connectorName,
+      environment: c.environment,
+      authMode: c.authMode,
+      tunnelAuthToken: c.tunnelAuthTokenCt
+        ? open(unb64(c.tunnelAuthTokenCt), this.key.bytes).toString("utf8")
+        : null,
+      oauthClientId: c.oauthClientId,
+      oauthClientSecret: c.oauthClientSecretCt
+        ? open(unb64(c.oauthClientSecretCt), this.key.bytes).toString("utf8")
+        : null,
+      oauthTokenUrl: c.oauthTokenUrl,
+      registrationToken: c.registrationTokenCt
+        ? open(unb64(c.registrationTokenCt), this.key.bytes).toString("utf8")
+        : null,
+      enabled: c.enabled,
+      createdAt: toDate(c.createdAt),
+      updatedAt: toDate(c.updatedAt),
+      lastConnectedAt: toDateOrNull(c.lastConnectedAt),
+      lastDisconnectReason: c.lastDisconnectReason,
     };
   }
 
+  async getController(): Promise<ControllerRow | null> {
+    const doc = this.read();
+    const c = doc.controllers[0];
+    return c ? this.hydrate(c) : null;
+  }
+
   async upsertController(input: ControllerInput): Promise<ControllerRow> {
-    // Validate input
     if (!input.name || !input.controllerUrl || !input.connectorName) {
       throw new Error("name, controllerUrl, and connectorName are required");
     }
 
-    // Check if row exists to determine if this is INSERT or UPDATE.
-    // We also read the prior authMode + sealed-secret presence so we can
-    // relax the "secret is required" rule when the caller is only updating
-    // display fields — the SQL COALESCE at the bottom of this method
-    // preserves the existing sealed value when the caller omits the secret.
-    // Preservation is only valid when the authMode is UNCHANGED; a switch
-    // between static-bearer and oauth2-cc must always supply the new secret.
-    const { rows: existing } = await this.pool.query(
-      `SELECT id, auth_mode, tunnel_auth_token_ct, oauth_client_secret_ct FROM ${this.schema}.controllers LIMIT 1`
-    );
-    const priorRow = existing[0] as
-      | { id: string; auth_mode: "static-bearer" | "oauth2-cc"; tunnel_auth_token_ct: Buffer | null; oauth_client_secret_ct: Buffer | null }
-      | undefined;
-    const canPreserveTunnelAuthToken = priorRow?.auth_mode === "static-bearer" && priorRow?.tunnel_auth_token_ct !== null;
-    const canPreserveOauthClientSecret = priorRow?.auth_mode === "oauth2-cc" && priorRow?.oauth_client_secret_ct !== null;
+    return this.mutate((doc) => {
+      // Read the prior authMode + sealed-secret presence so the "secret is
+      // required" rule relaxes when the caller is only updating display
+      // fields. Preservation is valid ONLY when authMode is unchanged; a
+      // switch between static-bearer and oauth2-cc must supply the new secret.
+      const prior = doc.controllers[0];
+      const canPreserveTunnelAuthToken =
+        prior?.authMode === "static-bearer" && prior?.tunnelAuthTokenCt !== null;
+      const canPreserveOauthClientSecret =
+        prior?.authMode === "oauth2-cc" && prior?.oauthClientSecretCt !== null;
 
-    if (input.authMode === "static-bearer" && !input.tunnelAuthToken && !canPreserveTunnelAuthToken) {
-      throw new Error("tunnelAuthToken is required when authMode is static-bearer");
-    }
-    if (input.authMode === "oauth2-cc") {
-      if (!input.oauthClientId || !input.oauthTokenUrl) {
-        throw new Error("oauthClientId and oauthTokenUrl are required when authMode is oauth2-cc");
+      if (input.authMode === "static-bearer" && !input.tunnelAuthToken && !canPreserveTunnelAuthToken) {
+        throw new Error("tunnelAuthToken is required when authMode is static-bearer");
       }
-      if (!input.oauthClientSecret && !canPreserveOauthClientSecret) {
-        throw new Error("oauthClientSecret is required when authMode is oauth2-cc");
+      if (input.authMode === "oauth2-cc") {
+        if (!input.oauthClientId || !input.oauthTokenUrl) {
+          throw new Error("oauthClientId and oauthTokenUrl are required when authMode is oauth2-cc");
+        }
+        if (!input.oauthClientSecret && !canPreserveOauthClientSecret) {
+          throw new Error("oauthClientSecret is required when authMode is oauth2-cc");
+        }
       }
-    }
 
-    const id = priorRow ? priorRow.id : crypto.randomUUID();
-    const now = new Date();
+      const now = iso(new Date());
+      const nextTunnelCt =
+        input.authMode === "static-bearer" && input.tunnelAuthToken
+          ? b64(seal(Buffer.from(input.tunnelAuthToken, "utf8"), this.key.bytes))
+          : null;
+      const nextOauthCt =
+        input.authMode === "oauth2-cc" && input.oauthClientSecret
+          ? b64(seal(Buffer.from(input.oauthClientSecret, "utf8"), this.key.bytes))
+          : null;
 
-    // Encrypt secrets
-    const tunnelAuthTokenCt = input.authMode === "static-bearer" && input.tunnelAuthToken
-      ? seal(Buffer.from(input.tunnelAuthToken, "utf8"), this.key.bytes)
-      : null;
-    const oauthClientSecretCt = input.authMode === "oauth2-cc" && input.oauthClientSecret
-      ? seal(Buffer.from(input.oauthClientSecret, "utf8"), this.key.bytes)
-      : null;
+      const next: ControllerDoc = {
+        id: prior ? prior.id : randomUUID(),
+        name: input.name,
+        controllerUrl: input.controllerUrl,
+        connectorName: input.connectorName,
+        environment: input.environment,
+        authMode: input.authMode,
+        // `?? prior` mirrors the old SQL COALESCE(EXCLUDED.x, controllers.x).
+        // Note the inherited quirk this preserves deliberately: switching to
+        // the other posture leaves the previous posture's sealed secret in
+        // place, because the incoming value is null. It is unreachable — the
+        // authMode decides which one callers read — so behaviour parity wins
+        // over tidying it up during a backend swap.
+        tunnelAuthTokenCt: nextTunnelCt ?? prior?.tunnelAuthTokenCt ?? null,
+        oauthClientId: input.oauthClientId ?? null,
+        oauthClientSecretCt: nextOauthCt ?? prior?.oauthClientSecretCt ?? null,
+        oauthTokenUrl: input.oauthTokenUrl ?? null,
+        registrationTokenCt: prior?.registrationTokenCt ?? null,
+        enabled: prior?.enabled ?? true,
+        createdAt: prior?.createdAt ?? now,
+        updatedAt: now,
+        lastConnectedAt: prior?.lastConnectedAt ?? null,
+        lastDisconnectReason: prior?.lastDisconnectReason ?? null,
+      };
 
-    await this.pool.query(
-      `INSERT INTO ${this.schema}.controllers (
-        id, name, controller_url, connector_name, environment, auth_mode,
-        tunnel_auth_token_ct, oauth_client_id, oauth_client_secret_ct, oauth_token_url,
-        enabled, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, $11, $11)
-      ON CONFLICT (id) DO UPDATE SET
-        name = EXCLUDED.name,
-        controller_url = EXCLUDED.controller_url,
-        connector_name = EXCLUDED.connector_name,
-        environment = EXCLUDED.environment,
-        auth_mode = EXCLUDED.auth_mode,
-        tunnel_auth_token_ct = COALESCE(EXCLUDED.tunnel_auth_token_ct, ${this.schema}.controllers.tunnel_auth_token_ct),
-        oauth_client_id = EXCLUDED.oauth_client_id,
-        oauth_client_secret_ct = COALESCE(EXCLUDED.oauth_client_secret_ct, ${this.schema}.controllers.oauth_client_secret_ct),
-        oauth_token_url = EXCLUDED.oauth_token_url,
-        updated_at = EXCLUDED.updated_at`,
-      [
-        id, input.name, input.controllerUrl, input.connectorName, input.environment, input.authMode,
-        tunnelAuthTokenCt, input.oauthClientId ?? null, oauthClientSecretCt, input.oauthTokenUrl ?? null,
-        now,
-      ]
-    );
-
-    return this.getController() as Promise<ControllerRow>;
+      doc.controllers = [next];
+      return this.hydrate(next);
+    });
   }
 
   async updateRegistrationToken(id: string, token: string): Promise<void> {
-    const tokenCt = seal(Buffer.from(token, "utf8"), this.key.bytes);
-    await this.pool.query(
-      `UPDATE ${this.schema}.controllers SET registration_token_ct = $1, updated_at = now() WHERE id = $2`,
-      [tokenCt, id]
-    );
+    const ct = b64(seal(Buffer.from(token, "utf8"), this.key.bytes));
+    await this.mutate((doc) => {
+      const c = doc.controllers.find((x) => x.id === id);
+      if (!c) return;
+      c.registrationTokenCt = ct;
+      c.updatedAt = iso(new Date());
+    });
   }
 
   async clearRegistrationToken(id: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE ${this.schema}.controllers SET registration_token_ct = NULL, updated_at = now() WHERE id = $1`,
-      [id]
-    );
+    await this.mutate((doc) => {
+      const c = doc.controllers.find((x) => x.id === id);
+      if (!c) return;
+      c.registrationTokenCt = null;
+      c.updatedAt = iso(new Date());
+    });
   }
 
   async recordConnect(id: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE ${this.schema}.controllers SET last_connected_at = now() WHERE id = $1`,
-      [id]
-    );
+    await this.mutate((doc) => {
+      const c = doc.controllers.find((x) => x.id === id);
+      if (c) c.lastConnectedAt = iso(new Date());
+    });
   }
 
   async recordDisconnect(id: string, reason: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE ${this.schema}.controllers SET last_disconnect_reason = $1 WHERE id = $2`,
-      [reason, id]
-    );
+    await this.mutate((doc) => {
+      const c = doc.controllers.find((x) => x.id === id);
+      if (c) c.lastDisconnectReason = reason;
+    });
   }
 
   async deleteController(): Promise<boolean> {
-    const { rowCount } = await this.pool.query(`DELETE FROM ${this.schema}.controllers`);
-    return (rowCount ?? 0) > 0;
+    return this.mutate((doc) => {
+      const had = doc.controllers.length > 0;
+      doc.controllers = [];
+      return had;
+    });
   }
 
   // ─── Network access ─────────────────────────────────────────────────────
@@ -205,60 +282,43 @@ export class ConfigStore {
   // unconditionally, forever (see CLAUDE.md "Inspector UI notes").
 
   async getNetworkAccessState(): Promise<NetworkAccessState> {
-    const { rows } = await this.pool.query(
-      `SELECT enabled FROM ${this.schema}.network_access WHERE id=1`
-    );
-    return { enabled: rows[0]?.enabled ?? false };
+    return { enabled: this.read().networkAccess.enabled };
   }
 
   // Called once, the first time an operator adds an API client — never
   // reverts automatically, even if every client is later removed.
   async setNetworkAccessEnabled(enabled: boolean): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO ${this.schema}.network_access (id, enabled, updated_at)
-       VALUES (1, $1, now())
-       ON CONFLICT (id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
-      [enabled]
-    );
+    await this.mutate((doc) => {
+      doc.networkAccess.enabled = enabled;
+    });
   }
 
   // ─── Federated JWT trust config ─────────────────────────────────────────
-  // Presence (all three columns non-null) = federated mode configured. Not
-  // sealed — issuer/JWKS URL/audience are public IdP metadata, not secrets.
-  // The three columns move together: set writes all three, clear nulls all
-  // three, get returns undefined unless all three are present.
+  // Presence = federated mode configured. Not sealed — issuer/JWKS URL/
+  // audience are public IdP metadata, not secrets. The three fields move
+  // together: set writes all three, clear nulls the lot, get returns
+  // undefined unless all three are present.
 
   async getTrustedIssuerConfig(): Promise<TrustedIssuerConfig | undefined> {
-    const { rows } = await this.pool.query(
-      `SELECT issuer, jwks_url, audience FROM ${this.schema}.trusted_issuer_config WHERE id=1`
-    );
-    const r = rows[0];
-    if (!r || r.issuer === null || r.jwks_url === null || r.audience === null) return undefined;
-    return { issuer: r.issuer, jwksUrl: r.jwks_url, audience: r.audience };
+    const t = this.read().trustedIssuer;
+    if (!t || !t.issuer || !t.jwksUrl || !t.audience) return undefined;
+    return { issuer: t.issuer, jwksUrl: t.jwksUrl, audience: t.audience };
   }
 
-  // Upsert — this table only ever has the one row (id=1), same idiom as
-  // setNetworkAccessEnabled.
   async setTrustedIssuerConfig(config: TrustedIssuerConfig): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO ${this.schema}.trusted_issuer_config (id, issuer, jwks_url, audience, updated_at)
-       VALUES (1, $1, $2, $3, now())
-       ON CONFLICT (id) DO UPDATE SET
-         issuer = EXCLUDED.issuer,
-         jwks_url = EXCLUDED.jwks_url,
-         audience = EXCLUDED.audience,
-         updated_at = now()`,
-      [config.issuer, config.jwksUrl, config.audience]
-    );
+    await this.mutate((doc) => {
+      doc.trustedIssuer = {
+        issuer: config.issuer,
+        jwksUrl: config.jwksUrl,
+        audience: config.audience,
+      };
+    });
   }
 
   async clearTrustedIssuerConfig(): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO ${this.schema}.trusted_issuer_config (id, issuer, jwks_url, audience, updated_at)
-       VALUES (1, NULL, NULL, NULL, now())
-       ON CONFLICT (id) DO UPDATE SET
-         issuer = NULL, jwks_url = NULL, audience = NULL, updated_at = now()`
-    );
+    await this.mutate((doc) => {
+      doc.trustedIssuer = null;
+    });
   }
 
   // ─── Machine-API client credentials ────────────────────────────────────
@@ -266,12 +326,16 @@ export class ConfigStore {
   async mintApiClient(name?: string): Promise<{ clientId: string; clientSecret: string }> {
     const clientId = randomBytes(16).toString("hex");
     const clientSecret = randomBytes(32).toString("base64url");
-    const ct = seal(Buffer.from(clientSecret, "utf8"), this.key.bytes);
-    await this.pool.query(
-      `INSERT INTO ${this.schema}.api_clients (client_id, client_secret_ct, name, created_at)
-       VALUES ($1, $2, $3, now())`,
-      [clientId, ct, name ?? null]
-    );
+    const entry: ApiClientDoc = {
+      clientId,
+      clientSecretCt: b64(seal(Buffer.from(clientSecret, "utf8"), this.key.bytes)),
+      name: name ?? null,
+      createdAt: iso(new Date()),
+      revokedAt: null,
+    };
+    await this.mutate((doc) => {
+      doc.apiClients.push(entry);
+    });
     return { clientId, clientSecret };
   }
 
@@ -279,49 +343,54 @@ export class ConfigStore {
   // false — callers must not distinguish the two in their error response
   // (OAuth2 §5.2 invalid_client shape).
   async verifyApiClient(clientId: string, clientSecret: string): Promise<boolean> {
-    if (typeof clientId !== "string" || typeof clientSecret !== "string" || clientSecret.length === 0) return false;
-    const { rows } = await this.pool.query(
-      `SELECT client_secret_ct FROM ${this.schema}.api_clients WHERE client_id=$1 AND revoked_at IS NULL`,
-      [clientId]
+    if (typeof clientId !== "string" || typeof clientSecret !== "string" || clientSecret.length === 0) {
+      return false;
+    }
+    const entry = this.read().apiClients.find(
+      (c) => c.clientId === clientId && c.revokedAt === null,
     );
-    const sealedSecret = rows[0]?.client_secret_ct as Buffer | undefined;
-    if (!sealedSecret) return false;
-    const known = open(sealedSecret, this.key.bytes);
+    if (!entry) return false;
+    const known = open(unb64(entry.clientSecretCt), this.key.bytes);
     const supplied = Buffer.from(clientSecret, "utf8");
     if (known.length !== supplied.length) return false;
     return timingSafeEqual(known, supplied);
   }
 
   async revokeApiClient(clientId: string): Promise<boolean> {
-    const { rowCount } = await this.pool.query(
-      `UPDATE ${this.schema}.api_clients SET revoked_at = now() WHERE client_id=$1 AND revoked_at IS NULL`,
-      [clientId]
-    );
-    return (rowCount ?? 0) > 0;
+    return this.mutate((doc) => {
+      const entry = doc.apiClients.find((c) => c.clientId === clientId && c.revokedAt === null);
+      if (!entry) return false;
+      entry.revokedAt = iso(new Date());
+      return true;
+    });
   }
 
-  // Hard-deletes the row. Only ever allowed for an ALREADY-revoked client
+  // Hard-deletes the entry. Only ever allowed for an ALREADY-revoked client
   // — enforced here, not just in the UI, so a caller can't skip straight
   // to deleting a still-active credential without revoking it first.
   async deleteApiClient(clientId: string): Promise<boolean> {
-    const { rowCount } = await this.pool.query(
-      `DELETE FROM ${this.schema}.api_clients WHERE client_id=$1 AND revoked_at IS NOT NULL`,
-      [clientId]
-    );
-    return (rowCount ?? 0) > 0;
+    return this.mutate((doc) => {
+      const before = doc.apiClients.length;
+      doc.apiClients = doc.apiClients.filter(
+        (c) => !(c.clientId === clientId && c.revokedAt !== null),
+      );
+      return doc.apiClients.length < before;
+    });
   }
 
   async listApiClients(): Promise<ApiClientSummary[]> {
-    const { rows } = await this.pool.query(
-      `SELECT client_id, name, created_at, revoked_at FROM ${this.schema}.api_clients ORDER BY created_at`
-    );
-    return rows.map((r) => ({
-      clientId: r.client_id,
-      name: r.name,
-      createdAt: r.created_at,
-      revokedAt: r.revoked_at,
-    }));
+    return this.read()
+      .apiClients.slice()
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((c) => ({
+        clientId: c.clientId,
+        name: c.name,
+        createdAt: toDate(c.createdAt),
+        revokedAt: toDateOrNull(c.revokedAt),
+      }));
   }
 
-  async close(): Promise<void> { await this.pool.end(); }
+  // Retained for interface parity — there is no pool to drain now. Callers
+  // (tests, shutdown paths) still call it.
+  async close(): Promise<void> {}
 }

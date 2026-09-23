@@ -87,15 +87,17 @@ secret, use a small init container or sidecar that writes the secret into
 the shared volume; or build a derived image with the YAML baked in and use
 `${TUNNEL_AUTH_TOKEN:-}` / `${CONNECTOR_NAME:-}` interpolation at runtime.
 The `${VAR:-}` defaults are load-bearing — if a legacy `tunnel:` block is
-inherited under `db` mode (the default), interpolation must succeed even
-though these env vars are unset. Under `env` mode the container's task
-definition supplies real values via `envFrom` and interpolation resolves
-to them; under `db` mode the values are ignored (with a WARN at boot) and
-identity comes from the sealed Postgres row instead.
+inherited, interpolation must succeed even though these env vars are unset.
+There is no longer an "env mode" that supplies real values: identity comes
+from the sealed config store (`state/config.json` on the state volume) and is
+entered through the inspector's Configure Tunnel modal. The yaml block's
+values are ignored, with a WARN at boot. Safe to delete outright.
 
-`CONNECTOR_NAME` must match the Name on the controller's Tunnel Security
-row exactly (case-sensitive) — that's the lookup key the controller uses
-to find the row and bcrypt-compare the bearer.
+The connector name you type into that modal must match the Name on the
+controller's Tunnel Security row exactly (case-sensitive) — that's the lookup
+key the controller uses to find the row and bcrypt-compare the bearer. A
+mismatch surfaces only as HTTP 401 at the WS upgrade; nothing local detects it
+beforehand.
 
 ## Inspector UI
 

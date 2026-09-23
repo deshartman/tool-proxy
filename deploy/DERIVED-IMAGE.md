@@ -97,7 +97,7 @@ single-arch, drop the `--platform` flag.
 
 Retarget your existing manifests to your derived image tag — nothing else
 changes. All four `mcp-connector deploy init --target` outputs
-(`fargate` / `gke` / `aca` / `compose` / `fly`) accept a customer-owned
+(`fargate` / `aca` / `compose` / `fly`) accept a customer-owned
 image tag; there's no branching in the connector's runtime behavior.
 
 Examples:

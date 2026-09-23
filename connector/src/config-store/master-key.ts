@@ -7,8 +7,8 @@ export interface MasterKey {
   fingerprint: string;   // sha256 hex
 }
 
-export function resolveMasterKey(): MasterKey {
-  const path = envString("CONNECTOR_KEY_FILE", "");
+export function resolveMasterKey(env: NodeJS.ProcessEnv = process.env): MasterKey {
+  const path = envString("CONNECTOR_KEY_FILE", "", env);
   if (!path) throw new Error("CONNECTOR_KEY_FILE is required (path to a 32-byte master key file, mode 0600).");
   const st = statSync(path);
   const mode = st.mode & 0o777;
