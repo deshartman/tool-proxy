@@ -15,6 +15,7 @@ import { resolve as resolvePath, join } from "node:path";
 const REPO_ROOT = resolvePath(new URL("../../../", import.meta.url).pathname);
 const TF_DIR = resolvePath(REPO_ROOT, "deploy/terraform/aws-fargate");
 const TF_SCRATCH_DIR = resolvePath(TF_DIR, "examples/from-scratch");
+const TF_EC2_DIR = resolvePath(REPO_ROOT, "deploy/terraform/aws-ec2");
 const HELM_DIR = resolvePath(REPO_ROOT, "deploy/helm/mcp-connector");
 
 // Every `required` value the chart declares, in one place so a rename touches
@@ -98,7 +99,11 @@ describe("terraform module — filesystem invariants", () => {
   // `validate` does NOT catch — every defect the DB-TO-FILE work fixed in the
   // core module was valid HCL, which is why
   // tests/iac/terraform-fargate-boot.test.ts exists alongside this.
-  for (const [label, dir] of [["core module", TF_DIR], ["from-scratch example", TF_SCRATCH_DIR]] as const) {
+  for (const [label, dir] of [
+    ["core module", TF_DIR],
+    ["from-scratch example", TF_SCRATCH_DIR],
+    ["ec2 module", TF_EC2_DIR],
+  ] as const) {
     tfTest(`passes \`terraform validate\` — ${label}`, () => {
       // `terraform init -backend=false` is required before validate; both must
       // be quick. Skips entirely when terraform isn't installed.
@@ -295,5 +300,93 @@ describe("helm chart — filesystem invariants", () => {
     expect(output).toContain("name: CONNECTOR_KEY_FILE");
     expect(output).toContain("CONNECTOR_KEY_B64:");
     expect(output).toContain("mcp-connector:9.9.9-test");
+  });
+});
+
+// The EC2 module exists because `iam:PassRole` is denied on a standard PowerUser
+// permission set, which closes Fargate. Its whole value rests on needing no IAM
+// and opening no inbound port — two properties that a well-meaning edit ("just
+// add SSM", "open 22 so I can get in") would quietly destroy, leaving a module
+// that still applies cleanly.
+describe("terraform aws-ec2 — no IAM, no inbound surface", () => {
+  const EC2_DIR = resolvePath(REPO_ROOT, "deploy/terraform/aws-ec2");
+  const main = readFileSync(join(EC2_DIR, "main.tf"), "utf8");
+
+  const code = main
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+
+  it("the comment-stripper works (guards against vacuous passes)", () => {
+    expect(main).toMatch(/^\s*#/m);
+    expect(code).not.toMatch(/^\s*#/m);
+    expect(code).toContain('resource "aws_instance"');
+  });
+
+  it("attaches no instance profile", () => {
+    // The entire reason this module works: attaching one needs iam:PassRole.
+    expect(code).not.toMatch(/iam_instance_profile/);
+  });
+
+  it("creates no IAM resource of any kind", () => {
+    expect(code).not.toMatch(/resource "aws_iam_/);
+  });
+
+  it("admits only the EIC endpoint on 22, never a CIDR", () => {
+    // Slice the ingress BLOCK, not the resource: `indexOf("\n}")` stops at the
+    // first nested block's brace, which yielded an empty string and a test that
+    // would have passed on an empty file.
+    const sg = code.slice(code.indexOf('resource "aws_security_group" "instance"'));
+    const ingressStart = sg.indexOf("ingress {");
+    const ingress = sg.slice(ingressStart, sg.indexOf("egress {", ingressStart));
+    expect(ingress, "ingress block not found").not.toBe("");
+    expect(ingress).toMatch(/from_port\s*=\s*22/);
+    expect(ingress).toMatch(/security_groups\s*=\s*\[aws_security_group\.eice\.id\]/);
+    // A CIDR on the ingress rule is how this becomes internet-facing SSH.
+    expect(ingress, "instance ingress must not use a CIDR").not.toMatch(/cidr_blocks/);
+  });
+
+  it("never opens 9090 inbound", () => {
+    // The tunnel carries 9090 over the same SSH channel, so a rule for it buys
+    // nothing and would publish the Webhooks panel's bcrypt-protected URLs.
+    expect(code).not.toMatch(/from_port\s*=\s*9090/);
+  });
+
+  it("uses no SSH key pair", () => {
+    // EICE injects an ephemeral key. A key_name means key material someone has
+    // to hold and rotate.
+    expect(code).not.toMatch(/key_name/);
+  });
+
+  it("requires IMDSv2", () => {
+    // v1's unauthenticated GET is reachable from any process on the box,
+    // including a compromised MCP child.
+    expect(code).toMatch(/http_tokens\s*=\s*"required"/);
+  });
+
+  it("encrypts the root volume", () => {
+    expect(code).toMatch(/encrypted\s*=\s*true/);
+  });
+
+  it("refuses an instance type that cannot build or run the image", () => {
+    const variables = readFileSync(join(EC2_DIR, "variables.tf"), "utf8");
+    expect(variables).toMatch(/validation\s*\{/);
+    expect(variables).toMatch(/nano\|micro/);
+  });
+
+  it("tags the image so compose does not try to pull it", () => {
+    // The compose file resolves ghcr.io/twilio/mcp-connector:$MCP_VERSION, and
+    // ghcr issues no anonymous pull token — so a bare local tag leaves compose
+    // failing with an auth error that reads as a network problem.
+    expect(code).toMatch(/-t ghcr\.io\/twilio\/mcp-connector:local/);
+    expect(code).toMatch(/MCP_VERSION=local docker compose up -d/);
+  });
+
+  it("creates customer-mcps before compose can mount it", () => {
+    // The compose file bind-mounts ../../customer-mcps, which a fresh clone does
+    // not contain. Docker would create it root-owned and the scanner could not
+    // read it.
+    expect(code).toMatch(/mkdir -p \/opt\/mcp-shim\/customer-mcps/);
+    expect(code).toMatch(/chown 1000:1000 \/opt\/mcp-shim\/customer-mcps/);
   });
 });
