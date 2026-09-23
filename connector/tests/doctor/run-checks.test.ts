@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer, type Server } from "node:net";
+import { createServer as netCreateServer, type Server, type Socket } from "node:net";
+import { createServer, type AddressInfo } from "node:http";
 
 import { runChecks } from "../../src/doctor.js";
 
@@ -47,7 +48,7 @@ function seedEnvFile(root: string): void {
 // inspector often occupies that port on this machine).
 async function pickFreePort(): Promise<number> {
   const server = await new Promise<Server>((resolveP) => {
-    const s = createServer();
+    const s = netCreateServer();
     s.listen(0, "127.0.0.1", () => resolveP(s));
   });
   const addr = server.address();
@@ -334,13 +335,27 @@ describe("runChecks — common", () => {
   it("fails when inspector port is already in use", async () => {
     const { root, cleanup } = makeFixture();
     let server: Server | undefined;
+    const openSockets = new Set<Socket>();
     try {
       seedEnvFile(root);
       seedYaml(root);
       // Bind an ephemeral port ourselves, then feed it to doctor. This
       // proves the port-in-use branch without hard-coding a number.
+      // Raw TCP, deliberately: a listener that speaks no HTTP is the genuine
+      // conflict this branch reports. An HTTP server would now be probed for
+      // identity and could come back as "our own inspector".
+      //
+      // Sockets are tracked so cleanup can destroy them. The inspector-port
+      // check probes the holder over HTTP; this listener accepts and never
+      // replies, so the socket is still open when the probe aborts and
+      // `close()` would wait for it forever. net.Server has no
+      // closeAllConnections (that is http.Server), hence the manual set.
+      // Verified in isolation: tracked + destroyed, close() returns in 0ms.
       server = await new Promise<Server>((resolveP) => {
-        const s = createServer();
+        const s = netCreateServer((sock) => {
+          openSockets.add(sock);
+          sock.on("close", () => openSockets.delete(sock));
+        });
         s.listen(0, "127.0.0.1", () => resolveP(s));
       });
       const addr = server.address();
@@ -361,7 +376,10 @@ describe("runChecks — common", () => {
       expect(port?.status).toBe("fail");
       expect(port?.message).toMatch(/in use/);
     } finally {
-      if (server) await new Promise<void>((r) => server!.close(() => r()));
+      if (server) {
+        for (const sock of openSockets) sock.destroy();
+        await new Promise<void>((r) => server!.close(() => r()));
+      }
       cleanup();
     }
   });
@@ -462,6 +480,90 @@ describe("runChecks — mcp-tree probes the paths the scanner actually reads", (
       expect(tree?.remediation).not.toContain("mcp/local");
     } finally {
       cleanup();
+    }
+  });
+});
+
+// The inspector-port check was written for the `doctor && start` runbook, where
+// anything on the port is a real conflict. But `doctor` is also run against a
+// RUNNING container to answer "is my deployment healthy?" — and there the holder
+// is the connector being checked. A plain `fail` made every healthy deploy exit
+// 1, which was the only non-ok line on the live AWS connector.
+describe("inspector-port — self versus a genuine conflict", () => {
+  it("reports ok when the port is serving our own inspector", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<html><head><title>MCP Connector Inspector</title></head></html>");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const results = await runChecks({ INSPECTOR_PORT: String(port) }, { skipNetwork: false });
+      const check = results.find((c) => c.name === "inspector-port")!;
+      expect(check.status).toBe("ok");
+      expect(check.message).toContain("already running");
+    } finally {
+      // http.Server DOES have closeAllConnections (net.Server does not). The
+      // identity probe leaves a socket behind, so drop it before closing.
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  it("reports ok on a 403 — the loopback gate refusing us is proof of identity", async () => {
+    // Nothing else in this system answers 403 on `/`. Reached when doctor runs
+    // from outside the container while the inspector is bound non-loopback.
+    const server = createServer((_req, res) => {
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "forbidden: loopback only" }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const results = await runChecks({ INSPECTOR_PORT: String(port) }, { skipNetwork: false });
+      expect(results.find((c) => c.name === "inspector-port")!.status).toBe("ok");
+    } finally {
+      // http.Server DOES have closeAllConnections (net.Server does not). The
+      // identity probe leaves a socket behind, so drop it before closing.
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  it("still FAILS on an unrelated service — the conflict this check is for", async () => {
+    // The generous version of this check would mask a real collision, which is
+    // worse than the false FAIL it replaced.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<html><title>Some other app</title></html>");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const results = await runChecks({ INSPECTOR_PORT: String(port) }, { skipNetwork: false });
+      const check = results.find((c) => c.name === "inspector-port")!;
+      expect(check.status).toBe("fail");
+      expect(check.message).toContain("something else");
+    } finally {
+      // http.Server DOES have closeAllConnections (net.Server does not). The
+      // identity probe leaves a socket behind, so drop it before closing.
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  it("still FAILS on a raw TCP listener that speaks no HTTP", async () => {
+    // Destroys on connect, so the probe gets a socket error rather than hanging
+    // — and there is no lingering connection to clean up. net.Server has no
+    // closeAllConnections, which is why this one differs from the three above.
+    const server = netCreateServer((socket) => socket.destroy());
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const results = await runChecks({ INSPECTOR_PORT: String(port) }, { skipNetwork: false });
+      expect(results.find((c) => c.name === "inspector-port")!.status).toBe("fail");
+    } finally {
+      server.close();
     }
   });
 });

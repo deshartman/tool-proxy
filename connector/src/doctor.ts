@@ -136,12 +136,73 @@ async function checkInspectorPort(env: NodeJS.ProcessEnv): Promise<CheckResult> 
   // Bind-probe to 127.0.0.1: same address the inspector actually binds to.
   const available = await probePort(port);
   if (available) return { name: "inspector-port", status: "ok", message: `:${port} free` };
+
+  // The port is taken — but by WHAT? This check was written for the
+  // `doctor && start` runbook, where anything holding the port is a real
+  // conflict. It is also run against a RUNNING container ("is my deployment
+  // healthy?"), and there the holder is the connector being checked, so a
+  // plain `fail` made every healthy deploy exit 1. Observed on the live AWS
+  // deploy, where it was the only non-ok line on a working connector.
+  //
+  // Ask the holder who it is. The inspector answers its own dashboard on `/`,
+  // and nothing else in this system does — so a 200 carrying the dashboard
+  // title means we are inspecting a live connector, not colliding with one.
+  // A 403 counts too: that is the loopback gate refusing a non-loopback
+  // caller, which only the inspector does.
+  const holder = await identifyInspector(port);
+  if (holder) {
+    return {
+      name: "inspector-port",
+      status: "ok",
+      message: `:${port} serving the inspector (this connector is already running)`,
+    };
+  }
   return {
     name: "inspector-port",
     status: "fail",
-    message: `:${port} already in use`,
+    message: `:${port} already in use by something else`,
     remediation: `set INSPECTOR_PORT to a free port (or --inspector-port on start)`,
   };
+}
+
+/**
+ * Is the process holding `port` our own inspector? Deliberately narrow: a
+ * generous check would mask a genuine conflict with an unrelated service, which
+ * is the failure this whole check exists to catch.
+ */
+async function identifyInspector(port: number): Promise<boolean> {
+  try {
+    // 750ms, not longer. This is a loopback request to a process on the same
+    // host — if it has not answered by then it is not our inspector. The budget
+    // matters because a socket that ACCEPTS and never replies (a hung service,
+    // or a raw TCP listener) makes fetch wait the whole timeout, and `doctor`
+    // is a preflight an operator runs interactively and CI runs before boot.
+    // AbortSignal.timeout covers that case; a connection-refused rejects
+    // immediately and never reaches the deadline.
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      signal: AbortSignal.timeout(750),
+      // Do not keep the socket alive. Without this, undici pools the
+      // connection and the listener we just probed cannot be closed until the
+      // pool times out — a hung service would leave `doctor` holding a socket
+      // open against it. Caught by a test whose own `server.close()` blocked
+      // waiting for exactly that connection to drain.
+      headers: { connection: "close" },
+    });
+    // The gate refusing a non-loopback caller is itself proof of identity —
+    // no other service in this system answers 403 on `/`.
+    if (res.status === 403) return true;
+    if (!res.ok) {
+      // Drain, so the socket is released rather than left to the pool.
+      await res.arrayBuffer().catch(() => undefined);
+      return false;
+    }
+    const body = await res.text();
+    return body.includes("MCP Connector Inspector");
+  } catch {
+    // Not HTTP, or not answering. A raw TCP listener on our port is exactly
+    // the conflict this check is for.
+    return false;
+  }
 }
 
 async function checkMcpTree(env: NodeJS.ProcessEnv, cwd: string): Promise<CheckResult> {
