@@ -107,3 +107,12 @@ examples/demos/memory-event-demo/config.json
 # Terraform working directories — provider binaries and lock state, not source.
 deploy/terraform/**/.terraform/
 deploy/terraform/**/.terraform.lock.hcl
+
+# Terraform STATE is never source. It records real resource ids (account,
+# subnet, AMI, instance) and can capture resource attributes, it conflicts on
+# every apply, and a shared module must not carry one operator's state. Three
+# commits during the live AWS test picked these up via `git add -A` before this
+# rule existed; they are removed from tracking in the same commit as this line.
+deploy/terraform/**/terraform.tfstate
+deploy/terraform/**/terraform.tfstate.backup
+deploy/terraform/**/*.tfplan
