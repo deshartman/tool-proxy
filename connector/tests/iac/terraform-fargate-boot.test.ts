@@ -187,8 +187,17 @@ describe("terraform aws-fargate — single replica and operator access", () => {
     expect(mainCode).toMatch(/enable_execute_command\s*=\s*true/);
   });
 
-  it("health-checks over loopback from inside the container", () => {
-    expect(mainCode).toContain("127.0.0.1:9090");
+  it("health-checks /readyz on the health port, not the inspector", () => {
+    // Stage A. This asserted 127.0.0.1:9090 — the inspector's "/", which only
+    // proves the HTTP server answers and cannot distinguish a connector with no
+    // controller from a healthy one. /readyz returns 503 until the tunnel is
+    // open, so ECS now stops counting an unconfigured task healthy.
     expect(mainCode).toMatch(/healthCheck\s*=/);
+    expect(mainCode).toContain("127.0.0.1:9100/readyz");
+    expect(mainCode).toMatch(/name = "HEALTH_PORT", value = "9100"/);
+    // The retired probe. Named so a revert is loud.
+    expect(mainCode).not.toContain("127.0.0.1:9090/");
+    // /readyz is 503 until Configure Tunnel — a human step on a first deploy.
+    expect(mainCode).toMatch(/startPeriod = 9\d/);
   });
 });

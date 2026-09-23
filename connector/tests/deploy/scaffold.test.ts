@@ -74,6 +74,44 @@ describe("render — variable substitution", () => {
     expect(task!.content).toContain("ghcr.io/twilio/mcp-connector:0.2.0");
   });
 
+  // Stage A. Before this, every emitted manifest probed the inspector's "/" —
+  // which only proves the HTTP server answers, and cannot be reached at all from
+  // outside the container (the inspector binds 127.0.0.1 and 403s non-loopback
+  // callers). A probe that cannot distinguish a connector with no controller
+  // from a healthy one is worse than none: it reports green through an outage.
+  it("probes /readyz on HEALTH_PORT, not the inspector", () => {
+    const { files } = render("fargate", VARS);
+    const def = JSON.parse(files.find((f) => f.path === "task-definition.json")!.content) as {
+      containerDefinitions: {
+        environment: { name: string; value: string }[];
+        healthCheck: { command: string[]; startPeriod: number };
+      }[];
+    };
+    const c = def.containerDefinitions[0]!;
+    expect(c.environment.find((e) => e.name === "HEALTH_PORT")?.value).toBe("9100");
+
+    const probe = c.healthCheck.command.join(" ");
+    expect(probe).toContain("9100/readyz");
+    // The old probe. Named so a revert is loud rather than silent.
+    expect(probe).not.toContain("9090/");
+
+    // /readyz stays 503 until Configure Tunnel is done — a human step on a
+    // first deploy. A 30s grace kills the task before the operator reaches the
+    // modal.
+    expect(c.healthCheck.startPeriod).toBeGreaterThanOrEqual(90);
+  });
+
+  it("gives aca both probes, and keeps liveness off the tunnel", () => {
+    const bicep = render("aca", VARS).files[0]!.content;
+    expect(bicep).toContain("HEALTH_PORT");
+    expect(bicep).toMatch(/type: 'Liveness'[\s\S]*?path: '\/livez'/);
+    expect(bicep).toMatch(/type: 'Readiness'[\s\S]*?path: '\/readyz'/);
+    // Liveness on /readyz would make one controller outage restart the fleet.
+    expect(bicep, "liveness must not probe /readyz").not.toMatch(
+      /type: 'Liveness'[\s\S]{0,120}\/readyz/,
+    );
+  });
+
   it("carries no JSON comment keys — the AWS CLI rejects unknown parameters", () => {
     // `aws ecs register-task-definition --cli-input-json` validates against the
     // API shape, so a documentation field like "//memory" fails the call. JSON

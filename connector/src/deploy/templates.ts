@@ -98,7 +98,8 @@ const FARGATE_TASK_DEF = `{
       "environment": [
         { "name": "CONNECTOR_CONFIG",    "value": "/etc/mcp-connector/config.yaml" },
         { "name": "CONNECTOR_KEY_FILE",  "value": "/etc/mcp-connector/connector.key" },
-        { "name": "INSPECTOR_PORT",      "value": "9090" }
+        { "name": "INSPECTOR_PORT",      "value": "9090" },
+        { "name": "HEALTH_PORT",         "value": "9100" }
       ],
       "secrets": [
         { "name": "CONNECTOR_KEY_B64", "valueFrom": "REPLACE_WITH_SECRETS_MANAGER_ARN" }
@@ -107,11 +108,11 @@ const FARGATE_TASK_DEF = `{
         { "containerPath": "/var/lib/mcp-connector", "sourceVolume": "state" }
       ],
       "healthCheck": {
-        "command": ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/ >/dev/null 2>&1 || exit 1"],
+        "command": ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/readyz >/dev/null 2>&1 || exit 1"],
         "interval": 30,
         "timeout": 5,
         "retries": 3,
-        "startPeriod": 60
+        "startPeriod": 90
       },
       "logConfiguration": {
         "logDriver": "awslogs",
@@ -257,6 +258,10 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
             // may mount over /etc/mcp-connector either, or the write fails.
             { name: 'CONNECTOR_KEY_FILE', value: '/etc/mcp-connector/connector.key' }
             { name: 'INSPECTOR_PORT',     value: '9090' }
+            // Orchestrator probes on their own server, bound 0.0.0.0 with two
+            // GET-only routes. The inspector cannot be probed — it binds
+            // 127.0.0.1 and 403s every non-loopback caller.
+            { name: 'HEALTH_PORT',        value: '9100' }
             { name: 'CONNECTOR_KEY_B64',  secretRef: 'connector-key-b64' }
           ]
           // Measured floor is 493 MB: the connector plus four bundled MCPs,
@@ -265,6 +270,28 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
           // shipped image. ACA requires cpu:memory in fixed ratios — 0.5 vCPU
           // pairs with 1Gi, 1.0 with 2Gi.
           resources: { cpu: json('1.0'), memory: '2Gi' }
+          // Liveness must NOT consult the tunnel: one controller outage would
+          // otherwise make every replica in the fleet restart at once.
+          // Readiness DOES, which is why a fresh deploy is deliberately not
+          // ready until Configure Tunnel is completed — hence the long
+          // failureThreshold, and hence liveness being separate so the app
+          // survives long enough to be configured.
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: { path: '/livez', port: 9100 }
+              initialDelaySeconds: 15
+              periodSeconds: 20
+              failureThreshold: 3
+            }
+            {
+              type: 'Readiness'
+              httpGet: { path: '/readyz', port: 9100 }
+              initialDelaySeconds: 20
+              periodSeconds: 10
+              failureThreshold: 30
+            }
+          ]
           volumeMounts: [
             { volumeName: 'state', mountPath: '/var/lib/mcp-connector' }
           ]
@@ -571,10 +598,22 @@ fails the call. The reasoning therefore lives here.
   \`CONNECTOR_KEY_B64\` and *writes* the key there, so a read-only or shadowing
   mount at that path breaks boot. An earlier version of this template mounted an
   ephemeral \`config\` volume over it.
-- **\`healthCheck\` runs inside the container.** Every inspector route requires a
-  loopback caller, so a probe from outside would 403. \`wget\` against
-  \`127.0.0.1:9090\` from within the task is the one shape that works without
-  widening anything. (There is no load balancer and no readiness concept here.)
+- **\`healthCheck\` probes \`/readyz\` on \`HEALTH_PORT\` (9100).** That endpoint
+  exists precisely because the inspector cannot be probed: it binds 127.0.0.1
+  and refuses every non-loopback caller, so a probe from outside the container
+  answers \`403 forbidden: loopback only\`. The health server binds 0.0.0.0 and
+  serves two GET-only routes disclosing a boolean and a reason string.
+  \`/readyz\` is the right one here — it returns 503 until the tunnel is open, so
+  ECS stops counting a connector healthy when it has no controller. It still runs
+  as a CMD-SHELL exec because a Fargate task without a load balancer has no other
+  probe mechanism, but it now checks something meaningful rather than "the HTTP
+  server answers".
+
+  **\`startPeriod\` is 90s, not 30.** \`/readyz\` stays 503 until Configure Tunnel
+  has been completed, which on a first deploy is a human step. A short grace
+  period kills the task before the operator reaches the modal. If that is still
+  too tight, probe \`/livez\` instead — 200 as soon as the process is up, and it
+  never consults the tunnel.
 - **\`secrets[]\` is read by the EXECUTION role, not the task role.** Injection
   happens before the container starts, so it is the agent's credential that
   fetches the value.

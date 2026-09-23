@@ -138,7 +138,11 @@ resource "aws_ecs_task_definition" "connector" {
       environment = [
         { name = "CONNECTOR_CONFIG", value = "/etc/mcp-connector/config.yaml" },
         { name = "CONNECTOR_KEY_FILE", value = "/etc/mcp-connector/connector.key" },
-        { name = "INSPECTOR_PORT", value = "9090" }
+        { name = "INSPECTOR_PORT", value = "9090" },
+        # Orchestrator probes, bound 0.0.0.0 with two GET-only routes. 9100
+        # avoids 9091, which the multi-instance dev script uses as a second
+        # inspector port.
+        { name = "HEALTH_PORT", value = "9100" }
       ]
       # Read by the EXECUTION role, not the task role — injection happens before
       # the container starts.
@@ -155,15 +159,26 @@ resource "aws_ecs_task_definition" "connector" {
       mountPoints = [
         { containerPath = "/var/lib/mcp-connector", sourceVolume = "state" }
       ]
-      # Runs INSIDE the container, where the inspector's loopback gate admits
-      # it. Every route requires a loopback caller, so a probe from outside
-      # would 403 — and there is no load balancer here to probe from anyway.
+      # Probes /readyz on HEALTH_PORT, which returns 503 until the tunnel is
+      # open — so ECS stops counting a connector healthy when it has no
+      # controller. This used to hit the inspector's "/" instead, which only
+      # proved the HTTP server answered.
+      #
+      # Still a CMD-SHELL exec: a Fargate task with no load balancer has no other
+      # probe mechanism. The health server binds 0.0.0.0, but nothing outside the
+      # task can route to it here — which is fine, since the invariant is that
+      # nothing reaches the connector inbound.
+      #
+      # startPeriod is 90s because /readyz stays 503 until Configure Tunnel has
+      # been completed — a human step on a first deploy. Probe /livez instead if
+      # you need the task marked healthy before that: it answers 200 as soon as
+      # the process is up and never consults the tunnel.
       healthCheck = {
-        command     = ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/ >/dev/null 2>&1 || exit 1"]
+        command     = ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/readyz >/dev/null 2>&1 || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
-        startPeriod = 60
+        startPeriod = 90
       }
       logConfiguration = {
         logDriver = "awslogs"

@@ -186,3 +186,50 @@ describe("helm chart — resource floor", () => {
     expect(toMiB(resources.limits.memory!)).toBeGreaterThanOrEqual(toMiB(resources.requests.memory!));
   });
 });
+
+// Stage A. The chart shipped with NO probes at all, so a kubelet had no way to
+// tell a connector with an open tunnel from one that had never been configured.
+describe("helm chart — orchestrator probes", () => {
+  const deployment = readFileSync(join(CHART, "templates/deployment.yaml"), "utf8");
+
+  it("declares both probes against the health port", () => {
+    expect(deployment).toMatch(/livenessProbe:[\s\S]*?path: \/livez/);
+    expect(deployment).toMatch(/readinessProbe:[\s\S]*?path: \/readyz/);
+    expect(deployment).toMatch(/name: health\s+containerPort: 9100/);
+    expect(deployment).toMatch(/name: HEALTH_PORT/);
+  });
+
+  it("never probes liveness against the tunnel-gated route", () => {
+    // /readyz returns 503 whenever the tunnel is down. On liveness that turns
+    // one controller outage into every kubelet in the fleet killing its
+    // connector at the same moment — precisely when the decorrelated-jitter
+    // backoff is trying to spread the herd out.
+    // Strip comments before asserting: the block between the two probes
+    // includes prose explaining readiness, which legitimately names /readyz.
+    const live = deployment
+      .slice(deployment.indexOf("livenessProbe:"), deployment.indexOf("readinessProbe:"))
+      .split("\n")
+      .filter((l) => !/^\s*#/.test(l))
+      .join("\n");
+    expect(live).toContain("/livez");
+    expect(live, "liveness must not gate on the tunnel").not.toContain("/readyz");
+  });
+
+  it("never probes the inspector port", () => {
+    // The inspector binds 127.0.0.1 and refuses non-loopback callers, so a
+    // kubelet httpGet against 9090 answers 403 forbidden and the pod never
+    // becomes ready. Measured.
+    const probes = deployment.slice(deployment.indexOf("livenessProbe:"));
+    expect(probes).not.toMatch(/port: 9090|port: inspector/);
+  });
+
+  it("gives readiness enough grace for a human to configure the tunnel", () => {
+    // A fresh deploy is deliberately not ready: /readyz is 503 until Configure
+    // Tunnel is completed via kubectl port-forward. periodSeconds x
+    // failureThreshold must leave room for that.
+    const ready = deployment.slice(deployment.indexOf("readinessProbe:"));
+    const period = Number(/periodSeconds: (\d+)/.exec(ready)?.[1]);
+    const threshold = Number(/failureThreshold: (\d+)/.exec(ready)?.[1]);
+    expect(period * threshold).toBeGreaterThanOrEqual(120);
+  });
+});

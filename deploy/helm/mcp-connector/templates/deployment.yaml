@@ -35,6 +35,13 @@ spec:
               # tolerates the file being absent, and the only shape that still
               # needs an entry is a hand-written Type 1 MCP.
               value: /etc/mcp-connector/config.yaml
+            - name: HEALTH_PORT
+              # Orchestrator probes, on their own tiny server bound 0.0.0.0 with
+              # exactly two GET routes. The inspector CANNOT be probed: it binds
+              # 127.0.0.1 and refuses every non-loopback caller, so a kubelet
+              # probe against the pod IP gets 403. 9100 avoids 9091, which the
+              # multi-instance dev script uses as a second inspector port.
+              value: "9100"
             - name: INSPECTOR_PORT
               # Load-bearing: never expose this port via a Service. The
               # inspector binds 127.0.0.1 inside the pod. `kubectl port-forward`
@@ -56,6 +63,40 @@ spec:
           ports:
             - name: inspector
               containerPort: 9090
+            - name: health
+              containerPort: 9100
+          # Liveness asks "restart this pod?" and must NOT consult the tunnel.
+          # If it did, one controller outage would make every kubelet in the
+          # fleet kill its connector simultaneously — exactly when the
+          # decorrelated-jitter backoff is trying to spread the herd out.
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          # Readiness asks "send it work?" — so it DOES gate on the tunnel, and
+          # on children still starting.
+          #
+          # There is no Service in front of this by default, so readiness does
+          # not steer traffic; it is a status signal for `kubectl get pods` and
+          # for rollout gating. That matters because of the next point.
+          #
+          # A FRESH DEPLOY IS DELIBERATELY NOT READY. /readyz returns 503
+          # tunnel_not_open until an operator completes Configure Tunnel, which
+          # is a human step reached via `kubectl port-forward`. Hence
+          # failureThreshold 30 x 10s = 5 minutes of grace, and hence liveness
+          # being a separate, unconditional probe: the pod must survive long
+          # enough to be configured. If your rollout gates on readiness, expect
+          # a first deploy to sit unready until someone fills in the modal.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

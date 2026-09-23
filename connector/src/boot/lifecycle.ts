@@ -25,6 +25,7 @@ import { formatHandshakeFailure } from "../tunnel/format-log.js";
 import { Dispatcher } from "../dispatcher.js";
 import type { ToolManifest } from "../tunnel/frames.js";
 import { Inspector, startInspector, rebindInspector } from "../inspector/server.js";
+import { startHealthServer, type HealthState } from "../health/server.js";
 import { createNetworkAccessRoutes } from "../inspector/network-access-routes.js";
 import { handleOauthToken } from "../inspector/oauth-token-route.js";
 import { handleOutboundCalls } from "../inspector/outbound-calls-route.js";
@@ -96,6 +97,12 @@ async function bootFromDb(): Promise<void> {
   const inspectorPort = process.env.INSPECTOR_PORT === "0"
     ? 0
     : envNumber("INSPECTOR_PORT", 9090);
+  // Q-A2, decided: 9100. NOT 9091 — `./scripts/start-connector.sh 9091` uses
+  // that as a second INSPECTOR port for the multi-instance dev workflow, so a
+  // 9091 default would collide with the documented way of running two
+  // connectors. 9100 is clear of the inspector range and of MCP_BASE_PORT's
+  // 7100-upward child allocation. 0 disables, matching INSPECTOR_PORT.
+  const healthPort = process.env.HEALTH_PORT === "0" ? 0 : envNumber("HEALTH_PORT", 9100);
 
   const config = loadConfig(configPath);
 
@@ -127,6 +134,43 @@ async function bootFromDb(): Promise<void> {
 
   // Forward declaration: inspector constructed below, referenced by callbacks.
   let inspector: Inspector | undefined;
+
+  // ── Health endpoints ──────────────────────────────────────────────────
+  // Declared HERE, above the empty-store early return, and deliberately so:
+  // an unconfigured connector must still answer /livez, or an orchestrator
+  // kills the very process an operator is about to configure through the
+  // Configure Tunnel modal. See the TDZ block in CLAUDE.md — any binding the
+  // closure below reads has to live above that return.
+  //
+  // `configLoaded` flips once `loadConfig` has returned, which by this point it
+  // has. It exists to distinguish "still booting" from "booted, tunnel down".
+  let healthConfigLoaded = false;
+  // Hoisted alias for the supervisor. `supervisor` itself is a `const` declared
+  // further down, and reading a const from a closure that can fire before the
+  // declaration is evaluated throws on the TDZ — the failure
+  // tests/boot/lifecycle-tdz.test.ts exists to catch. Assigned right after the
+  // supervisor is constructed.
+  let healthSupervisor: McpSupervisor | undefined;
+  const healthState = (): HealthState => ({
+    configLoaded: healthConfigLoaded,
+    // Read through the tunnel object, not a cached flag: `open` is the only
+    // state that counts as ready, and a cached boolean would go stale on every
+    // reconnect.
+    tunnelOpen: tunnel?.state === "open",
+    // Children still coming up. `permanently-failed` is EXCLUDED — see the
+    // Q-A1 note on HealthState. `supervisor` is assigned further down, so this
+    // reports an empty list until then, which is correct: before the supervisor
+    // exists there are no children to wait for, and `configLoaded` is the gate
+    // that keeps readiness false in that window.
+    childrenPending: (healthSupervisor?.statusList() ?? [])
+      .filter((st) => st.process === "restarting" || st.process === "stopped")
+      .map((st) => st.name),
+  });
+
+  const healthServer = startHealthServer({ port: healthPort, getState: healthState, log });
+  // Config parsed above, so readiness can stop reporting config_not_loaded and
+  // start reporting the condition that is actually unmet.
+  healthConfigLoaded = true;
 
   const webhooks = new WebhookRegistry({
     sendFrame: (frame) => {
@@ -289,7 +333,7 @@ async function bootFromDb(): Promise<void> {
 
   const notifications = new NotificationForwarder(log);
 
-  const supervisor = new McpSupervisor({
+  const supervisor: McpSupervisor = new McpSupervisor({
     log,
     servers,
     // MCP_READINESS_TIMEOUT_MS lets operators raise the port-readiness
@@ -322,6 +366,7 @@ async function bootFromDb(): Promise<void> {
       servers.set(name, tapped);
     },
   });
+  healthSupervisor = supervisor;
   supervisor.register(allSpecs);
 
   const mcpConfig = new McpConfigCoordinator({
@@ -464,6 +509,10 @@ async function bootFromDb(): Promise<void> {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (discoveryTimer) clearInterval(discoveryTimer);
     tunnel?.close(`signal:${signal}`);
+    // Stop answering probes immediately. An orchestrator draining this task
+    // should see the endpoint go away rather than keep getting a 200 from a
+    // process that is tearing its children down.
+    healthServer?.close();
     let exitCode = 0;
     try {
       await supervisor.stopAll();
