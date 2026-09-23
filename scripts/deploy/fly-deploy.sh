@@ -50,7 +50,7 @@ if [[ ! -f deploy/fly/fly.toml ]]; then
   echo "[fly-deploy] error: deploy/fly/fly.toml missing" >&2
   echo "[fly-deploy] run this first (from repo root):" >&2
   echo "[fly-deploy]   node connector/dist/index.js deploy init --target fly \\" >&2
-  echo "[fly-deploy]     --name <CUSTOMER-NAME> >&2
+  echo "[fly-deploy]     --name <CUSTOMER-NAME>" >&2
   echo "[fly-deploy] see deploy/fly/OPERATOR-RUNBOOK.md for the full flow." >&2
   exit 1
 fi
