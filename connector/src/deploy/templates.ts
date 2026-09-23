@@ -320,9 +320,16 @@ services:
       - state:/var/lib/mcp-connector
       - ./connector.yaml:/etc/mcp-connector/config.yaml:ro
       - ./secrets/connector.key:/etc/mcp-connector/connector.key:ro
-    ports:
-      # Inspector — 127.0.0.1 only. Do NOT bind to 0.0.0.0.
-      - "127.0.0.1:9090:9090"
+    # NO ports: mapping. The connector binds 127.0.0.1:9090 INSIDE the
+    # container's namespace, so publishing the port forwards to an interface
+    # nothing listens on and the host gets connection refused. Widening
+    # INSPECTOR_BIND_ADDR does not help either: the request gate judges the
+    # caller's source address, Docker's NAT rewrites it, and the dashboard
+    # answers 403 "forbidden: loopback only". Both measured.
+    #
+    # Reach the dashboard with a forward that originates inside the box:
+    #   docker compose exec connector wget -qO- http://127.0.0.1:9090/
+    #   ssh -L 9090:127.0.0.1:9090 <vm-host>      # on a remote VM
     restart: unless-stopped
 
 volumes:
@@ -664,8 +671,16 @@ Verify:
 /app/connector and the workspace bin link at /app/node_modules/.bin is not on
 PATH, so the bare name fails with "not found".
 
-Then reach the inspector at http://localhost:9090/ (explicit http://) and fill
-in Configure Tunnel. That modal is the only way to set tunnel identity.
+**The dashboard is NOT at http://localhost:9090/ when the connector runs in a
+container.** It binds loopback inside the container's namespace, so nothing on
+the host can reach it and no port mapping changes that. Smoke-test it with
+
+    docker compose exec connector wget -qO- http://127.0.0.1:9090/
+
+and reach it properly through a forward that originates inside the box — on a
+remote VM, \`ssh -L 9090:127.0.0.1:9090 <vm-host>\`, where the remote sshd dials
+localhost itself. Then fill in Configure Tunnel; that modal is the only way to
+set tunnel identity.
 `,
   },
 

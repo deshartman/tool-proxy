@@ -37,7 +37,13 @@ volume. There are no env vars for them.
 The compose files hardcode a few properties the connector relies on. Don't
 edit them out:
 
-- `127.0.0.1:9090:9090` inspector port binding — inspector is loopback-only.
+- **No `ports:` mapping.** The connector binds `127.0.0.1:9090` inside the
+  container's namespace, so a published port reaches an interface nothing
+  listens on — `curl localhost:9090` on the host gets connection refused.
+  Widening `INSPECTOR_BIND_ADDR` does not help: the gate judges the source
+  address and Docker's NAT rewrites it, so you get `403 forbidden: loopback
+  only`. Both measured. Reach the dashboard through a forward that originates
+  inside the box (`ssh -L` to a VM, `docker compose exec` for a smoke test).
 - The master key mounted read-only. It seals the credentials in
   `config.json`; a volume snapshot without it yields nothing.
 - The `state:` named volume. Post-`DB-TO-FILE` this volume **is** the

@@ -51,14 +51,34 @@ describe("docker-compose.prod.yml", () => {
     expect(output).not.toContain("${MCP_VERSION");
   });
 
-  it("binds the inspector port to loopback only", () => {
+  it("publishes no inspector port at all", () => {
+    // This used to assert `"127.0.0.1:9090:9090"` was present. Measured in a
+    // real container: that mapping CANNOT WORK. The connector binds
+    // 127.0.0.1:9090 inside the container's own network namespace, so a
+    // published port forwards to an external interface nothing is listening on
+    // — `curl localhost:9090` from the host gets connection refused.
+    //
+    // Widening INSPECTOR_BIND_ADDR to 0.0.0.0 makes the port reachable and the
+    // dashboard still answers 403 {"error":"forbidden: loopback only"}, because
+    // the gate judges the caller's source address and Docker's NAT rewrites it.
+    // So the mapping was pure downside: it published a port to no effect while
+    // implying to operators that localhost:9090 would work.
+    //
+    // The invariant is now stronger and simpler — publish nothing. Reaching the
+    // dashboard requires a forward ORIGINATING inside the box (ssh -L to a VM,
+    // where the remote sshd dials localhost itself).
     const contents = readFileSync(COMPOSE_PATH, "utf8");
-    // Load-bearing per CLAUDE.md's "Inspector port is localhost-only":
-    // any binding that resolves to 0.0.0.0 would leak the bcrypt-protected
-    // webhook URL to the network.
-    expect(contents).toContain(`"127.0.0.1:9090:9090"`);
-    expect(contents).not.toMatch(/^\s*-\s*"?0\.0\.0\.0:9090/m);
-    expect(contents).not.toMatch(/^\s*-\s*"?9090:9090/m); // implicit 0.0.0.0
+    const config = contents
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(config, "no ports: key at all").not.toMatch(/^\s*ports:/m);
+    expect(config, "nothing published on 9090").not.toMatch(/9090:9090/);
+    // And the bind must stay loopback: the Webhooks panel exposes
+    // bcrypt-protected URLs, and the machine API is the only thing a wider bind
+    // would actually expose.
+    expect(config).not.toMatch(/INSPECTOR_BIND_ADDR/);
+    expect(config).not.toMatch(/INSPECTOR_ALLOW_NONLOOPBACK/);
   });
 
   it("mounts the master key file read-only", () => {

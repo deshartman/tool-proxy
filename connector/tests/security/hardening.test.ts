@@ -97,10 +97,20 @@ describe("C7 — .dockerignore excludes secrets, state files, key material, sess
 
 // ── docker-compose.prod.yml invariants ───────────────────────────────────
 describe("docker-compose.prod.yml — inspector loopback + no inline credentials", () => {
-  it("binds inspector to 127.0.0.1 only", () => {
-    expect(COMPOSE_PROD).toMatch(/["']127\.0\.0\.1:9090:9090["']/);
-    expect(COMPOSE_PROD).not.toMatch(/^\s*-\s*["']?9090:9090\b/m);
-    expect(COMPOSE_PROD).not.toMatch(/["']0\.0\.0\.0:9090:9090["']/);
+  it("publishes no inspector port, and does not widen the bind", () => {
+    // Was: assert the "127.0.0.1:9090:9090" mapping is present. That mapping
+    // cannot reach the connector (loopback bind inside the container's
+    // namespace) and widening INSPECTOR_BIND_ADDR gets a reachable port that
+    // answers 403 — both measured. Publishing nothing is the stronger
+    // invariant: the Webhooks panel's bcrypt-protected URLs and the machine API
+    // are what a wider bind would expose.
+    const config = COMPOSE_PROD.split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(config).not.toMatch(/^\s*ports:/m);
+    expect(config).not.toMatch(/9090:9090/);
+    expect(config).not.toContain("INSPECTOR_BIND_ADDR");
+    expect(config).not.toContain("INSPECTOR_ALLOW_NONLOOPBACK");
   });
 
   // C8 originally protected a Postgres password from landing in this YAML as

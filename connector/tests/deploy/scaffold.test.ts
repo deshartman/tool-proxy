@@ -125,14 +125,23 @@ describe("render — variable substitution", () => {
     expect(bicep).toContain("minReplicas: 1"); // single connector — no HPA
   });
 
-  it("emits compose files with 127.0.0.1 inspector binding", () => {
+  it("emits a compose file that publishes no inspector port", () => {
     const { files } = render("compose", VARS);
     expect(files.map((f) => f.path)).toEqual(["docker-compose.yml", ".env.example"]);
     const compose = files.find((f) => f.path === "docker-compose.yml")!;
-    // Load-bearing: exposing the inspector on 0.0.0.0 would leak
-    // webhook URLs. The scaffold MUST pin the bind to loopback.
-    expect(compose.content).toContain(`"127.0.0.1:9090:9090"`);
-    expect(compose.content).not.toContain(`"0.0.0.0:9090`);
+    // This asserted the presence of `"127.0.0.1:9090:9090"`. Measured in a real
+    // container: that mapping cannot work — the connector binds loopback inside
+    // the container's namespace, so a published port reaches an interface
+    // nothing listens on. Widening the bind makes it reachable and still 403s,
+    // because the gate judges the source address and Docker NATs it. So the
+    // mapping only implied to operators that localhost:9090 would work.
+    const config = compose.content
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(config).not.toMatch(/^\s*ports:/m);
+    expect(config).not.toMatch(/9090:9090/);
+    expect(config).not.toContain("INSPECTOR_BIND_ADDR");
     expect(compose.content).toContain("mcp-connector"); // image is the connector
   });
 

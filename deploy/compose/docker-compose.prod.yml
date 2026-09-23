@@ -45,12 +45,27 @@ services:
       CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
       CONNECTOR_CONFIG: /etc/mcp-connector/config.yaml
       INSPECTOR_PORT: "9090"
-    ports:
-      # 127.0.0.1 only. Inspector loopback trust boundary — the Webhooks
-      # panel exposes copy-able bcrypt-protected URLs. Do NOT change to
-      # 0.0.0.0 or expose behind a public LB. Reach it via SSH tunnel:
-      #   ssh -L 9090:127.0.0.1:9090 <vm-host>
-      - "127.0.0.1:9090:9090"
+    # NO `ports:` MAPPING, deliberately — and this is the one that surprises
+    # people, so it is spelled out. The connector binds 127.0.0.1:9090 INSIDE
+    # the container's network namespace, so a published port forwards to an
+    # interface nothing is listening on: `curl localhost:9090` from the host
+    # gets connection refused. Measured, not theorised.
+    #
+    # Widening INSPECTOR_BIND_ADDR to 0.0.0.0 does NOT fix it either. The bind
+    # decides whether the process accepts the connection; the request GATE then
+    # judges where it came from, and Docker's NAT rewrites the source address,
+    # so the dashboard answers 403 {"error":"forbidden: loopback only"}. Also
+    # measured. Adding INSPECTOR_ALLOW_NONLOOPBACK=1 only gets you a reachable
+    # port that still 403s, while exposing the machine API.
+    #
+    # Reach the dashboard with a forward that ORIGINATES INSIDE the container or
+    # the host running it:
+    #   docker compose exec connector wget -qO- http://127.0.0.1:9090/   # smoke test
+    #   ssh -L 9090:127.0.0.1:9090 <vm-host>   # remote VM: sshd dials localhost
+    #                                          # ON the VM, which is a genuine
+    #                                          # loopback origin
+    # On a local machine, run the connector directly (scripts/start-connector.sh)
+    # rather than in a container when you need the dashboard in a browser.
     volumes:
       # state — writable. Holds config.json: the sealed controllers record
       # (tunnel bearer + registration token) plus machine-API clients. This

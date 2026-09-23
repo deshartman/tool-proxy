@@ -226,7 +226,7 @@ differently:
 | Platform | Command |
 |---|---|
 | `fly` | `./scripts/fly-inspector.sh <app>` |
-| `compose` | already local — open `http://localhost:9090`. Remote VM: `ssh -L 9090:localhost:9090 <host>` |
+| `compose` | **NOT `localhost:9090`** — the connector binds loopback inside the container, so the host cannot reach it and no port mapping helps (measured: a published port is refused; a wide bind answers 403). Use `ssh -L 9090:127.0.0.1:9090 <vm-host>` for a VM, or run the connector directly rather than containerised when you need a browser locally |
 | K8s | `kubectl port-forward deploy/mcp-connector 9090:9090` |
 | Fargate | ECS Exec + SSM port forwarding |
 | ACA | `az containerapp exec` |
