@@ -633,7 +633,8 @@ async function handleControllerApiCall(
     const message = (err as Error)?.message ?? String(err);
     // "tunnel_unavailable" (no live tunnel) is a 503 — distinct from a
     // round-trip that actually reached the controller and failed (502).
-    res.statusCode = code === "tunnel_unavailable" ? 503 : 502;
+    // "mcp_not_enabled" (approval gate) is a 403 — refused locally, never sent.
+    res.statusCode = code === "tunnel_unavailable" ? 503 : code === "mcp_not_enabled" ? 403 : 502;
     res.end(JSON.stringify({ error: { code, message } }));
   }
 }

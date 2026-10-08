@@ -69,6 +69,12 @@ export interface WebhookRegistryOptions {
   // can broadcast a fresh webhooks snapshot (which now includes recentEvents)
   // to its SSE subscribers. Synchronous, fire-and-forget.
   onDispatched?: () => void;
+  // Approval gate for DELIVERY. Absent → every MCP receives its events.
+  // Subscribe and allocate stay ungated on purpose: a child subscribes at
+  // spawn, before approval, and createWebhookEndpoint rejects on a refused
+  // stream — gating there would break every webhook MCP at boot. Gating
+  // delivery means an unapproved MCP holds a URL but never sees a payload.
+  isMcpEnabled?: (mcp: string) => boolean;
   log?: Logger;
 }
 
@@ -250,6 +256,12 @@ export class WebhookRegistry {
 
   // Inbound frame: a webhook arrived. Fan out to local listeners.
   dispatch(frame: WebhookFrame): void {
+    if (this.opts.isMcpEnabled && !this.opts.isMcpEnabled(frame.mcp)) {
+      // Same no-NACK rule as below: the controller already answered the
+      // upstream. Drop, and say why.
+      this.log.warn({ mcp: frame.mcp }, `webhook frame for MCP not enabled by the controller — dropped`);
+      return;
+    }
     const sub = this.subs.get(frame.mcp);
     if (!sub || sub.webhookListeners.size === 0) {
       // Unknown MCP, or one that the SDK hasn't subscribed to yet. We don't

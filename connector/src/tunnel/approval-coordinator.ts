@@ -100,6 +100,16 @@ export class ApprovalCoordinator {
     return this.approved.has(name);
   }
 
+  // The single runtime gate every entry point consults: tunnel dispatch,
+  // controller-call, and webhook delivery. `isApproved` answers "has the
+  // controller approved this name"; this answers "may the controller reach
+  // this MCP at all" — true for un-gated entries, the approval state for
+  // gated ones. `isGated` is supplied by the boot wiring (today: "is a
+  // drop-in"); widening the gate later edits only that predicate.
+  isEnabled(name: string, isGated: (name: string) => boolean): boolean {
+    return !isGated(name) || this.approved.has(name);
+  }
+
   // Read-only snapshot for tests + inspector status panels. The coordinator's
   // private set is the single source of truth — never widen this to a write
   // accessor. Approval is mutated only via handleEnable/handleDisable.

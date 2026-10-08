@@ -30,6 +30,13 @@ export interface DispatcherDeps {
   // dispatcher falls back to the bare "mcp_disconnected" label (pre-2026-07-28
   // behavior).
   isRestarting?: (name: string) => boolean;
+  // Approval gate. Absent → every server is reachable (tests, and callers
+  // with no gate). When present, a server for which this returns false is
+  // treated as ABSENT on every route — same reply a non-existent server
+  // gets, and the aggregate list methods skip it. The manifest already
+  // withholds unapproved servers; without this, a controller naming one
+  // directly would still reach it.
+  isServerEnabled?: (name: string) => boolean;
 }
 
 export class Dispatcher {
@@ -166,7 +173,7 @@ export class Dispatcher {
     const serverName = qualifiedName.slice(0, dot);
     const toolName = qualifiedName.slice(dot + 1);
 
-    const server = this.deps.servers.get(serverName);
+    const server = this.server(serverName);
     if (!server) {
       this.replyKind(id, "tool_not_found", `no local MCP server '${serverName}'`);
       return;
@@ -273,7 +280,7 @@ export class Dispatcher {
     const serverName = qualifiedName.slice(0, dot);
     const promptName = qualifiedName.slice(dot + 1);
 
-    const server = this.deps.servers.get(serverName);
+    const server = this.server(serverName);
     if (!server) {
       this.replyKind(id, "server_not_found", `no local MCP server '${serverName}'`);
       return;
@@ -398,7 +405,7 @@ export class Dispatcher {
       });
       return;
     }
-    const server = this.deps.servers.get(serverName);
+    const server = this.server(serverName);
     if (!server) {
       this.replyKind(id, "server_not_found", `no local MCP server '${serverName}'`);
       return;
@@ -429,7 +436,7 @@ export class Dispatcher {
       });
       return;
     }
-    const server = this.deps.servers.get(serverName);
+    const server = this.server(serverName);
     if (!server) {
       this.replyKind(id, "server_not_found", `no local MCP server '${serverName}'`);
       return;
@@ -453,10 +460,10 @@ export class Dispatcher {
   // picker across every MCP.
   private targetsForList(serverName: string | undefined): McpServerConnection[] {
     if (serverName) {
-      const server = this.deps.servers.get(serverName);
+      const server = this.server(serverName);
       return server ? [server] : [];
     }
-    return [...this.deps.servers.values()];
+    return [...this.deps.servers.values()].filter((server) => this.enabled(server.name));
   }
 
   // Resource methods (read / subscribe / unsubscribe) need to pick a single
@@ -469,17 +476,27 @@ export class Dispatcher {
     const params = (rawParams ?? {}) as { serverName?: unknown };
     const explicit = typeof params.serverName === "string" ? params.serverName : undefined;
     if (explicit) {
-      const server = this.deps.servers.get(explicit);
+      const server = this.server(explicit);
       return server ? { server, error: "" } : { error: `no local MCP server '${explicit}'` };
     }
     // Best-effort scheme match: scheme component is the part before `://`.
     const schemeEnd = uri.indexOf("://");
     if (schemeEnd > 0) {
       const scheme = uri.slice(0, schemeEnd);
-      const server = this.deps.servers.get(scheme);
+      const server = this.server(scheme);
       if (server) return { server, error: "" };
     }
     return { error: `cannot route resource '${uri}' — pass params.serverName` };
+  }
+
+  // The only lookup routes may use — applies the approval gate.
+  private server(name: string): McpServerConnection | undefined {
+    if (!this.enabled(name)) return undefined;
+    return this.deps.servers.get(name);
+  }
+
+  private enabled(name: string): boolean {
+    return this.deps.isServerEnabled?.(name) ?? true;
   }
 
   private reply(resp: { id: JsonRpcId; result: unknown } | { id: JsonRpcId; error: { code: number; message: string; data?: unknown } }): void {

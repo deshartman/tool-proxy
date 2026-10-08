@@ -179,6 +179,9 @@ async function bootFromDb(): Promise<void> {
       return true;
     },
     onDispatched: () => inspector?.publishWebhookSnapshot(),
+    // Late-bound: isMcpEnabled is declared further down. Webhook frames only
+    // arrive once a tunnel is open, which is after that declaration has run.
+    isMcpEnabled: (mcp) => isMcpEnabled(mcp),
   });
 
   inspector = inspectorPort > 0
@@ -382,6 +385,14 @@ async function bootFromDb(): Promise<void> {
     onManifestChange: () => refreshManifestAndPushDelta(),
   });
 
+  // The approval gate, one predicate for every entry point: tunnel dispatch,
+  // controller-call and webhook delivery (buildManifest applies the same
+  // rule through isApproved + dropinSpecsByName). Gated today = drop-in.
+  // Declared above the empty-store `if (!row) return` so the paste-flow
+  // closures can read it (CLAUDE.md "TDZ discipline").
+  const isMcpEnabled = (name: string): boolean =>
+    approval.isEnabled(name, (n) => dropinSpecsByName.has(n));
+
   const localMcps = new LocalMcpsCoordinator({
     send: () => log.warn(`local-mcps send before tunnel bind — dropping frame`),
     supervisor,
@@ -441,8 +452,7 @@ async function bootFromDb(): Promise<void> {
     inspector.toolDispatch = async (serverName, toolName, args) => {
       const server = servers.get(serverName);
       if (!server) throw new Error(`no local MCP server '${serverName}'`);
-      const isDropin = dropinSpecsByName.has(serverName);
-      if (isDropin && !approval.isApproved(serverName)) {
+      if (!isMcpEnabled(serverName)) {
         throw new Error(`MCP '${serverName}' is awaiting controller approval — tool calls are blocked`);
       }
       return server.callTool(toolName, args, {
@@ -709,6 +719,11 @@ async function bootFromDb(): Promise<void> {
         // when no tunnel is connected, otherwise whatever the coordinator/
         // controller returned (including "timeout").
         callControllerApi: async (mcp: string, action: string, params: unknown, timeoutMs?: number) => {
+          // Approval gate. An MCP the controller can't reach by tool call
+          // must not act on the controller either.
+          if (!isMcpEnabled(mcp)) {
+            throw Object.assign(new Error(`MCP '${mcp}' is not enabled by the controller`), { code: "mcp_not_enabled" });
+          }
           if (!controllerApi) {
             throw Object.assign(new Error("no tunnel connected"), { code: "tunnel_unavailable" });
           }
@@ -734,6 +749,7 @@ async function bootFromDb(): Promise<void> {
       tunnel: pendingTunnel,
       log: dispatcherLog.info.bind(dispatcherLog),
       isRestarting: (name) => supervisor.isRestarting(name),
+      isServerEnabled: isMcpEnabled,
     }).attach();
 
     startTimers();
