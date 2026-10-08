@@ -107,14 +107,17 @@ async function handleGetConfig(
 ): Promise<void> {
   try {
     const row = await configStore.getController();
+    // shimId rides on both answers: it exists from the first boot, before any
+    // controller is configured, and is not secret (it is in every tool name).
+    const shimId = configStore.getShimId();
     setJsonHeaders(res);
     if (!row) {
       res.statusCode = 200;
-      res.end(JSON.stringify({ configured: false }));
+      res.end(JSON.stringify({ configured: false, shimId }));
       return;
     }
     res.statusCode = 200;
-    res.end(JSON.stringify({ configured: true, row: rowToSummary(row) }));
+    res.end(JSON.stringify({ configured: true, shimId, row: rowToSummary(row) }));
   } catch (err) {
     setJsonHeaders(res);
     res.statusCode = 500;
@@ -338,6 +341,32 @@ async function handleForceReregister(
   }
 }
 
+// POST /internal/identity/regenerate
+// Mints a new shimId — the fix for a cloned volume, where two shims share one
+// identity. Operator-only: loopback (the server gate) plus CSRF (here). Every
+// procedure ref to this shim's tools breaks until the platform re-points them,
+// so the inspector confirms before calling this. Redials when a controller is
+// configured so the next register carries the new id; with no controller
+// there is nothing to redial.
+async function handleRegenerateShimId(
+  req: IncomingMessage,
+  res: ServerResponse,
+  { configStore, cycleTunnel }: Pick<TunnelRoutesDeps, "configStore" | "cycleTunnel">
+): Promise<void> {
+  if (!guardCsrf(req, res)) return;
+  setJsonHeaders(res);
+  try {
+    const previous = configStore.getShimId();
+    const shimId = await configStore.regenerateShimId();
+    if (await configStore.getController()) await cycleTunnel("shim-id-regenerated");
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true, previous, shimId }));
+  } catch (err) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
 export function createTunnelRoutes(deps: TunnelRoutesDeps) {
   return {
     handleGetConfig: (req: IncomingMessage, res: ServerResponse) =>
@@ -346,5 +375,7 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps) {
       handlePostCreds(req, res, deps),
     handleForceReregister: (req: IncomingMessage, res: ServerResponse) =>
       handleForceReregister(req, res, deps),
+    handleRegenerateShimId: (req: IncomingMessage, res: ServerResponse) =>
+      handleRegenerateShimId(req, res, deps),
   };
 }

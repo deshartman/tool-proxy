@@ -18,6 +18,7 @@
 // Timestamps are ISO strings on disk and Date objects in memory, because
 // that is what the pg driver handed callers and every caller expects it.
 
+import { isShimId, mintShimId } from "../identity/shim-id.js";
 import {
   closeSync,
   existsSync,
@@ -97,6 +98,16 @@ export interface StoreDoc {
   /** SHA-256 hex of the master key. Was the `encryption_meta` table. */
   keyFingerprint: string;
   /**
+   * This shim's own identity — see identity/shim-id.ts. Minted once by
+   * emptyDoc; a store written before the field existed is back-filled by
+   * ConfigStore.open. Optional in the type only so migrate() can tell the two
+   * apart: it is always present after open().
+   *
+   * Deliberately NOT a version bump: an older connector reading a store that
+   * carries it ignores the field, so a rollback keeps working.
+   */
+  shimId?: string;
+  /**
    * An array from day one even though a `CHECK` constraint limited Postgres to
    * one row, so MULTI-ACCOUNT.md's Phase-2 fan-out needs no reshape here.
    * Everything today reads index 0.
@@ -111,6 +122,7 @@ export function emptyDoc(keyFingerprint: string): StoreDoc {
   return {
     version: CURRENT_VERSION,
     keyFingerprint,
+    shimId: mintShimId(),
     controllers: [],
     networkAccess: { enabled: false },
     trustedIssuer: null,
@@ -178,6 +190,10 @@ export function migrate(parsed: unknown, path: string): StoreDoc {
   return {
     version: CURRENT_VERSION,
     keyFingerprint: doc.keyFingerprint,
+    // A malformed id is dropped rather than trusted, so open() re-mints it.
+    // That is a NEW identity — only reached by a hand-edited file, never by
+    // anything the connector wrote.
+    ...(isShimId(doc.shimId) ? { shimId: doc.shimId } : {}),
     controllers: Array.isArray(doc.controllers) ? doc.controllers : [],
     networkAccess: { enabled: doc.networkAccess?.enabled === true },
     trustedIssuer: doc.trustedIssuer ?? null,

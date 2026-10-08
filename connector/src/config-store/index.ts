@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { MasterKey } from "./master-key.js";
+import { mintShimId } from "../identity/shim-id.js";
 import { seal, open } from "./seal.js";
 import {
   ensureStateDir,
@@ -110,7 +111,34 @@ export class ConfigStore {
         `controller via the inspector (which discards the sealed tunnel identity).`,
       );
     }
+    if (doc.shimId === undefined) {
+      // Back-fill a store written before shimId existed. Done here, before the
+      // constructor, rather than through mutate(): no other writer can hold
+      // this store yet, and the id must exist before anything reads it.
+      // Written once; never re-minted for a store that already has one.
+      doc.shimId = mintShimId();
+      writeDocAtomic(path, doc);
+    }
     return new ConfigStore(path, masterKey);
+  }
+
+  /** This shim's identity. Always present after open(). */
+  getShimId(): string {
+    const id = this.read().shimId;
+    if (!id) throw new Error("config store has no shimId — open() must back-fill it");
+    return id;
+  }
+
+  /**
+   * Mint a new identity, for a cloned volume (two shims sharing one id). The
+   * operator's deliberate act: every procedure ref to this shim's tools breaks
+   * until the platform re-points them, so this is never called automatically.
+   */
+  regenerateShimId(): Promise<string> {
+    return this.mutate((doc) => {
+      doc.shimId = mintShimId();
+      return doc.shimId;
+    });
   }
 
   private read(): StoreDoc {

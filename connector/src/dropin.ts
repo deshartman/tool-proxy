@@ -20,6 +20,7 @@
 //     is unset.
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { SERVER_NAME_RE } from "./identity/server-name.js";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseDotenv } from "dotenv";
@@ -82,11 +83,10 @@ function symlinkEscapeAllowed(): boolean {
 // every tool in the folder, with nothing anywhere explaining why. Whitespace and
 // non-ASCII names were accepted just as silently.
 //
-// Deliberately conservative: alphanumeric start, then alphanumerics, dash, or
-// underscore. Covers every name we ship (agentic-memory, crm, salesforce, sample)
-// and rejects the shapes that break routing. Widening this means re-checking the
-// dispatcher's split.
-const MCP_NAME_RE = /^[a-z0-9][a-z0-9_-]*$/i;
+// The shared server-name rule (identity/server-name.ts) — the same one yaml
+// and controller-pushed names now go through. Widening it means re-checking
+// the dispatcher's split.
+const MCP_NAME_RE = SERVER_NAME_RE;
 
 const DROPIN_PROD_DEFAULT = "/var/lib/mcp-connector/customer-mcps";
 const BUNDLED_PROD_DEFAULT = "/app/bundled-mcps";
