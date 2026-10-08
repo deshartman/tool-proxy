@@ -173,3 +173,37 @@ describe("health server — over real HTTP", () => {
     expect(startHealthServer({ port: 0, getState: () => ready })).toBeUndefined();
   });
 });
+
+// Several connectors on one host (D6): a second instance that silently lost
+// its HEALTH_PORT bind leaves its probe reading the FIRST instance's /readyz.
+// An explicitly chosen port therefore fails loudly; the default stays
+// non-fatal (losing probes degrades observability, not function).
+describe("health server — bind clash", () => {
+  const servers: Array<{ close: () => void }> = [];
+  afterEach(() => { for (const s of servers.splice(0)) s.close(); });
+
+  async function holdPort(): Promise<number> {
+    const first = startHealthServer({ port: 0, ephemeral: true, getState: () => ready })!;
+    servers.push(first);
+    await new Promise((r) => first.once("listening", r));
+    return (first.address() as AddressInfo).port;
+  }
+
+  it("calls onFatal on EADDRINUSE when failOnBindError is set", async () => {
+    const port = await holdPort();
+    const fatal = await new Promise<Error>((resolve) => {
+      const second = startHealthServer({ port, getState: () => ready, failOnBindError: true, onFatal: resolve });
+      if (second) servers.push(second);
+    });
+    expect((fatal as NodeJS.ErrnoException).code).toBe("EADDRINUSE");
+  });
+
+  it("does not call onFatal on EADDRINUSE for the default (failOnBindError unset)", async () => {
+    const port = await holdPort();
+    let fatal = false;
+    const second = startHealthServer({ port, getState: () => ready, onFatal: () => { fatal = true; } })!;
+    servers.push(second);
+    await new Promise((r) => second.once("error", r));
+    expect(fatal).toBe(false);
+  });
+});

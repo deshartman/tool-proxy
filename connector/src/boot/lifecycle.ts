@@ -167,7 +167,18 @@ async function bootFromDb(): Promise<void> {
       .map((st) => st.name),
   });
 
-  const healthServer = startHealthServer({ port: healthPort, getState: healthState, log });
+  const healthServer = startHealthServer({
+    port: healthPort,
+    getState: healthState,
+    log,
+    // An explicit HEALTH_PORT that can't be bound means a probe would read
+    // some other process's readiness — exit rather than run unobservable.
+    failOnBindError: envOptional("HEALTH_PORT") !== undefined,
+    onFatal: (error) => {
+      log.fatal({ err: error, port: healthPort }, "HEALTH_PORT is explicitly set but already in use — another connector on this host? exiting");
+      process.exit(1);
+    },
+  });
   // Config parsed above, so readiness can stop reporting config_not_loaded and
   // start reporting the condition that is actually unmet.
   healthConfigLoaded = true;

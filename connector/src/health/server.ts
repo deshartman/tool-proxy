@@ -127,6 +127,12 @@ export interface HealthServerOptions {
    * and an operator's kill-switch indistinguishable.
    */
   ephemeral?: boolean;
+  /**
+   * Treat `EADDRINUSE` as fatal (calls `onFatal`). Set when the operator
+   * chose HEALTH_PORT explicitly; the default port stays non-fatal.
+   */
+  failOnBindError?: boolean;
+  onFatal?: (error: Error) => void;
 }
 
 /**
@@ -179,9 +185,18 @@ export function startHealthServer(opts: HealthServerOptions): Server | undefined
   });
 
   server.on("error", (error) => {
-    // A port clash here must not be fatal. The connector's job is the tunnel;
-    // losing the probes degrades observability, not function.
+    // A port clash on the DEFAULT port must not be fatal. The connector's job
+    // is the tunnel; losing the probes degrades observability, not function.
+    //
+    // An EXPLICIT port is different. With several connectors on one host
+    // (D6), a second instance that silently lost its bind leaves its probe
+    // reading the first instance's /readyz — the orchestrator then judges
+    // this process by another's health. An operator who set HEALTH_PORT
+    // asked for that port specifically, so failing loudly is the honest answer.
     opts.log?.error({ err: error, port: opts.port }, "health server error");
+    if (opts.failOnBindError && (error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+      opts.onFatal?.(error);
+    }
   });
 
   server.listen(opts.port, bindAddr, () => {

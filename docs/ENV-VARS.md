@@ -43,13 +43,17 @@ all; the operator dashboard stays loopback-only unconditionally.
 
 ### Multi-instance dev mode (`start-connector.sh <port>`)
 
-When you pass a port arg to the dev launcher, three of the above variables are auto-derived so multiple connector instances can coexist on one host, each with its own tunnel identity:
+When you pass a port arg to the dev launcher, five variables are auto-derived so multiple connector instances can coexist on one host, each with its own tunnel identity:
 
 | Variable | Derivation |
 |---|---|
 | `INSPECTOR_PORT` | `<port>` (CLI arg always wins over `.env`) |
 | `MCP_BASE_PORT` | `7100 + (<port> - 9090) × 100` (spacing avoids drop-in child port collisions across instances) |
 | `CONNECTOR_STATE_DIR` | `.local/state-<port>` under the repo root. Per-port so instances don't share a config store. The connector's own default is the production path `/var/lib/mcp-connector/state`, which an unprivileged dev user cannot create — which is why the script must set this. |
+| `HEALTH_PORT` | `9100` for port `9090`; `9300 + (<port> - 9090)` otherwise. Kept out of the inspector range so a later instance's dashboard port can't land on an earlier one's health port. Without it every instance binds 9100 and a probe reads the first instance's readiness |
+| `AGENTIC_MEMORY_STATE_PATH` | `.local/agentic-memory-<port>/.state.json`, `.env`-overrideable. Without it every instance shares agentic-memory's one module-relative state file |
+
+An **explicitly set** `HEALTH_PORT` that is already taken makes the connector exit at boot rather than run with a probe reporting another process's health; the default port only logs an error. Running several instances outside the dev script: see [deploy/MULTI-INSTANCE.md](../deploy/MULTI-INSTANCE.md).
 
 ## Forward proxy (enterprise egress)
 
