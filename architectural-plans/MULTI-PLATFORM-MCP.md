@@ -1,12 +1,21 @@
 # MULTI-PLATFORM-MCP — shim side
 
-> **Status:** planning only, 2026-10-08. No code has been written. Branch `docs/multi-platform-mcp` was cut from `main`, and no `feature/` branch exists yet.
+> **Status:** in progress on **`feature/multi-platform-mcp`** (cut from `main`), one commit per stage. Not merged, not pushed.
+>
+> | Stage | State |
+> |---|---|
+> | Plan | ✅ committed |
+> | Phase 0 — approval gate at every entry point (§1) | ✅ committed. **Deviation from §1.2:** webhook *delivery* is gated, not `webhook-allocate`/subscribe — children subscribe at spawn, before approval, and the SDK rejects a refused stream with no retry |
+> | Phase 3 — several instances per host (§4) | ✅ committed |
+> | Phase 1 — protocol package (§2) | not started; blocked on §10 Q1/Q2 (package home, registry) |
+> | Phase 2 — shimId + qualified names + widened gate (§3) | not started; name emission waits on the platform's `qualify()`/`reconcileOrg` change |
+> | Phase 6 — TunnelWorkspace (§5) | not started |
 >
 > **Companion to:** `AgenticProcedure` repo, `architectural-plans/MULTI-PLATFORM-MCP.md`, on branch `docs/multi-platform-mcp` (commit `544dd166`). That plan is the **platform** side and owns the decision table **D1–D16** (its §0). This document treats those decisions as settled and does not reopen them. Phase numbers here match that plan's §9.
 >
 > **Supersedes:** `architectural-plans/MULTI-ACCOUNT.md` (see §8).
 >
-> **Note on tracking:** `architectural-plans/` is gitignored for new entries (`.gitignore:74-79`). This file is on-disk only unless someone deliberately force-adds it.
+> **Note on tracking:** `architectural-plans/` is gitignored for new entries (`.gitignore:74-79`). This one file was force-added on the user's instruction, so later edits to it are tracked normally.
 
 Paths are relative to `connector/src/` unless prefixed. The prefix `platform:` means a path under `AgenticProcedure/server/src/`.
 
