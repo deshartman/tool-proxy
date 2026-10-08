@@ -5,13 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { McpSupervisor } from "../../src/mcp-supervisor.js";
+import { PortAllocator } from "../../src/port-allocator.js";
 import type { McpServerSpec } from "../../src/config.js";
 
 // MCP-AUDIT #6 — a readiness timeout must not leak the port it reserved.
 //
 // spawnChild reserves a port, spawns, then waits for it. Everything BELOW that
 // wait assigns entry.child and spec.__port — and stopEntry's cleanup is gated on
-// exactly those two (the only reservedPorts.delete in the class sits inside
+// exactly those two (the only port release in the class sits inside
 // `if (entry.child)`, and unregister() routes through the same stopEntry). So a
 // timeout left the port reserved forever and left a SIGTERM'd child with no
 // SIGKILL escalation, lingering untracked on a port the connector had also lost.
@@ -26,7 +27,21 @@ import type { McpServerSpec } from "../../src/config.js";
 // child can never listen (`dir` has no server.ts, so tsx exits immediately) and a
 // short readiness timeout. The spawn must fail — and the reservation must be gone.
 
-interface SupervisorPrivates { reservedPorts: Set<number> }
+// Observes reservations through the allocator's PUBLIC surface (the supervisor
+// no longer owns a reservation set — it delegates to a PortAllocator, which is
+// shared across supervisors in a multi-workspace process). Records every port it
+// hands out so `held()` can report which are still reserved.
+class RecordingAllocator extends PortAllocator {
+  readonly handedOut = new Set<number>();
+  override async reserve(from: number): Promise<number> {
+    const port = await super.reserve(from);
+    this.handedOut.add(port);
+    return port;
+  }
+  held(): number[] {
+    return [...this.handedOut].filter((p) => this.isReserved(p));
+  }
+}
 
 function buildSupervisor(basePort: number, readyTimeoutMs = 400) {
   const log = {
@@ -34,8 +49,9 @@ function buildSupervisor(basePort: number, readyTimeoutMs = 400) {
     fatal: vi.fn(), trace: vi.fn(), silent: vi.fn(), level: "info",
     child: () => log,
   } as unknown as Parameters<typeof McpSupervisor.prototype.constructor>[0]["log"];
-  const supervisor = new McpSupervisor({ log, servers: new Map(), basePort, readyTimeoutMs });
-  return { supervisor, privates: supervisor as unknown as SupervisorPrivates, log };
+  const ports = new RecordingAllocator();
+  const supervisor = new McpSupervisor({ log, servers: new Map(), basePort, readyTimeoutMs, ports });
+  return { supervisor, ports, log };
 }
 
 // A spec the child cannot satisfy: a REAL directory (so spawn itself succeeds)
@@ -48,8 +64,8 @@ function unstartableSpec(name: string): McpServerSpec {
 }
 
 describe("MCP-AUDIT #6 — readiness timeout releases the reserved port", () => {
-  it("leaves reservedPorts empty after a failed spawn", async () => {
-    const { supervisor, privates } = buildSupervisor(7600);
+  it("leaves no port reserved after a failed spawn", async () => {
+    const { supervisor, ports } = buildSupervisor(7600);
     supervisor.register([unstartableSpec("never-ready")]);
 
     // startAll swallows per-entry failures by design (continue-on-fail).
@@ -58,11 +74,11 @@ describe("MCP-AUDIT #6 — readiness timeout releases the reserved port", () => 
     expect(supervisor.statusList().find((s) => s.name === "never-ready")?.process)
       .toBe("permanently-failed");
     // The finding: this used to hold exactly one leaked port.
-    expect([...privates.reservedPorts]).toEqual([]);
+    expect(ports.held()).toEqual([]);
   });
 
   it("does not accumulate reservations across repeated failed restarts", { timeout: 20_000 }, async () => {
-    const { supervisor, privates } = buildSupervisor(7620);
+    const { supervisor, ports } = buildSupervisor(7620);
     supervisor.register([unstartableSpec("flapper")]);
     await supervisor.startAll();
 
@@ -70,24 +86,24 @@ describe("MCP-AUDIT #6 — readiness timeout releases the reserved port", () => 
     for (let i = 0; i < 3; i++) {
       await supervisor.restart("flapper", "operator-retry").catch(() => { /* expected */ });
     }
-    expect([...privates.reservedPorts]).toEqual([]);
+    expect(ports.held()).toEqual([]);
   });
 
   it("still reserves the port for a spawn that has not failed", async () => {
     // Guards against over-correcting into "always release", which would let two
     // children race onto the same port.
-    const { supervisor, privates } = buildSupervisor(7640);
-    expect([...privates.reservedPorts]).toEqual([]);
+    const { supervisor, ports } = buildSupervisor(7640);
+    expect(ports.held()).toEqual([]);
     supervisor.register([unstartableSpec("probe")]);
     // Mid-flight state is not observable without a real child, so assert the
     // invariant we can: a *successful* path is covered by the integration tests,
     // and the failure path above proves release happens exactly on failure.
     await supervisor.startAll();
-    expect([...privates.reservedPorts]).toEqual([]);
+    expect(ports.held()).toEqual([]);
   });
 
   it("skips a port already bound on loopback rather than reusing it", async () => {
-    // canBind probes 127.0.0.1; make sure the probe is actually consulted.
+    // canBindLoopback probes 127.0.0.1; make sure the probe is actually consulted.
     const blocker = createServer();
     await new Promise<void>((r) => blocker.listen(7660, "127.0.0.1", () => r()));
     try {
