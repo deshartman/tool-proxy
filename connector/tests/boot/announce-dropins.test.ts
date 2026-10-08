@@ -82,7 +82,7 @@ describe("announceDiscoveredDropins", () => {
     });
 
     const result = await announceDiscoveredDropins({
-      dropinNames: ["crm", "sample"],
+      gated: [{ name: "crm", author: "customer", source: "dropin" as const }, { name: "sample", author: "customer", source: "dropin" as const }],
       approval,
       supervisor: fakeSupervisor(["crm", "sample"]),
       servers,
@@ -127,7 +127,7 @@ describe("announceDiscoveredDropins", () => {
     });
 
     const result = await announceDiscoveredDropins({
-      dropinNames: ["crm", "sample"],
+      gated: [{ name: "crm", author: "customer", source: "dropin" as const }, { name: "sample", author: "customer", source: "dropin" as const }],
       approval,
       supervisor,
       servers,
@@ -170,7 +170,7 @@ describe("announceDiscoveredDropins", () => {
     } as unknown as McpSupervisor;
 
     const result = await announceDiscoveredDropins({
-      dropinNames: ["crm", "sample"],
+      gated: [{ name: "crm", author: "customer", source: "dropin" as const }, { name: "sample", author: "customer", source: "dropin" as const }],
       approval,
       supervisor,
       servers,
@@ -197,7 +197,7 @@ describe("announceDiscoveredDropins", () => {
     });
 
     const result = await announceDiscoveredDropins({
-      dropinNames: [],
+      gated: [],
       approval,
       supervisor: fakeSupervisor([]),
       servers: new Map(),

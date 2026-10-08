@@ -1145,13 +1145,14 @@ Approval state lives **controller-only**. After every `register-ack`, the contro
 
 ### What gates and what doesn't
 
-| MCP type | Source field | Gated in v1.3? |
-|---|---|---|
-| Customer drop-in | `source: "local"` (`__dropin: true` marker) | **YES** — requires `mcp-enable` |
-| Yaml-listed Type 1 hand-written | `source: "yaml"` | NO — yaml IS the acceptance |
-| 3rd-party Type 2 (controller-pushed) | `source: "controller-config"` | NO — already operator-authored |
+| MCP type | Wire `source` on `mcp-discovered` | Gated in v1.3 | Gated since Phase 2c |
+|---|---|---|---|
+| Customer drop-in | `"dropin"` (was `"local"`) | **YES** | **YES** |
+| Twilio-bundled (incl. demos, `kind: "example"`) | `"bundled"` | NO | **YES** — ships inactive (D3) |
+| Yaml-listed Type 1 hand-written | `"yaml"` | NO | **YES** |
+| 3rd-party Type 2 (controller-pushed) | — (never sent) | NO | NO — pushing it is already the operator's consent |
 
-The gate predicate on the connector side is exactly `author === "customer"` AND `source === "local"`. Anything else flows through unchanged.
+Since Phase 2c the connector-side rule is: **gated unless controller-pushed.** The v1.3 predicate (`author === "customer"` AND `source === "local"`) is retired. The wire `source` is not the supervisor's internal `McpStatus.source`, which still reads `"local"` for every scanned folder, bundled or drop-in.
 
 ### `mcp-discovered` (connector → controller)
 
@@ -1159,8 +1160,9 @@ The gate predicate on the connector side is exactly `author === "customer"` AND 
 interface McpDiscoveredFrame {
   type: "mcp-discovered";
   mcp: string;                    // folder name; stable identity across reconnects
-  author: "customer";             // always — bundled / yaml / 3rd-party MCPs don't go through this gate
-  source: "local";                // always — co-occurs with author:"customer" but kept distinct for clarity
+  author: string;                 // "twilio" (under MCP_BUNDLED_DIR) | "customer" today; typed open for forward-compat
+  source: "bundled" | "dropin" | "yaml"; // how it got here — 3rd-party (Type 2) MCPs never go through this gate
+  kind?: "example";               // demos only (an `.example` marker in the MCP's folder); absent otherwise
   envKeys: string[];              // de-duped union from the child's /envkeys endpoint
   tools: Array<{
     name: string;                 // e.g. "issue_refund"
@@ -1170,9 +1172,11 @@ interface McpDiscoveredFrame {
 }
 ```
 
+> **Widened in the gated-everything change (MULTI-PLATFORM-MCP Phase 2c).** Every MCP the connector runs itself is now gated — bundled (Twilio-shipped, demos included), customer drop-in and yaml-listed. Only controller-pushed (Type 2) MCPs bypass it. Before this change only customer drop-ins were gated, and the frame carried the literals `author: "customer"`, `source: "local"`. **Back-compat:** controllers MUST accept `source: "local"` as a synonym for `"dropin"` from older connectors, and MUST treat a connector as gated once it sends any of `"bundled" | "dropin" | "yaml"` — so a controller's legacy auto-approve fallback (below) stops for that connector.
+
 Sent at two emission points:
 
-1. **Boot.** After `register` is sent (so the controller has a `connectorId` to scope against), one frame per drop-in MCP discovered on disk. The connector emits this for ALL drop-ins, including ones the controller may have approved previously — the connector has no persistent approval state, and trusts the controller to reply `mcp-enable` for the ones it has on file.
+1. **Boot.** After `register` is sent (so the controller has a `connectorId` to scope against), one frame per gated MCP — bundled, drop-in and yaml. The connector emits this for ALL drop-ins, including ones the controller may have approved previously — the connector has no persistent approval state, and trusts the controller to reply `mcp-enable` for the ones it has on file.
 2. **Runtime rescan.** When [`LocalMcpsCoordinator.rescan()`](../connector/src/tunnel/local-mcps-coordinator.ts) discovers a new drop-in folder and spawns its child, one frame per added MCP.
 
 **Deliberately NOT in the payload:**
@@ -1187,7 +1191,7 @@ Sent at two emission points:
   "type": "mcp-discovered",
   "mcp": "crm",
   "author": "customer",
-  "source": "local",
+  "source": "dropin",
   "envKeys": ["MOCK_CUSTOMERS_URL"],
   "tools": [
     { "name": "get_customer",  "description": "Returns the customer's identity profile keyed by phone." },
@@ -1310,7 +1314,7 @@ Error — controller approving something that isn't a drop-in:
 [Connector → Controller]   register { manifest: { servers: [...], excluding crm } }
 [Controller → Connector]   register-ack { connectorId: "conn_abc" }
 
-[Connector → Controller]   mcp-discovered { mcp: "crm", author: "customer", source: "local", envKeys: ["MOCK_CUSTOMERS_URL"], tools: [...], discoveredAt: "..." }
+[Connector → Controller]   mcp-discovered { mcp: "crm", author: "customer", source: "dropin", envKeys: ["MOCK_CUSTOMERS_URL"], tools: [...], discoveredAt: "..." }
 
 [Controller UI]            renders crm in "Pending approval" lane
                            operator clicks Approve, pastes MOCK_CUSTOMERS_URL value

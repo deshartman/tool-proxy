@@ -21,12 +21,12 @@ const log = createLogger("manifest-build");
 // Trust boundary is per-MCP-server, not per-capability — every discovered
 // item is advertised verbatim.
 //
-// dropinSpecsByName lets buildManifest tell drop-in entries apart from
-// hand-written Type 1 entries with the same yaml `dir:`. Both share
-// transport: "http" + dir on the supervisor side; only the spec carries
-// the `__dropin: true` marker that the v1.3 approval gate hangs off.
-// Optional + best-effort: when omitted, no entries are gated (preserves
-// pre-v1.3 boot paths and tests). Empty map → same effect.
+// gatedSpecsByName names the entries the approval gate applies to. Since
+// Phase 2c (D3) that is every MCP the connector runs itself — bundled,
+// customer drop-in and yaml — and never a controller-pushed (Type 2) one.
+// Only `.has(name)` is consulted. Optional + best-effort: when omitted, no
+// entries are gated (preserves older boot paths and tests). Empty map →
+// same effect.
 export async function buildManifest(
   config: ConnectorConfig,
   servers: Map<string, McpServerConnection>,
@@ -37,16 +37,15 @@ export async function buildManifest(
   // can omit it; absent → ServerDescriptor.envKeys is undefined and the
   // inspector falls back to "no badge".
   envKeysFor?: (name: string) => Promise<string[]>,
-  // v1.3 — Customer drop-in approval gate. Predicate consulted ONLY for
-  // entries whose spec is a drop-in (`__dropin === true`); when it returns
-  // false the entire ServerDescriptor is omitted from the manifest. Yaml-
-  // listed and controller-config entries bypass this check entirely. Optional
-  // so tests + older boot paths can omit it (absent ≡ all-approved).
+  // Approval gate. Predicate consulted ONLY for entries in gatedSpecsByName;
+  // when it returns false the entire ServerDescriptor is omitted from the
+  // manifest. Controller-config (Type 2) entries are never in that map, so
+  // bypass it. Optional so tests + older boot paths can omit it (absent ≡
+  // all-approved).
   isApproved?: (name: string) => boolean,
-  // Drop-in spec lookup. The supervisor knows which specs carry the
-  // `__dropin: true` marker; we don't repeat that classification here.
-  // Boot wiring threads through `discoverDropins()` output keyed by name.
-  dropinSpecsByName?: Map<string, unknown>,
+  // Gated-entry lookup, keyed by name. Boot wiring builds it once from the
+  // bundled scan, the drop-in scan and connector.yaml.
+  gatedSpecsByName?: Map<string, unknown>,
   // Additional specs discovered outside the yaml (bundled-mcps/ + drop-ins).
   // Author classification (authorOf) sees these — a bundled entry needs its
   // __author marker preserved so ServerDescriptor.author is "twilio".
@@ -59,14 +58,11 @@ export async function buildManifest(
 
   const allEntries: Array<ServerDescriptor | undefined> = await Promise.all(
     [...servers.values()].map(async (server) => {
-      // Gate predicate: drop-ins only. The classifier is "name appears in
-      // the dropin map" — set up by boot wiring; absence is "not a drop-in".
-      // We deliberately don't peek at McpServerSpec internals here so the
-      // yaml-listed Type 1 hand-written shape (legacy escape hatch) stays
-      // un-gated even when a future change adds `__dropin` somewhere
-      // unexpected.
-      const isDropin = dropinSpecsByName?.has(server.name) ?? false;
-      if (isDropin && isApproved && !isApproved(server.name)) {
+      // Gate predicate: "name appears in the gated map" — set up by boot
+      // wiring. We deliberately don't peek at McpServerSpec internals here,
+      // so gating follows exactly one classification.
+      const isGated = gatedSpecsByName?.has(server.name) ?? false;
+      if (isGated && isApproved && !isApproved(server.name)) {
         return undefined;
       }
       return buildServerDescriptor(server, specByName, envKeysFor);

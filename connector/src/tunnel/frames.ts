@@ -399,8 +399,17 @@ export interface McpNotificationFrame {
 export interface McpDiscoveredFrame {
   type: "mcp-discovered";
   mcp: string;                          // folder name; stable identity across reconnects
-  author: "customer";                   // gate predicate, always literal
-  source: "local";                      // gate predicate, always literal
+  // Who shipped it: "twilio" for MCPs under MCP_BUNDLED_DIR, else "customer".
+  // `string`, like ServerDescriptor.author, so a new value isn't a wire break.
+  author: string;
+  // How it got here. "bundled" = shipped in the image; "dropin" = a customer
+  // folder under MCP_DROPIN_DIR; "yaml" = a connector.yaml entry. Type 2
+  // (controller-pushed) MCPs are never gated, so never appear. Pre-2c shims
+  // sent the literal "local" for drop-ins; controllers accept it as "dropin".
+  source: "bundled" | "dropin" | "yaml";
+  // Set only for demos (an `.example` marker in the MCP's folder), so the
+  // controller's pending lane can label them. Absent for everything else.
+  kind?: "example";
   envKeys: string[];                    // de-duped union from the child's /envkeys endpoint
   tools: Array<{
     name: string;

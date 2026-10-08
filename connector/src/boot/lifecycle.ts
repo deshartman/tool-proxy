@@ -46,7 +46,7 @@ import { McpSupervisor, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverBundled, discoverDropins, type DropinSpec } from "../dropin.js";
 import { resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { requireEnv } from "./require-env.js";
-import { announceDiscoveredDropins as announceDropinsLoop } from "./announce-dropins.js";
+import { announceDiscoveredDropins as announceDropinsLoop, describeGated, type GatedDescriptor } from "./announce-dropins.js";
 import { ConfigStore, type ControllerRow } from "../config-store/index.js";
 import { initSodium } from "../config-store/seal.js";
 import { resolveMasterKey } from "../config-store/master-key.js";
@@ -343,6 +343,18 @@ async function bootFromDb(): Promise<void> {
 
   const dropinSpecsByName = new Map<string, DropinSpec>(dropins.map((spec) => [spec.name, spec]));
 
+  // Phase 2c (D3): every MCP this connector runs itself is GATED — shipped
+  // available but inactive, enabled per shim by the controller operator.
+  // Bundled, customer drop-in and yaml alike; only controller-pushed (Type 2)
+  // MCPs stay outside, because pushing one is already the operator's consent.
+  // This map is the one answer to "is it gated, and how is it described on
+  // mcp-discovered". dropinSpecsByName above keeps its separate jobs (author
+  // classification in buildManifest, lookupSpec) and is NOT the gate.
+  const gatedSpecsByName = new Map<string, GatedDescriptor>();
+  for (const spec of bundled) gatedSpecsByName.set(spec.name, describeGated(spec, "bundled"));
+  for (const spec of dropins) gatedSpecsByName.set(spec.name, describeGated(spec, "dropin"));
+  for (const spec of config.mcp_servers) gatedSpecsByName.set(spec.name, describeGated(spec, "yaml"));
+
   const servers = new Map<string, McpServerConnection>();
 
   const notifications = new NotificationForwarder(log);
@@ -402,7 +414,7 @@ async function bootFromDb(): Promise<void> {
   // Declared above the empty-store `if (!row) return` so the paste-flow
   // closures can read it (CLAUDE.md "TDZ discipline").
   const isMcpEnabled = (name: string): boolean =>
-    approval.isEnabled(name, (n) => dropinSpecsByName.has(n));
+    approval.isEnabled(name, (n) => gatedSpecsByName.has(n));
 
   const localMcps = new LocalMcpsCoordinator({
     send: () => log.warn(`local-mcps send before tunnel bind — dropping frame`),
@@ -412,10 +424,16 @@ async function bootFromDb(): Promise<void> {
     onApplied: () => refreshManifestAndPushDelta(),
     onMcpAdded: async (name) => {
       const status = supervisor.statusList().find((s) => s.name === name);
+      // Rescan only ever adds customer drop-ins (it scans MCP_DROPIN_DIR).
+      // `source === "local"` is the supervisor's word for "scanned folder".
       const isCustomerDropin = status?.source === "local";
       if (isCustomerDropin) {
         const fresh = discoverDropins({ yamlNames });
-        for (const spec of fresh) dropinSpecsByName.set(spec.name, spec);
+        for (const spec of fresh) {
+          dropinSpecsByName.set(spec.name, spec);
+          gatedSpecsByName.set(spec.name, describeGated(spec, "dropin"));
+        }
+        const gated = gatedSpecsByName.get(name);
 
         try {
           const envKeys = await supervisor.fetchEnvKeys(name);
@@ -425,6 +443,9 @@ async function bootFromDb(): Promise<void> {
             mcp: name,
             envKeys,
             tools: tools.map((t) => ({ name: t.name, description: t.description })),
+            author: gated?.author ?? "customer",
+            source: gated?.source ?? "dropin",
+            ...(gated?.kind ? { kind: gated.kind } : {}),
           });
         } catch (err) {
           log.warn({ name, err: err as Error }, `mcp-discovered emission for newly-added drop-in failed`);
@@ -450,7 +471,7 @@ async function bootFromDb(): Promise<void> {
     version,
     (name) => supervisor.fetchEnvKeys(name),
     (name) => approval.isApproved(name),
-    dropinSpecsByName,
+    gatedSpecsByName,
     [...bundled, ...dropinSpecsByName.values()],
   );
   validateManifestSchemas(manifest, config);
@@ -809,7 +830,7 @@ async function bootFromDb(): Promise<void> {
 
   async function announceDiscoveredDropins(): Promise<void> {
     const result = await announceDropinsLoop({
-      dropinNames: [...dropinSpecsByName.keys()],
+      gated: [...gatedSpecsByName.values()],
       approval,
       supervisor,
       servers,
@@ -861,7 +882,7 @@ async function bootFromDb(): Promise<void> {
         version,
         (name) => supervisor.fetchEnvKeys(name),
         (name) => approval.isApproved(name),
-        dropinSpecsByName,
+        gatedSpecsByName,
         [...bundled, ...dropinSpecsByName.values()],
       );
       inspector?.setManifest(manifest);
@@ -895,7 +916,7 @@ async function bootFromDb(): Promise<void> {
         version,
         (name) => supervisor.fetchEnvKeys(name),
         (name) => approval.isApproved(name),
-        dropinSpecsByName,
+        gatedSpecsByName,
         [...bundled, ...dropinSpecsByName.values()],
       );
       const delta = diffManifest(manifest, nextManifest);
