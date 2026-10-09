@@ -56,3 +56,18 @@ export function qualifiedNaming(shimId: string): WireNaming {
     },
   };
 }
+
+// The session's major and naming, from what we are willing to speak and what
+// the controller advertised in register-ack. min(ours, theirs): 2.x only when
+// BOTH speak 2. A controller that advertised nothing (predates the field) is
+// 1.x. Pure, so every (ceiling, controller) pair is unit-testable without a
+// tunnel — the shipped ceiling is 1 until the cutover, which would otherwise
+// leave the 2.x branch unexercised.
+export function negotiateNaming(
+  speakMajor: number,
+  controllerMax: { major: number } | undefined,
+  shimId: string,
+): WireNaming {
+  const sessionMajor = Math.min(speakMajor, controllerMax?.major ?? 1);
+  return sessionMajor >= 2 ? qualifiedNaming(shimId) : bareNaming();
+}

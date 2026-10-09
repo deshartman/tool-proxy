@@ -14,7 +14,8 @@
 // sub-table rather than nested ifs in a closure.
 
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
-import { PROTOCOL_VERSION, parseVersion, isSupportedPeer } from "@gtmi/toolproxy-protocol";
+import { PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION, parseVersion, isSupportedPeer } from "@gtmi/toolproxy-protocol";
+import { bareNaming, negotiateNaming, type WireNaming } from "../tunnel/naming.js";
 import type { McpServerConnection } from "../servers/index.js";
 import { wrapWithMessageTap } from "../servers/message-tap.js";
 import { redactTapPayload } from "../policy/redact.js";
@@ -57,6 +58,16 @@ import { envOptional, envString, envNumber } from "../env.js";
 const log = createLogger("connector");
 // Adapter for downstream callbacks that take `(msg: string) => void`.
 const logLine = log.info.bind(log);
+
+// The highest tunnel-protocol major this connector will SPEAK. A session's
+// major is min(this, the controller's advertised max), decided at register-ack.
+//
+// 1 until the 2.x cutover (MULTI-PLATFORM-MCP Phase 2b step 4). Deliberately a
+// code constant, not an env var: switching what every connector sends on the
+// wire is a release decision reviewed in a commit, not a knob an operator
+// flips — and the qualified-naming code it gates is already built and tested,
+// so raising it is the whole cutover.
+const SPEAK_MAJOR: 1 | 2 = 1;
 
 export async function boot(): Promise<void> {
   await bootFromDb();
@@ -670,6 +681,12 @@ async function bootFromDb(): Promise<void> {
     const tokenRef = { current: currentToken };
     // Capture row.id into a const so TS narrows across the callback closures.
     const rowId = row.id;
+    // Per-dial session state. Starts on the bare 1.x form and is upgraded at
+    // register-ack if both sides speak 2. Fresh per dial, so a reconnect to a
+    // different controller re-negotiates from scratch.
+    const shimId = store.getShimId();
+    const session: { naming: WireNaming } = { naming: bareNaming() };
+
     const baseRouter = createFrameRouter({
       webhooks,
       tokenRef,
@@ -690,6 +707,14 @@ async function bootFromDb(): Promise<void> {
         if (peer) pendingTunnel.peerProtocol = peer;
         if (peer && !isSupportedPeer(peer)) {
           log.warn({ ours: PROTOCOL_VERSION, theirs: range }, `controller tunnel-protocol range is outside every major this connector can parse`);
+        }
+        // Phase 2b — the session's major is min(our ceiling, their max). Only
+        // when BOTH are 2 does the session switch to qualified names; a 1.x
+        // controller (or a ceiling of 1) keeps the bare form. Decided once,
+        // here, because the register frame had to be sent before we knew.
+        session.naming = negotiateNaming(SPEAK_MAJOR, peer, shimId);
+        if (session.naming.major >= 2) {
+          log.info({ shimId, theirs: range }, `tunnel protocol 2.x negotiated — tool names are qualified`);
         }
       },
       inspector,
@@ -784,7 +809,11 @@ async function bootFromDb(): Promise<void> {
       type: "register",
       manifest,
       name: row.connectorName,
-      tunnelProtocol: PROTOCOL_VERSION,
+      // Advertise what we can SPEAK. shimId goes out only when we speak 2.x;
+      // 1.0.1 controllers tolerate it, but a 1.0.0 controller's strict parse
+      // would not, so a 1.x-only connector never sends it.
+      tunnelProtocol: SPEAK_MAJOR >= 2 ? LATEST_PROTOCOL_VERSION : PROTOCOL_VERSION,
+      ...(SPEAK_MAJOR >= 2 ? { shimId } : {}),
       ...(currentToken ? { registrationToken: currentToken } : {}),
     });
     log.info(`register frame sent`);
@@ -798,6 +827,9 @@ async function bootFromDb(): Promise<void> {
       log: dispatcherLog.info.bind(dispatcherLog),
       isRestarting: (name) => supervisor.isRestarting(name),
       isServerEnabled: isMcpEnabled,
+      // Read on every call: register-ack may upgrade it to qualified naming
+      // after the dispatcher already exists.
+      get naming() { return session.naming; },
     }).attach();
 
     startTimers();

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { Dispatcher } from "@connector/dispatcher.js";
-import { bareNaming, qualifiedNaming, type WireNaming } from "@connector/tunnel/naming.js";
+import { bareNaming, qualifiedNaming, negotiateNaming, type WireNaming } from "@connector/tunnel/naming.js";
 import type { McpServerConnection } from "@connector/servers/index.js";
 import type { ConnectorConfig } from "@connector/config.js";
 import type { TunnelClient } from "@connector/tunnel/client.js";
@@ -136,5 +136,30 @@ describe("2.x — qualified names", () => {
     expect(list.prompts.map((p) => p.name)).toEqual([`${SHIM}.crm.brief`]);
     await rpc("prompts/get", { name: `${SHIM}.crm.brief`, arguments: {} });
     expect(calls).toEqual(["crm:prompt:brief"]);
+  });
+});
+
+// The cross-version compatibility matrix. The session major is
+// min(what the shim will speak, what the controller advertised); a controller
+// that predates supportedTunnelProtocol advertises nothing and is 1.x.
+describe("negotiateNaming — the version matrix", () => {
+  const cases: Array<[string, number, { major: number } | undefined, 1 | 2]> = [
+    ["1.x shim, 1.x controller (silent)",   1, undefined,     1],
+    ["1.x shim, 1.x controller (says 1)",   1, { major: 1 },  1],
+    ["1.x shim, 2.x controller",            1, { major: 2 },  1],
+    ["2.x shim, 1.x controller (silent)",   2, undefined,     1],
+    ["2.x shim, 1.x controller (says 1)",   2, { major: 1 },  1],
+    ["2.x shim, 2.x controller",            2, { major: 2 },  2],
+  ];
+  it.each(cases)("%s → major %s", (_label, speak, controller, expected) => {
+    const naming = negotiateNaming(speak, controller, SHIM);
+    expect(naming.major).toBe(expected);
+    // And the form matches the major — the two can never disagree.
+    expect(naming.compose("crm", "t")).toBe(expected === 2 ? `${SHIM}.crm.t` : "crm.t");
+  });
+
+  it("only BOTH sides on 2 produces qualified names (no one-sided upgrade)", () => {
+    const qualified = cases.filter(([, s, c]) => negotiateNaming(s, c, SHIM).major === 2);
+    expect(qualified.map(([label]) => label)).toEqual(["2.x shim, 2.x controller"]);
   });
 });
