@@ -37,6 +37,10 @@ export interface FrameRouterOpts {
   // controller no longer recognizes our persisted token. Caller clears the
   // persistent copy so the next attempt is a first-connect and re-mints.
   onTokenCleared?: () => void;
+  // Fires on a successful register-ack carrying the controller's supported
+  // tunnel-protocol range. Caller stores its MAX on the tunnel so a newer-minor
+  // controller's frames parse tolerantly (see TunnelClient.peerProtocol).
+  onPeerProtocol?: (range: { min: string; max: string }) => void;
   inspector: Inspector | undefined;
   reconnect: ReconnectController;
   log: Logger;
@@ -73,6 +77,7 @@ function handleRegisterAck(frame: RegisterAckFrame, opts: FrameRouterOpts): void
   // Success: mark accepted (clears reconnect attempts + the rejected flag),
   // open webhook delivery, persist any newly-minted token, stamp identity.
   opts.reconnect.markAccepted();
+  if (frame.supportedTunnelProtocol) opts.onPeerProtocol?.(frame.supportedTunnelProtocol);
   opts.webhooks.setTunnelOpen(true);
   opts.webhooks.reallocateAll();
   if (frame.registrationToken && frame.registrationToken !== opts.tokenRef.current) {

@@ -94,7 +94,15 @@ The detection helper in [connector/src/config.ts](connector/src/config.ts) is `i
 
 ## Wire protocol — frames
 
-Wire-format authority: **[`docs/MCP-PROTOCOL.md`](docs/MCP-PROTOCOL.md)**. Connector-side zod schemas in [connector/src/tunnel/frames.ts](connector/src/tunnel/frames.ts) match it. Frame categories:
+Wire-format authority: **the Zod schemas in [`protocol/`](protocol/), published as [`@gtmi/toolproxy-protocol`](https://www.npmjs.com/package/@gtmi/toolproxy-protocol)** (decision D7: the shim owns the protocol; controllers depend on the package and never define frames of their own). [`docs/MCP-PROTOCOL.md`](docs/MCP-PROTOCOL.md) is the prose explanation — where the two disagree, the schemas win. [connector/src/tunnel/frames.ts](connector/src/tunnel/frames.ts) is still a hand-written TypeScript copy (interfaces, not Zod); [`protocol/tests/connector-parity.test.ts`](protocol/tests/connector-parity.test.ts) fails if its frame-type set drifts from the package's.
+
+**Inbound frames are validated against the package, LOG-ONLY** ([`tunnel/client.ts`](connector/src/tunnel/client.ts) `handleMessage`). A frame that fails the schema fires `onschemaviolation` — logged at `warn` with the frame type and field **paths**, never values, since frames carry credentials — and is **still delivered unchanged**. That is deliberate for this rollout: strict validation against live traffic surfaces drift the hand-written types tolerated, and a tunnel that worked yesterday must not break on it. Verified 2026-10-09 against the live platform: zero violations. Making it enforcing is a later, separate step. Don't flip it by deleting the `onframe` call.
+
+**Version handshake.** `register` carries `tunnelProtocol` (the package's `PROTOCOL_VERSION`, today `"1.0"` = the current wire exactly; it becomes `"2.0"` with id-qualified tool names). A controller that echoes `register-ack.supportedTunnelProtocol` sets `TunnelClient.peerProtocol` via the frame-router's `onPeerProtocol`, and a newer minor of our major is then parsed tolerantly (unknown fields stripped). Absent → strict. Named `tunnelProtocol`, NOT `protocolVersion` — that is the negotiated MCP era on `ServerDescriptor`.
+
+**The connector consumes `protocol/` through the npm workspace link, not the registry copy** — `npm` resolves `~1.0.0` to `"resolved": "protocol", "link": true`. The Dockerfile must therefore copy `protocol/` into the build stage AND `protocol/dist` + `protocol/package.json` into the runtime image: `node_modules/@gtmi/toolproxy-protocol` is a symlink to `../../protocol`, and without those lines it dangles and the connector fails at its first import. **Publishing:** `cd protocol && npm publish --access public`. `prepublishOnly` clean-builds and refuses to publish unless `dist/index.js` exists — a stale `tsconfig.tsbuildinfo` makes `tsc -b` skip emit after `dist/` is deleted, which produced a 2-file empty tarball on the first dry run. A published version can never be reused.
+
+Frame categories:
 
 - **Lifecycle**: `register` / `manifest-delta` / `rpc` / `heartbeat` / `goodbye`
 - **Webhook ingress** (v1): `webhook-allocate` / `webhook-allocate-ack` / `webhook` / `webhook-revoke`
@@ -123,7 +131,7 @@ Also on every dispatched `tools/call`: if the child MCP was closed under a live 
 
 ## Workspace shape
 
-npm workspaces, **one package**: `@mcp-shim/connector`. That's the only thing that ships.
+npm workspaces, **two packages**: `@mcp-shim/connector` (`connector/`, private — ships only inside the OCI image) and `@gtmi/toolproxy-protocol` (`protocol/`, **published to public npm** — the tunnel wire protocol, which the connector consumes through the workspace link and controllers install from the registry). `protocol/` builds first (`tsc -b protocol connector`). It is the one deliberate exception to "nothing here is a library": it carries schemas, derived types and a parser, and no runtime behaviour.
 
 **Module system: native ESM.** [connector/package.json](connector/package.json) declares `"type": "module"`; tsc emits `dist/**/*.js` as ESM (paired with `module: NodeNext` in [tsconfig.base.json](tsconfig.base.json)). Source files use `import`/`export` exclusively; relative imports MUST carry the `.js` extension (NodeNext requirement). For CJS-only ergonomics: use `createRequire(import.meta.url)` from `node:module` and `fileURLToPath(import.meta.url)` from `node:url` for `__dirname`/`__filename` equivalents. **Don't add `require()` calls or `__dirname` references in new code** — they fail at runtime under ESM.
 

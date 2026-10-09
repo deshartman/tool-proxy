@@ -128,6 +128,9 @@ export interface RegisterFrame {
   // controller on the first register-ack).
   name?: string;
   registrationToken?: string;
+  // "<major>.<minor>" — @gtmi/toolproxy-protocol's PROTOCOL_VERSION. Absent
+  // from connectors that predate it; a controller reads that as 1.x.
+  tunnelProtocol?: string;
 }
 
 // Some controllers send register-ack back on the first register frame. This
@@ -141,6 +144,9 @@ export interface RegisterAckFrame {
   error?: { code: string; message: string };
   acceptedToolCount?: number;
   registrationToken?: string;
+  // The controller's supported tunnel-protocol range, when it reports one.
+  // Lets the connector parse a newer-minor controller tolerantly.
+  supportedTunnelProtocol?: { min: string; max: string };
 }
 export interface ManifestDeltaFrame  { type: "manifest-delta"; delta: ManifestDelta }
 export interface RpcFrame            { type: "rpc";            payload: unknown }

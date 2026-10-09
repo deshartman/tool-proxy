@@ -14,6 +14,7 @@
 // sub-table rather than nested ifs in a closure.
 
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
+import { PROTOCOL_VERSION, parseVersion, isCompatible } from "@gtmi/toolproxy-protocol";
 import type { McpServerConnection } from "../servers/index.js";
 import { wrapWithMessageTap } from "../servers/message-tap.js";
 import { redactTapPayload } from "../policy/redact.js";
@@ -585,6 +586,11 @@ async function bootFromDb(): Promise<void> {
     log.info({ reason, url: tunnelDialUrl }, `tunnel dialing`);
     const pendingTunnel = new TunnelClient(tunnelDialUrl, auth.authToken, row.connectorName, auth.authProvider);
     pendingTunnel.onerror = (error) => log.error({ err: error }, `tunnel error`);
+    // Log-only validation against @gtmi/toolproxy-protocol (Phase 1). The
+    // frame is still handled; this just makes schema drift visible. Paths
+    // only — never field values.
+    pendingTunnel.onschemaviolation = (info) =>
+      log.warn(info, `inbound frame does not match the tunnel protocol schema (log-only, frame still handled)`);
     if (inspector) {
       pendingTunnel.onstate = (tunnelState) => inspector.setState(tunnelState);
       pendingTunnel.ontap = (tap) => inspector.recordTap(tap);
@@ -676,6 +682,15 @@ async function bootFromDb(): Promise<void> {
         void store.clearRegistrationToken(rowId)
           .then(() => inspector?.publishTunnelConfigChanged())
           .catch(() => {});
+      },
+      onPeerProtocol: (range) => {
+        // Parse against the controller's newest minor: a newer minor of our
+        // major is tolerated (unknown fields stripped), anything else strict.
+        const peer = parseVersion(range.max);
+        if (peer) pendingTunnel.peerProtocol = peer;
+        if (peer && !isCompatible(parseVersion(PROTOCOL_VERSION)!, peer)) {
+          log.warn({ ours: PROTOCOL_VERSION, theirs: range }, `controller tunnel-protocol range does not include our major`);
+        }
       },
       inspector,
       reconnect: reconnectCtl,
@@ -769,6 +784,7 @@ async function bootFromDb(): Promise<void> {
       type: "register",
       manifest,
       name: row.connectorName,
+      tunnelProtocol: PROTOCOL_VERSION,
       ...(currentToken ? { registrationToken: currentToken } : {}),
     });
     log.info(`register frame sent`);

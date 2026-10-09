@@ -1,6 +1,7 @@
 import WebSocket, { type RawData, type ClientOptions } from "ws";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import type { InboundTunnelFrame, TunnelFrame } from "./frames.js";
+import { parseFrame, type ProtocolVersion } from "@gtmi/toolproxy-protocol";
 import { resolveProxy, type ProxyDecision } from "./proxy.js";
 
 export type WsState = "connecting" | "open" | "closed";
@@ -28,6 +29,16 @@ export class TunnelClient {
   // Inspector hook: every frame in/out, plus state transitions. Optional.
   ontap?: (tap: FrameTap) => void;
   onstate?: (state: WsState) => void;
+  // An inbound frame failed the @gtmi/toolproxy-protocol schema. LOG-ONLY:
+  // the frame is still delivered to onframe exactly as before. Strict
+  // validation against live traffic will surface drift the hand-written types
+  // tolerated, and a tunnel that worked yesterday must not break on that — so
+  // this phase makes the mismatch visible and changes nothing else. `issues`
+  // are field PATHS, never values (frames carry credentials).
+  onschemaviolation?: (info: { type: string | undefined; error: string; issues: string[] }) => void;
+  // The controller's tunnel protocol, once register-ack reports it. Absent →
+  // parse strictly. A newer minor of our major is then parsed tolerantly.
+  peerProtocol?: ProtocolVersion;
 
   private ws?: WebSocket;
   private opened = false;
@@ -175,6 +186,10 @@ export class TunnelClient {
     } catch (error) {
       this.onerror?.(new Error(`malformed frame: ${(error as Error).message}`));
       return;
+    }
+    const checked = parseFrame("controller-to-connector", line, { peer: this.peerProtocol });
+    if (!checked.ok && !checked.ignored) {
+      this.onschemaviolation?.({ type: checked.type, error: checked.error, issues: checked.issues });
     }
     this.ontap?.({ ts: Date.now(), direction: "in", frame });
     this.onframe?.(frame);
