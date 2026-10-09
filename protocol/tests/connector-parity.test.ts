@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { CONNECTOR_FRAME_SCHEMAS, CONTROLLER_FRAME_SCHEMAS } from "../src/schemas.js";
+// The connector speaks 1.x today, so its hand-written frames.ts mirrors the
+// 1.x table. When Phase 2b flips the connector to 2.x this compares v2.
+import { CONNECTOR_FRAME_SCHEMAS, CONTROLLER_FRAME_SCHEMAS } from "../src/schemas-v1.js";
 
 // Until the connector imports its frame types FROM this package, two copies
 // exist: connector/src/tunnel/frames.ts (hand-written interfaces) and these

@@ -14,7 +14,7 @@
 // sub-table rather than nested ifs in a closure.
 
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
-import { PROTOCOL_VERSION, parseVersion, isCompatible } from "@gtmi/toolproxy-protocol";
+import { PROTOCOL_VERSION, parseVersion, isSupportedPeer } from "@gtmi/toolproxy-protocol";
 import type { McpServerConnection } from "../servers/index.js";
 import { wrapWithMessageTap } from "../servers/message-tap.js";
 import { redactTapPayload } from "../policy/redact.js";
@@ -688,8 +688,8 @@ async function bootFromDb(): Promise<void> {
         // major is tolerated (unknown fields stripped), anything else strict.
         const peer = parseVersion(range.max);
         if (peer) pendingTunnel.peerProtocol = peer;
-        if (peer && !isCompatible(parseVersion(PROTOCOL_VERSION)!, peer)) {
-          log.warn({ ours: PROTOCOL_VERSION, theirs: range }, `controller tunnel-protocol range does not include our major`);
+        if (peer && !isSupportedPeer(peer)) {
+          log.warn({ ours: PROTOCOL_VERSION, theirs: range }, `controller tunnel-protocol range is outside every major this connector can parse`);
         }
       },
       inspector,

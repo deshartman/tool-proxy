@@ -17,9 +17,10 @@
 // paths of the offending fields.
 
 import { z } from "zod";
-import { CONNECTOR_FRAME_SCHEMAS, CONTROLLER_FRAME_SCHEMAS } from "./schemas.js";
+import * as v1 from "./schemas-v1.js";
+import * as v2 from "./schemas-v2.js";
 import type { ConnectorFrame, ControllerFrame } from "./types.js";
-import { PROTOCOL_VERSION, parseVersion, type ProtocolVersion } from "./version.js";
+import { PROTOCOL_VERSION, isCompatible, parseVersion, type ProtocolVersion } from "./version.js";
 
 export type Direction = "connector-to-controller" | "controller-to-connector";
 
@@ -48,15 +49,22 @@ function schemaMap(schemas: readonly AnySchema[]): Map<string, AnySchema> {
   return map;
 }
 
-const BY_DIRECTION: Record<Direction, Map<string, AnySchema>> = {
-  "connector-to-controller": schemaMap(CONNECTOR_FRAME_SCHEMAS as unknown as AnySchema[]),
-  "controller-to-connector": schemaMap(CONTROLLER_FRAME_SCHEMAS as unknown as AnySchema[]),
+// One schema table per protocol MAJOR. A 2.x peer is parsed against the 2.x
+// table, a 1.x peer (or one that sent no version) against the 1.x table — the
+// negotiated-major model agreed with the platform.
+const BY_MAJOR: Record<number, Record<Direction, Map<string, AnySchema>>> = {
+  1: {
+    "connector-to-controller": schemaMap(v1.CONNECTOR_FRAME_SCHEMAS as unknown as AnySchema[]),
+    "controller-to-connector": schemaMap(v1.CONTROLLER_FRAME_SCHEMAS as unknown as AnySchema[]),
+  },
+  2: {
+    "connector-to-controller": schemaMap(v2.CONNECTOR_FRAME_SCHEMAS as unknown as AnySchema[]),
+    "controller-to-connector": schemaMap(v2.CONTROLLER_FRAME_SCHEMAS as unknown as AnySchema[]),
+  },
 };
 
-// Is the peer on a newer minor of our major? Only then are unknowns tolerated.
-function isNewerMinor(self: ProtocolVersion, peer: ProtocolVersion | undefined): boolean {
-  return peer !== undefined && peer.major === self.major && peer.minor > self.minor;
-}
+export const SUPPORTED_MAJORS: readonly number[] = Object.keys(BY_MAJOR).map(Number);
+
 
 export function parseFrame(direction: "connector-to-controller", text: string, opts?: ParseOptions): ParseResult<ConnectorFrame>;
 export function parseFrame(direction: "controller-to-connector", text: string, opts?: ParseOptions): ParseResult<ControllerFrame>;
@@ -75,9 +83,23 @@ export function parseFrame(
     return { ok: false, type: undefined, error: "frame has no string `type`", issues: [] };
   }
   const type = (raw as { type: string }).type;
-  const tolerant = isNewerMinor(opts.self ?? parseVersion(PROTOCOL_VERSION)!, opts.peer);
+  const self = opts.self ?? parseVersion(PROTOCOL_VERSION)!;
+  // Which major's schemas to apply: the peer's when known, else our own. A
+  // peer that sent no version is a 1.x peer (it predates the field), which the
+  // caller signals by passing peer: { major: 1, minor: 0 }.
+  const major = opts.peer?.major ?? self.major;
+  const table = BY_MAJOR[major];
+  if (!table) {
+    return { ok: false, type, error: `unsupported tunnel protocol major ${major}`, issues: [] };
+  }
+  // Tolerance compares minors WITHIN the major being parsed. The baseline is
+  // the newest minor of that major whose schemas we carry: our own minor for
+  // our own major; 0 for the other major we keep (each frozen table is its .0).
+  // A peer on a newer minor than that baseline may send fields we don't know.
+  const baselineMinor = major === self.major ? self.minor : 0;
+  const tolerant = opts.peer !== undefined && opts.peer.major === major && opts.peer.minor > baselineMinor;
 
-  const schema = BY_DIRECTION[direction].get(type);
+  const schema = table[direction].get(type);
   if (!schema) {
     if (tolerant) return { ok: false, ignored: true, type };
     return { ok: false, type, error: `unknown frame type "${type}" for ${direction}`, issues: [] };
@@ -134,3 +156,8 @@ function deep(schema: z.ZodType, mode: Mode): z.ZodType {
 
 const deepStrict = (schema: z.ZodType) => deep(schema, "strict");
 const deepStrip = (schema: z.ZodType) => deep(schema, "strip");
+
+// isCompatible against exactly the majors parseFrame can parse.
+export function isSupportedPeer(peer: ProtocolVersion | undefined): boolean {
+  return isCompatible(peer, SUPPORTED_MAJORS);
+}

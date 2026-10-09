@@ -1,50 +1,84 @@
-// TypeScript types for every frame, DERIVED from the Zod schemas so the types
-// and the runtime validation can never disagree. Import these; don't redeclare.
+// TypeScript types DERIVED from the Zod schemas, so types and runtime
+// validation can never disagree. Import these; don't redeclare.
+//
+// Two majors: `V1` (frozen 1.x wire) and `V2` (the 2.0 deltas). The unprefixed
+// names are aliases for the CURRENT major — the one PROTOCOL_VERSION speaks.
 
 import type { z } from "zod";
-import type * as S from "./schemas.js";
+import type * as S1 from "./schemas-v1.js";
+import type * as S2 from "./schemas-v2.js";
 
-export type ToolDescriptor = z.infer<typeof S.ToolDescriptorSchema>;
-export type PromptArgumentDescriptor = z.infer<typeof S.PromptArgumentDescriptorSchema>;
-export type PromptDescriptor = z.infer<typeof S.PromptDescriptorSchema>;
-export type ResourceDescriptor = z.infer<typeof S.ResourceDescriptorSchema>;
-export type ResourceTemplateDescriptor = z.infer<typeof S.ResourceTemplateDescriptorSchema>;
-export type ServerCapabilitiesAdvert = z.infer<typeof S.ServerCapabilitiesAdvertSchema>;
-export type ServerDescriptor = z.infer<typeof S.ServerDescriptorSchema>;
-export type ToolManifest = z.infer<typeof S.ToolManifestSchema>;
-export type ManifestDelta = z.infer<typeof S.ManifestDeltaSchema>;
-export type CredsSource = z.infer<typeof S.CredsSourceSchema>;
-export type McpAuthSpec = z.infer<typeof S.McpAuthSpecSchema>;
-export type McpConfigEntry = z.infer<typeof S.McpConfigEntrySchema>;
+type Infer<T extends z.ZodType> = z.infer<T>;
 
-export type RegisterFrame = z.infer<typeof S.RegisterFrameSchema>;
-export type RegisterAckFrame = z.infer<typeof S.RegisterAckFrameSchema>;
-export type ManifestDeltaFrame = z.infer<typeof S.ManifestDeltaFrameSchema>;
-export type RpcFrame = z.infer<typeof S.RpcFrameSchema>;
-export type HeartbeatFrame = z.infer<typeof S.HeartbeatFrameSchema>;
-export type GoodbyeFrame = z.infer<typeof S.GoodbyeFrameSchema>;
-export type WebhookAllocateFrame = z.infer<typeof S.WebhookAllocateFrameSchema>;
-export type WebhookAllocateAckFrame = z.infer<typeof S.WebhookAllocateAckFrameSchema>;
-export type WebhookFrame = z.infer<typeof S.WebhookFrameSchema>;
-export type WebhookRevokeFrame = z.infer<typeof S.WebhookRevokeFrameSchema>;
-export type CredsRequestFrame = z.infer<typeof S.CredsRequestFrameSchema>;
-export type CredsResponseFrame = z.infer<typeof S.CredsResponseFrameSchema>;
-export type CredsUpdateFrame = z.infer<typeof S.CredsUpdateFrameSchema>;
-export type McpConfigSnapshotFrame = z.infer<typeof S.McpConfigSnapshotFrameSchema>;
-export type McpConfigDeltaFrame = z.infer<typeof S.McpConfigDeltaFrameSchema>;
-export type McpConfigAckFrame = z.infer<typeof S.McpConfigAckFrameSchema>;
-export type McpConfigResyncFrame = z.infer<typeof S.McpConfigResyncFrameSchema>;
-export type LocalMcpsRescanFrame = z.infer<typeof S.LocalMcpsRescanFrameSchema>;
-export type LocalMcpsRescanAckFrame = z.infer<typeof S.LocalMcpsRescanAckFrameSchema>;
-export type McpNotificationFrame = z.infer<typeof S.McpNotificationFrameSchema>;
-export type McpDiscoveredFrame = z.infer<typeof S.McpDiscoveredFrameSchema>;
-export type McpEnableFrame = z.infer<typeof S.McpEnableFrameSchema>;
-export type McpDisableFrame = z.infer<typeof S.McpDisableFrameSchema>;
-export type McpEnableAckFrame = z.infer<typeof S.McpEnableAckFrameSchema>;
-export type ControllerCallFrame = z.infer<typeof S.ControllerCallFrameSchema>;
-export type ControllerCallResponseFrame = z.infer<typeof S.ControllerCallResponseFrameSchema>;
+export namespace V1 {
+  export type ToolDescriptor = Infer<typeof S1.ToolDescriptorSchema>;
+  export type ServerDescriptor = Infer<typeof S1.ServerDescriptorSchema>;
+  export type ToolManifest = Infer<typeof S1.ToolManifestSchema>;
+  export type ManifestDelta = Infer<typeof S1.ManifestDeltaSchema>;
+  export type McpConfigEntry = Infer<typeof S1.McpConfigEntrySchema>;
+  export type RegisterFrame = Infer<typeof S1.RegisterFrameSchema>;
+  export type RegisterAckFrame = Infer<typeof S1.RegisterAckFrameSchema>;
+  export type McpDiscoveredFrame = Infer<typeof S1.McpDiscoveredFrameSchema>;
+  export type McpNotificationFrame = Infer<typeof S1.McpNotificationFrameSchema>;
+  export type ConnectorFrame = Infer<typeof S1.ConnectorFrameSchema>;
+  export type ControllerFrame = Infer<typeof S1.ControllerFrameSchema>;
+}
 
-/** Frames a connector sends (a controller receives). */
-export type ConnectorFrame = z.infer<typeof S.ConnectorFrameSchema>;
-/** Frames a controller sends (a connector receives). */
-export type ControllerFrame = z.infer<typeof S.ControllerFrameSchema>;
+export namespace V2 {
+  export type ToolDescriptor = Infer<typeof S2.ToolDescriptorSchema>;
+  export type ServerDescriptor = Infer<typeof S2.ServerDescriptorSchema>;
+  export type ToolManifest = Infer<typeof S2.ToolManifestSchema>;
+  export type ManifestDelta = Infer<typeof S2.ManifestDeltaSchema>;
+  export type ServerAdded = Infer<typeof S2.ServerAddedSchema>;
+  export type McpConfigEntry = Infer<typeof S2.McpConfigEntrySchema>;
+  export type RegisterFrame = Infer<typeof S2.RegisterFrameSchema>;
+  export type RegisterAckFrame = Infer<typeof S2.RegisterAckFrameSchema>;
+  export type McpDiscoveredFrame = Infer<typeof S2.McpDiscoveredFrameSchema>;
+  export type ConnectorFrame = Infer<typeof S2.ConnectorFrameSchema>;
+  export type ControllerFrame = Infer<typeof S2.ControllerFrameSchema>;
+}
+
+// Shapes identical in both majors.
+export type PromptArgumentDescriptor = Infer<typeof S1.PromptArgumentDescriptorSchema>;
+export type PromptDescriptor = Infer<typeof S1.PromptDescriptorSchema>;
+export type ResourceDescriptor = Infer<typeof S1.ResourceDescriptorSchema>;
+export type ResourceTemplateDescriptor = Infer<typeof S1.ResourceTemplateDescriptorSchema>;
+export type ServerCapabilitiesAdvert = Infer<typeof S1.ServerCapabilitiesAdvertSchema>;
+export type CredsSource = Infer<typeof S1.CredsSourceSchema>;
+export type McpAuthSpec = Infer<typeof S1.McpAuthSpecSchema>;
+export type ManifestDeltaFrame = Infer<typeof S1.ManifestDeltaFrameSchema>;
+export type RpcFrame = Infer<typeof S1.RpcFrameSchema>;
+export type HeartbeatFrame = Infer<typeof S1.HeartbeatFrameSchema>;
+export type GoodbyeFrame = Infer<typeof S1.GoodbyeFrameSchema>;
+export type WebhookAllocateFrame = Infer<typeof S1.WebhookAllocateFrameSchema>;
+export type WebhookAllocateAckFrame = Infer<typeof S1.WebhookAllocateAckFrameSchema>;
+export type WebhookFrame = Infer<typeof S1.WebhookFrameSchema>;
+export type WebhookRevokeFrame = Infer<typeof S1.WebhookRevokeFrameSchema>;
+export type CredsRequestFrame = Infer<typeof S1.CredsRequestFrameSchema>;
+export type CredsResponseFrame = Infer<typeof S1.CredsResponseFrameSchema>;
+export type CredsUpdateFrame = Infer<typeof S1.CredsUpdateFrameSchema>;
+export type McpConfigSnapshotFrame = Infer<typeof S1.McpConfigSnapshotFrameSchema>;
+export type McpConfigDeltaFrame = Infer<typeof S1.McpConfigDeltaFrameSchema>;
+export type McpConfigAckFrame = Infer<typeof S1.McpConfigAckFrameSchema>;
+export type McpConfigResyncFrame = Infer<typeof S1.McpConfigResyncFrameSchema>;
+export type LocalMcpsRescanFrame = Infer<typeof S1.LocalMcpsRescanFrameSchema>;
+export type LocalMcpsRescanAckFrame = Infer<typeof S1.LocalMcpsRescanAckFrameSchema>;
+export type McpEnableFrame = Infer<typeof S1.McpEnableFrameSchema>;
+export type McpDisableFrame = Infer<typeof S1.McpDisableFrameSchema>;
+export type McpEnableAckFrame = Infer<typeof S1.McpEnableAckFrameSchema>;
+export type ControllerCallFrame = Infer<typeof S1.ControllerCallFrameSchema>;
+export type ControllerCallResponseFrame = Infer<typeof S1.ControllerCallResponseFrameSchema>;
+
+// The current major — PROTOCOL_VERSION is still "1.0" until the connector's
+// Phase 2b flips it, so these resolve to V1 today.
+export type ToolDescriptor = V1.ToolDescriptor;
+export type ServerDescriptor = V1.ServerDescriptor;
+export type ToolManifest = V1.ToolManifest;
+export type ManifestDelta = V1.ManifestDelta;
+export type McpConfigEntry = V1.McpConfigEntry;
+export type RegisterFrame = V1.RegisterFrame;
+export type RegisterAckFrame = V1.RegisterAckFrame;
+export type McpDiscoveredFrame = V1.McpDiscoveredFrame;
+export type McpNotificationFrame = V1.McpNotificationFrame;
+export type ConnectorFrame = V1.ConnectorFrame;
+export type ControllerFrame = V1.ControllerFrame;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parseFrame } from "../src/parse.js";
-import { parseVersion, isCompatible, PROTOCOL_VERSION } from "../src/version.js";
+import { parseVersion, isCompatible, PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION } from "../src/version.js";
+import { isSupportedPeer, SUPPORTED_MAJORS } from "../src/parse.js";
 
 // The version-aware parsing rule (shim plan §2.3): strict at the same minor,
 // strip unknowns from a newer minor of the same major. And the property that
@@ -144,14 +145,29 @@ describe("version handshake", () => {
     for (const bad of ["1", "1.0.0", "v1.0", "", undefined, 1]) expect(parseVersion(bad)).toBeUndefined();
   });
 
-  it("accepts any minor of our major, refuses another major, and reads absent as 1.0", () => {
-    expect(isCompatible(self, { major: 1, minor: 9 })).toBe(true);
-    expect(isCompatible(self, { major: 2, minor: 0 })).toBe(false);
-    expect(isCompatible(self, undefined)).toBe(true);
-    expect(isCompatible({ major: 2, minor: 0 }, undefined)).toBe(false);
+  // Negotiated majors: a build that carries both majors talks to a peer on
+  // either. This used to pin "another major is refused", which was the rule
+  // when the package carried one major only.
+  it("accepts every major the package carries, refuses others, reads absent as 1.0", () => {
+    expect(isSupportedPeer({ major: 1, minor: 9 })).toBe(true);
+    expect(isSupportedPeer({ major: 2, minor: 0 })).toBe(true);
+    expect(isSupportedPeer({ major: 3, minor: 0 })).toBe(false);
+    expect(isSupportedPeer(undefined)).toBe(true);
   });
 
-  it("the package speaks 1.0 until D′ naming makes it 2.0", () => {
+  it("isCompatible takes its supported set from the caller, so it has one source", () => {
+    expect(isCompatible({ major: 2, minor: 0 }, [1])).toBe(false);
+    expect(isCompatible({ major: 2, minor: 0 }, [1, 2])).toBe(true);
+  });
+
+  it("the supported majors are exactly the schema tables parseFrame has", () => {
+    expect([...SUPPORTED_MAJORS].sort()).toEqual([1, 2]);
+  });
+
+  it("the package carries 2.0 but a connector still SPEAKS 1.0 by default", () => {
+    // Shipping the 2.x schemas and flipping what a connector sends are
+    // separate steps; the connector's Phase 2b flips PROTOCOL_VERSION.
     expect(PROTOCOL_VERSION).toBe("1.0");
+    expect(LATEST_PROTOCOL_VERSION).toBe("2.0");
   });
 });

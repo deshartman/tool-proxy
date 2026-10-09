@@ -1,3 +1,7 @@
+// Protocol 1.x — Zod schemas for every tunnel frame. These ARE the 1.x wire
+// contract, frozen: 1.0 is exactly the wire as of 2026-10-09. Do not edit a
+// 1.x shape to suit 2.x — derive the change in schemas-v2.ts instead.
+//
 // Zod schemas for every tunnel frame. These ARE the wire contract: the
 // TypeScript types in ./types.ts are derived from them with z.infer, so the
 // two can never disagree. docs/MCP-PROTOCOL.md is the prose explanation; where
