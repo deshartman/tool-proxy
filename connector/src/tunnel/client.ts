@@ -25,7 +25,10 @@ export interface FrameTap {
 // policy.reconnect.enabled=false in connector.yaml to opt out.
 export class TunnelClient {
   onframe?: (frame: InboundTunnelFrame) => void;
-  onclose?: () => void;
+  // `info` carries the WebSocket close code + reason the controller sent, so
+  // the reconnect policy (lifecycle.ts) can tell a refusal apart from a drop.
+  // This client decides nothing about reconnecting — it only reports.
+  onclose?: (info: { code: number; reason: string }) => void;
   onerror?: (err: Error) => void;
   // Inspector hook: every frame in/out, plus state transitions. Optional.
   ontap?: (tap: FrameTap) => void;
@@ -159,9 +162,9 @@ export class TunnelClient {
           this.onerror?.(error);
         }
       });
-      ws.on("close", () => {
+      ws.on("close", (code, reason) => {
         clearDialTimer();
-        this.handleClose();
+        this.handleClose(code, reason.toString("utf8"));
       });
       ws.on("message", (data, isBinary) => {
         if (isBinary) return;
@@ -202,11 +205,11 @@ export class TunnelClient {
     this.onframe?.(frame);
   }
 
-  private handleClose(): void {
+  private handleClose(code = 1006, reason = ""): void {
     if (this.closed) return;
     this.closed = true;
     this.setState("closed");
-    this.onclose?.();
+    this.onclose?.({ code, reason });
   }
 }
 

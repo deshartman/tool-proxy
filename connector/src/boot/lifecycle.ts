@@ -14,7 +14,7 @@
 // sub-table rather than nested ifs in a closure.
 
 import { loadConfig, authorOf, type McpServerSpec } from "../config.js";
-import { PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION, parseVersion, isSupportedPeer } from "@gtmi/toolproxy-protocol";
+import { PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION, FRAME_SCHEMA_MISMATCH_CLOSE, parseVersion, isSupportedPeer } from "@gtmi/toolproxy-protocol";
 import { negotiateNaming } from "../tunnel/naming.js";
 import type { McpServerConnection } from "../servers/index.js";
 import { wrapWithMessageTap } from "../servers/message-tap.js";
@@ -36,7 +36,7 @@ import { createIdentityRoutes } from "../inspector/identity-routes.js";
 import { deriveJwtSigningKey } from "../auth/jwt.js";
 import { createLogger } from "../logger.js";
 import { WebhookRegistry } from "../tunnel/webhook-registry.js";
-import { ReconnectController } from "../tunnel/reconnect.js";
+import { ReconnectController, isStickyClose } from "../tunnel/reconnect.js";
 import { createFrameRouter } from "../tunnel/frame-router.js";
 import { CredsCoordinator } from "../tunnel/creds-coordinator.js";
 import { ControllerApiCoordinator } from "../tunnel/controller-api-coordinator.js";
@@ -606,8 +606,20 @@ async function bootFromDb(): Promise<void> {
       pendingTunnel.onstate = (tunnelState) => inspector.setState(tunnelState);
       pendingTunnel.ontap = (tap) => inspector.recordTap(tap);
     }
-    pendingTunnel.onclose = () => {
-      log.info(`tunnel closed`);
+    pendingTunnel.onclose = (info) => {
+      log.info({ code: info.code, reason: info.reason }, `tunnel closed`);
+      // A controller that ENFORCES schema validation closes with 4422 when it
+      // refuses a frame. Sticky: reconnecting would re-send the same frame and
+      // be refused again, in a storm. Every OTHER close code keeps the existing
+      // rules — notably 4401 unknown_registration_token, which must stay
+      // self-healing (it is the register-ack path, not this one).
+      if (isStickyClose(info.code, FRAME_SCHEMA_MISMATCH_CLOSE)) {
+        reconnectCtl.markRejected();
+        log.error(
+          { code: info.code, reason: info.reason },
+          `controller refused a frame that does not match its tunnel-protocol schema — not reconnecting; this is a version mismatch between connector and controller`,
+        );
+      }
       webhooks.onTunnelClose();
       // v1.4: reject every in-flight controller-call immediately — a
       // blocked customer-facing HTTP call should fail fast, not silently

@@ -134,3 +134,14 @@ export class ReconnectController {
     return next;
   }
 }
+
+// Is this WebSocket close a STICKY refusal — one where auto-reconnecting would
+// only repeat it? Exactly one close code qualifies today: 4422
+// frame_schema_mismatch, sent by a controller that enforces schema validation
+// (a version mismatch; reconnecting re-sends the same frame). Every other code
+// keeps the register-ack rules — in particular 4401 unknown_registration_token
+// must stay self-healing, so this deliberately does NOT treat "any 4xxx" as
+// sticky. Pure, so the decision is unit-tested apart from the tunnel.
+export function isStickyClose(code: number, frameSchemaMismatchCode: number): boolean {
+  return code === frameSchemaMismatchCode;
+}

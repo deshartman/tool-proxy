@@ -44,6 +44,14 @@ export function formatVersion(v: ProtocolVersion): string {
 // major. A connector treats it as a sticky rejection — no auto-reconnect.
 export const UNSUPPORTED_TUNNEL_PROTOCOL = "unsupported_tunnel_protocol";
 
+// WebSocket close code a controller uses when it ENFORCES schema validation and
+// refuses a frame (reason "frame_schema_mismatch"). A connector must treat it as
+// STICKY — no auto-reconnect — because reconnecting re-sends the same frame and
+// is refused again: a mismatch is a version/contract problem, not a transient
+// one. It is distinct from a register-ack error code: under enforcement a
+// refused register gets no ack at all, only this close.
+export const FRAME_SCHEMA_MISMATCH_CLOSE = 4422;
+
 // Decide whether a peer's version is acceptable. Any major this package carries
 // schemas for is accepted — that is the negotiated-major model: a 2.0-capable
 // build still talks to a 1.x peer. A peer that sent no version is treated as
