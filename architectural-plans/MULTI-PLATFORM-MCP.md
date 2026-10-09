@@ -7,7 +7,7 @@
 > | Plan | ✅ committed |
 > | Phase 0 — approval gate at every entry point (§1) | ✅ committed. **Deviation from §1.2:** webhook *delivery* is gated, not `webhook-allocate`/subscribe — children subscribe at spawn, before approval, and the SDK rejects a refused stream with no retry |
 > | Phase 3 — several instances per host (§4) | ✅ committed |
-> | Phase 1 — protocol package (§2) | not started; blocked on §10 Q1/Q2 (package home, registry) |
+> | Phase 1 — protocol package (§2) | in progress. ✅ **`@gtmi/toolproxy-protocol@1.0.0` published to public npm 2026-10-09** (protocol 1.0 = today's wire; platform pins `~1.0.0`). Package home = `protocol/` workspace in this repo (D17); registry = public npm under the existing `@gtmi` scope. Remaining: connector consumes the package (log-only validation first), `register.tunnelProtocol` |
 > | Phase 2a — `shimId` (§3.1) + dot-free server names on every source (§3.4) | ✅ committed. Local only: nothing new on the wire yet |
 > | Phase 2b — id on `register` + qualified names + foreign-id rejection (§3.2–3.3) | not started; must flip in lockstep with the platform's `qualify()`/`reconcileOrg` change and needs `tunnelProtocol` (Phase 1) to select the parser |
 > | Phase 2c — widen the gate to bundled + yaml (§3.5) | ✅ committed; **end-to-end verified 2026-10-09** against platform track D in a real browser — pending lane, approve, disable, and restart replay all pass. Clear to merge from both sides; the merge is the user's call |
