@@ -137,6 +137,16 @@ The platform adopts the package and gains these fields; this repo does not narro
 
 **Interim step (before the package ships):** the platform adds a contract test that diffs its frame-type set against the shim's (platform plan §8.1). On the shim side, a test asserts that the `type` literals in `tunnel/frames.ts` match the set in MCP-PROTOCOL.md, so the shim's own doc can't drift either.
 
+### 2.5a Server metadata in `manifest-delta` (for 2.0) — found by the 2c end-to-end test
+
+**The gap.** `diffManifest` (`manifest/diff.ts`) emits only `{server, tool}` per added entry. A server whose FIRST appearance is a delta therefore arrives with no `author`, `transport` or `protocolVersion`. Before Phase 2c that never happened — every server was in the register manifest. Gating made it the normal path for every bundled server: approve one, and its tools arrive by delta. The platform then created the server with no author and defaulted it to `customer`, so `sample`'s tools came out `customer.sample.*` instead of `twilio.sample.*` (2026-10-09, platform check 2).
+
+**Trust is not affected on the connector.** `supervisor.isAuthorTwilio` reads the supervisor entry's author, set at spawn from the scan marker — never from the wire — so controller-call authorisation is correct regardless. The impact is the platform's author-driven decisions and the tool-name prefix.
+
+**Interim (platform, agreed):** take the author from the cached `mcp-discovered` when a delta adds an unknown server; fail closed — never default an unknown author to `twilio`.
+
+**2.0 fix (shim, this phase):** a server-level block in `ManifestDelta`, e.g. `addedServers?: Array<{name, transport, author, protocolVersion?}>` and `removedServers?: string[]`, emitted whenever a server appears or disappears. Per-server, not repeated on every tool entry, because author is a property of the server. It also gives `protocolVersion` a home in deltas (register-only today). Lands in the package's 2.0 schema with Phase 2b.
+
 ### 2.6 Phase 1 tests
 
 - **Round trip:** every frame the connector emits today parses against the package schema. The test drives a real boot through `tests/helpers` and captures `tunnel.send`.
