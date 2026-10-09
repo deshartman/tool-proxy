@@ -113,6 +113,13 @@ export interface ManifestDelta {
   addedResourceTemplates?:  { server: string; resourceTemplate: ResourceTemplateDescriptor }[];
   removedResourceTemplates?: { server: string; resourceTemplate: string }[];
   changedResourceTemplates?: { server: string; resourceTemplate: ResourceTemplateDescriptor }[];
+  // 2.x ONLY — server lifecycle, so a server whose first appearance is a delta
+  // arrives with its author and transport instead of the receiver inferring
+  // them (MULTI-PLATFORM-MCP §2.5a). Never sent to a 1.x controller: a strict
+  // 1.x parse rejects these fields. Added by withServerLifecycle, not by
+  // diffManifest, so the 1.x delta stays byte-identical.
+  addedServers?: { name: string; transport: "http" | "stdio"; author: string; protocolVersion?: string }[];
+  removedServers?: string[];
 }
 
 export interface RegisterFrame {
