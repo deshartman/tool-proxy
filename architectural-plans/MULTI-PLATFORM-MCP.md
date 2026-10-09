@@ -10,7 +10,7 @@
 > | Phase 1 — protocol package (§2) | not started; blocked on §10 Q1/Q2 (package home, registry) |
 > | Phase 2a — `shimId` (§3.1) + dot-free server names on every source (§3.4) | ✅ committed. Local only: nothing new on the wire yet |
 > | Phase 2b — id on `register` + qualified names + foreign-id rejection (§3.2–3.3) | not started; must flip in lockstep with the platform's `qualify()`/`reconcileOrg` change and needs `tunnelProtocol` (Phase 1) to select the parser |
-> | Phase 2c — widen the gate to bundled + yaml (§3.5) | ✅ committed against the contract agreed with the platform (`source: bundled\|dropin\|yaml`, `kind?: example`, `.example` marker). **Merge held** until the end-to-end browser check against the platform's track D passes |
+> | Phase 2c — widen the gate to bundled + yaml (§3.5) | ✅ committed; **end-to-end verified 2026-10-09** against platform track D in a real browser — pending lane, approve, disable, and restart replay all pass. Clear to merge from both sides; the merge is the user's call |
 > | Phase 6 — TunnelWorkspace (§5) | in progress. ✅ shared `PortAllocator` (§5.3) committed; the `TunnelWorkspace` extraction itself not started |
 >
 > **Companion to:** `AgenticProcedure` repo, `architectural-plans/MULTI-PLATFORM-MCP.md`, on branch `docs/multi-platform-mcp` (commit `544dd166`). That plan is the **platform** side and owns the decision table **D1–D16** (its §0). This document treats those decisions as settled and does not reopen them. Phase numbers here match that plan's §9.
@@ -143,7 +143,7 @@ The platform adopts the package and gains these fields; this repo does not narro
 
 **Trust is not affected on the connector.** `supervisor.isAuthorTwilio` reads the supervisor entry's author, set at spawn from the scan marker — never from the wire — so controller-call authorisation is correct regardless. The impact is the platform's author-driven decisions and the tool-name prefix.
 
-**Interim (platform, agreed):** take the author from the cached `mcp-discovered` when a delta adds an unknown server; fail closed — never default an unknown author to `twilio`.
+**Interim (platform, shipped as AgenticProcedure `93738125`, verified live — `sample` now `twilio.sample.*`):** take the author from the cached `mcp-discovered` when a delta adds an unknown server; otherwise fall back to `customer`, and **never** to `twilio`. An earlier draft proposed failing closed (holding out a server with no known author). That was wrong: Type 2 (controller-pushed) servers are never gated, so they never send `mcp-discovered` and always arrive by delta with no author — and v1.2 drop-ins rely on legacy auto-approve as `customer`. `customer` is already the safe trust direction.
 
 **2.0 fix (shim, this phase):** a server-level block in `ManifestDelta`, e.g. `addedServers?: Array<{name, transport, author, protocolVersion?}>` and `removedServers?: string[]`, emitted whenever a server appears or disappears. Per-server, not repeated on every tool entry, because author is a property of the server. It also gives `protocolVersion` a home in deltas (register-only today). Lands in the package's 2.0 schema with Phase 2b.
 
