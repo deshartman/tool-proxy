@@ -156,3 +156,34 @@ describe("negotiated majors", () => {
     expect(v2.RegisterFrameSchema).not.toBe(v1.RegisterFrameSchema);
   });
 });
+
+// 1.0.1 — found by the platform against the PUBLISHED 1.0.0: a strict 1.x
+// parse rejected a 2.0 register (`shimId` → unrecognized_keys), so a 2.x
+// connector would be locked out of any 1.x controller that enforces validation.
+// v1's register now tolerates the next major's handshake field.
+describe("cross-major register handshake (1.0.1)", () => {
+  const reg2 = { type: "register", manifest: manifest([server("crm")]), name: "x", tunnelProtocol: "2.0", shimId: SHIM };
+
+  it("a STRICT 1.x parse accepts a 2.x connector's register", () => {
+    expect(parseFrame("connector-to-controller", JSON.stringify(reg2), { peer: V1 }).ok).toBe(true);
+    expect(parseFrame("connector-to-controller", JSON.stringify(reg2)).ok).toBe(true); // no peer → strict 1.x
+  });
+
+  it("1.x tolerates shimId without validating it (it is a 2.x field)", () => {
+    const odd = { ...reg2, shimId: "NOT-A-VALID-ID" };
+    expect(parseFrame("connector-to-controller", JSON.stringify(odd), { peer: V1 }).ok).toBe(true);
+  });
+
+  it("1.x still rejects OTHER unknown register fields — the tolerance is exactly one field", () => {
+    const extra = { ...reg2, somethingElse: 1 };
+    expect(parseFrame("connector-to-controller", JSON.stringify(extra), { peer: V1 }).ok).toBe(false);
+  });
+
+  it("2.x still validates shimId strictly (the 1.x tolerance does not leak into v2)", () => {
+    const bad = { ...reg2, shimId: "NOT-A-VALID-ID" };
+    expect(parseFrame("connector-to-controller", JSON.stringify(bad), { peer: V2 }).ok).toBe(false);
+    const missing = { ...reg2 } as Record<string, unknown>;
+    delete missing.shimId;
+    expect(parseFrame("connector-to-controller", JSON.stringify(missing), { peer: V2 }).ok).toBe(false);
+  });
+});

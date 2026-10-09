@@ -142,6 +142,15 @@ export const RegisterFrameSchema = z.object({
   registrationToken: z.string().optional(),
   // "<major>.<minor>". Absent means a 1.x peer that predates the field.
   tunnelProtocol: z.string().optional(),
+  // 1.0.1 — the NEXT major's handshake field, tolerated (not validated) so a
+  // 2.x connector can register with a 1.x controller that ENFORCES validation.
+  // Without it a strict 1.x parse rejects a 2.x register as unrecognized_keys,
+  // and a customer who upgrades the connector before the controller gets a
+  // dead tunnel. A 1.x controller ignores the value and stays 1.x; the session
+  // major is min(connector, controller) at register-ack. Only register needs
+  // this — every later frame is sent in the negotiated major. Format is
+  // deliberately unchecked here: it is a 2.x field, validated by 2.x.
+  shimId: z.string().optional(),
 });
 
 export const RegisterAckFrameSchema = z.object({
