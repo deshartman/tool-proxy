@@ -1,4 +1,5 @@
 import type { ConnectorConfig } from "./config.js";
+import { bareNaming, type WireNaming } from "./tunnel/naming.js";
 import type { McpServerConnection } from "./servers/index.js";
 import type { ToolManifest } from "./tunnel/frames.js";
 import type { TunnelClient } from "./tunnel/client.js";
@@ -37,7 +38,14 @@ export interface DispatcherDeps {
   // withholds unapproved servers; without this, a controller naming one
   // directly would still reach it.
   isServerEnabled?: (name: string) => boolean;
+  // How tool/prompt names look on the wire for THIS session — bare
+  // `<server>.<name>` under 1.x, `<shimId>.<server>.<name>` under 2.x. Chosen
+  // once per tunnel from the negotiated major (tunnel/naming.ts). Absent →
+  // bare, i.e. today's behaviour.
+  naming?: WireNaming;
 }
+
+const BARE = bareNaming();
 
 export class Dispatcher {
   private inFlight = 0;
@@ -140,13 +148,39 @@ export class Dispatcher {
     });
   }
 
+  private get naming(): WireNaming {
+    return this.deps.naming ?? BARE;
+  }
+
+  // Resolve a wire name to (server, name), or reply with the error and return
+  // undefined. A FOREIGN shimId — a well-formed 2.x name addressed to another
+  // shim — gets the same reply an unknown server gets, so a controller learns
+  // nothing about which shims exist; it is logged so a misroute is visible.
+  private resolveName(
+    id: JsonRpcId,
+    wireName: string,
+    what: "tool" | "prompt",
+    notFoundKind: "tool_not_found" | "server_not_found",
+  ): { server: string; name: string } | undefined {
+    const parsed = this.naming.parse(wireName);
+    if (parsed.ok) return { server: parsed.server, name: parsed.name };
+    if (parsed.reason === "foreign-shim") {
+      this.log(`${what} ${wireName} is addressed to shim ${parsed.shimId}, not this shim — refused`);
+      this.replyKind(id, notFoundKind, `no local MCP server for '${wireName}'`);
+      return undefined;
+    }
+    const shape = this.naming.shape.replace("${name}", `\${${what}}`);
+    this.reply({ id, error: { code: E_INVALID_PARAMS, message: `${what} name must be \`${shape}\` with non-empty parts` } });
+    return undefined;
+  }
+
   private listAllowedTools(): { tools: Array<{ name: string; description: string; inputSchema: unknown; outputSchema?: unknown }> } {
     const manifest = this.deps.getManifest();
     const tools: Array<{ name: string; description: string; inputSchema: unknown; outputSchema?: unknown }> = [];
     for (const server of manifest.servers) {
       for (const tool of server.tools) {
         tools.push({
-          name: `${server.name}.${tool.name}`,
+          name: this.naming.compose(server.name, tool.name),
           description: tool.description,
           inputSchema: tool.inputSchema,
           outputSchema: tool.outputSchema,
@@ -162,16 +196,10 @@ export class Dispatcher {
     const args = params?.arguments;
     const id = req.id ?? null;
 
-    const dot = qualifiedName.indexOf(".");
-    if (dot <= 0 || dot === qualifiedName.length - 1) {
-      this.reply({
-        id,
-        error: { code: E_INVALID_PARAMS, message: "tool name must be `${server}.${tool}` with non-empty parts" },
-      });
-      return;
-    }
-    const serverName = qualifiedName.slice(0, dot);
-    const toolName = qualifiedName.slice(dot + 1);
+    const resolved = this.resolveName(id, qualifiedName, "tool", "tool_not_found");
+    if (!resolved) return;
+    const serverName = resolved.server;
+    const toolName = resolved.name;
 
     const server = this.server(serverName);
     if (!server) {
@@ -253,7 +281,7 @@ export class Dispatcher {
         const list = await server.listPrompts();
         for (const prompt of list) {
           prompts.push({
-            name: `${server.name}.${prompt.name}`,
+            name: this.naming.compose(server.name, prompt.name),
             ...(prompt.description !== undefined ? { description: prompt.description } : {}),
             ...(prompt.arguments !== undefined ? { arguments: prompt.arguments } : {}),
           });
@@ -269,16 +297,10 @@ export class Dispatcher {
     const id = req.id ?? null;
     const params = (req.params ?? {}) as { name?: unknown; arguments?: unknown };
     const qualifiedName = typeof params.name === "string" ? params.name : "";
-    const dot = qualifiedName.indexOf(".");
-    if (dot <= 0 || dot === qualifiedName.length - 1) {
-      this.reply({
-        id,
-        error: { code: E_INVALID_PARAMS, message: "prompt name must be `${server}.${prompt}` with non-empty parts" },
-      });
-      return;
-    }
-    const serverName = qualifiedName.slice(0, dot);
-    const promptName = qualifiedName.slice(dot + 1);
+    const resolved = this.resolveName(id, qualifiedName, "prompt", "server_not_found");
+    if (!resolved) return;
+    const serverName = resolved.server;
+    const promptName = resolved.name;
 
     const server = this.server(serverName);
     if (!server) {
