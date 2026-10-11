@@ -15,7 +15,7 @@
 >
 > **Companion to:** `AgenticProcedure` repo, `architectural-plans/MULTI-PLATFORM-MCP.md`, on branch `docs/multi-platform-mcp` (commit `544dd166`). That plan is the **platform** side and owns the decision table **D1–D16** (its §0). This document treats those decisions as settled and does not reopen them. Phase numbers here match that plan's §9.
 >
-> **Supersedes:** `architectural-plans/MULTI-ACCOUNT.md` (see §8).
+> **Supersedes:** `architectural-plans/MULTI-ACCOUNT.md`, now retired to `Done/MULTI-ACCOUNT.md` (see §8).
 >
 > **Note on tracking:** `architectural-plans/` is gitignored for new entries (`.gitignore:74-79`). This one file was force-added on the user's instruction, so later edits to it are tracked normally.
 
@@ -418,7 +418,7 @@ The Dockerfile copies `examples/demos/{sample,crm,salesforce}` into `bundled-mcp
 
 ## 8. Housekeeping
 
-### 8.1 Retire `architectural-plans/MULTI-ACCOUNT.md`
+### 8.1 Retire `architectural-plans/MULTI-ACCOUNT.md` — ✅ done 2026-10-11 (banner + moved to `Done/`)
 
 D14 supersedes it. **Don't edit it in place:** prepend a status banner pointing here, and move it to `architectural-plans/Done/` as *superseded* (not *shipped*). Its re-keying body (supervisor scopes, `entriesVisibleTo`, `name_collides_with_shared`, first-controller-wins webhooks) and its Postgres-era store design are obsolete. What survives, now owned by this plan:
 
@@ -431,11 +431,11 @@ D14 supersedes it. **Don't edit it in place:** prepend a status banner pointing 
 | Phase 7: audit log, master-key rotation command | **Not in this plan.** Still worth doing, and orthogonal. Leave them as a follow-up note in the banner |
 | Ownership matrix, Type 2 private vs shared Type 3 | **Gone.** Nothing is shared between workspaces except read-only code |
 
-### 8.2 Fix `architectural-plans/Done/MULTI-INSTANCE.md`
+### 8.2 Fix `architectural-plans/Done/MULTI-INSTANCE.md` — ✅ done 2026-10-11
 
 Lines 21-23, 34-41, 57, 61-62, 66, 72 and 79 describe a per-port `POSTGRES_SCHEMA`. After DB-TO-FILE the mechanism is a per-port `CONNECTOR_STATE_DIR` (`.local/state-<port>`, `start-connector.sh:197`). Replace the schema text with that, add a pointer to Phase 3's `HEALTH_PORT` / agentic-memory fixes, and point readers at `deploy/MULTI-INSTANCE.md` once it exists. That is a plan-doc edit only.
 
-### 8.3 Fix CLAUDE.md's "zod schemas" claim
+### 8.3 Fix CLAUDE.md's "zod schemas" claim — ✅ done (CLAUDE.md now points at the Zod schemas in `protocol/`)
 
 At `CLAUDE.md:91`, "Connector-side zod schemas in connector/src/tunnel/frames.ts match it" is false. Those are plain interfaces, and inbound frames are cast (`tunnel/client.ts:174`).
 
