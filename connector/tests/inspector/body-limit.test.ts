@@ -9,6 +9,7 @@
 // intended handler-side wiring pattern.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   BodyTooLargeError,
   MAX_INSPECTOR_BODY_BYTES,
@@ -17,7 +18,8 @@ import {
 
 describe("Inspector body-size guard", () => {
   let server: Server;
-  const port = 9092;
+  // Port 0: the OS picks a free one, so the suite runs beside a live connector.
+  let port: number;
 
   beforeEach(async () => {
     await new Promise<void>((resolve) => {
@@ -42,7 +44,10 @@ describe("Inspector body-size guard", () => {
           res.end("malformed body");
         }
       });
-      server.listen(port, "127.0.0.1", () => resolve());
+      server.listen(0, "127.0.0.1", () => {
+        port = (server.address() as AddressInfo).port;
+        resolve();
+      });
     });
   });
 

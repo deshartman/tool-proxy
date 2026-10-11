@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
 
 // F7 — SSE webhook stream + revoke require the caller's bearer token to
@@ -37,7 +38,8 @@ function makeHarness(tokenTable: Map<string, string>) {
 
 describe("Webhook stream + revoke identity check (F7)", () => {
   let server: Server;
-  const port = 9092;
+  // Port 0: the OS picks a free one, so the suite runs beside a live connector.
+  let port: number;
   const twilioToken = randomBytes(32).toString("base64url");
   const attackerToken = randomBytes(32).toString("base64url");
   const tokens = new Map<string, string>([
@@ -61,7 +63,10 @@ describe("Webhook stream + revoke identity check (F7)", () => {
         res.statusCode = 404;
         res.end();
       });
-      server.listen(port, "127.0.0.1", () => resolve());
+      server.listen(0, "127.0.0.1", () => {
+        port = (server.address() as AddressInfo).port;
+        resolve();
+      });
     });
   });
 

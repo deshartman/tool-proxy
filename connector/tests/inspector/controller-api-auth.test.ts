@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
 
 // v1.4 — Controller API calls (Twilio-bundled only). Two gates stand
@@ -63,7 +64,8 @@ function makeHarness(
 
 describe("Controller API call auth gate (v1.4)", () => {
   let server: Server;
-  const port = 9094;
+  // Port 0: the OS picks a free one, so the suite runs beside a live connector.
+  let port: number;
   const twilioToken = randomBytes(32).toString("base64url");
   const customerToken = randomBytes(32).toString("base64url");
   const tokens = new Map<string, string>([
@@ -86,7 +88,10 @@ describe("Controller API call auth gate (v1.4)", () => {
         res.statusCode = 404;
         res.end();
       });
-      server.listen(port, "127.0.0.1", () => resolve());
+      server.listen(0, "127.0.0.1", () => {
+        port = (server.address() as AddressInfo).port;
+        resolve();
+      });
     });
   });
 
