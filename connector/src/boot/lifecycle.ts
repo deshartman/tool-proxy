@@ -33,6 +33,7 @@ import { envOptional, envString, envNumber } from "../env.js";
 import { TunnelWorkspace, type WorkspaceShared } from "./workspace.js";
 import { removeWorkspaceStorage } from "./workspace-storage.js";
 import { createMachineApiRouting } from "./machine-api-routing.js";
+import { DiscoveryCache } from "./discovery-cache.js";
 
 const log = createLogger("connector");
 
@@ -133,7 +134,12 @@ async function bootFromDb(): Promise<void> {
     dropins,
     yamlNames,
     reloadConfig: () => reloadPolicy("reconnect"),
+    discovery: undefined as DiscoveryCache | undefined,
   };
+  // Lazy spawn (§5.3): gated children start on mcp-enable; mcp-discovered
+  // describes them from this process-wide cache. Shares the allocator so a
+  // discovery spawn never collides with a workspace's child.
+  shared.discovery = new DiscoveryCache({ ports: shared.ports, readyTimeoutMs: shared.readyTimeoutMs, log });
 
   // Reload connector.yaml's `policy` in place. mcp_servers changes need a
   // restart (live MCP reconnect is out of scope) and are refused with a warn.

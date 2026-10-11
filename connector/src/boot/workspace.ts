@@ -47,6 +47,7 @@ import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type McpStatus, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins, type DropinSpec } from "../dropin.js";
 import type { PortAllocator } from "../port-allocator.js";
+import type { DiscoveryCache } from "./discovery-cache.js";
 import { resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { announceDiscoveredDropins as announceDropinsLoop, describeGated, type GatedDescriptor } from "./announce-dropins.js";
 import type { ConfigStore, ControllerRow } from "../config-store/index.js";
@@ -80,6 +81,12 @@ export interface WorkspaceShared {
   yamlNames: Set<string>;
   /** Re-read connector.yaml for a reconnect; returns the policy-only reload outcome. */
   reloadConfig: () => void;
+  /**
+   * What each gated folder offers, learned once per process (§5.3, D16). With
+   * it, gated children spawn lazily on mcp-enable. Absent → every child spawns
+   * at start, the pre-Phase-6 behaviour (tests that drive a live child).
+   */
+  discovery?: DiscoveryCache;
 }
 
 // Deep-copy a spec so this workspace's supervisor can mutate it at spawn.
@@ -126,6 +133,13 @@ export class TunnelWorkspace {
   private discoveryTimer: NodeJS.Timeout | undefined;
   private reconnecting = false;
   private stopped = false;
+  // Children this workspace has been ASKED to run (§5.3 lazy spawn). Readiness
+  // counts only these: a gated MCP nobody enabled is not "still starting", it
+  // is not wanted, and gating readiness on it would hold the shim unready
+  // forever. Also the set mcp-enable consults to start a child exactly once.
+  private readonly wanted = new Set<string>();
+  // The current tunnel's creds coordinator, for a child started by mcp-enable.
+  private currentCreds: CredsCoordinator | undefined;
 
   constructor(row: ControllerRow, private readonly shared: WorkspaceShared) {
     this.id = row.id;
@@ -230,8 +244,17 @@ export class TunnelWorkspace {
   /** Spawn this workspace's children, build the manifest, dial the tunnel. */
   async start(): Promise<void> {
     const { config } = this.shared;
-    this.log.info(`connecting to ${this.supervisor.statusList().length} local MCP server(s)`);
-    await this.supervisor.startAll();
+    if (this.shared.discovery) {
+      // Lazy (§5.3): spawn only what is not gated. A gated MCP waits for its
+      // mcp-enable; mcp-discovered describes it from the shared cache.
+      const eager = this.supervisor.statusList().map((s) => s.name).filter((n) => !this.gatedSpecsByName.has(n));
+      this.log.info({ eager, gated: [...this.gatedSpecsByName.keys()] }, `starting ${eager.length} ungated MCP server(s); gated ones start on mcp-enable`);
+      for (const name of eager) await this.startChild(name, "boot");
+    } else {
+      this.log.info(`connecting to ${this.supervisor.statusList().length} local MCP server(s)`);
+      for (const st of this.supervisor.statusList()) this.wanted.add(st.name);
+      await this.supervisor.startAll();
+    }
     this.log.info({ servers: [...this.servers.keys()] }, `connected to local servers`);
     this.manifest = await this.build();
     validateManifestSchemas(this.manifest, config);
@@ -294,6 +317,7 @@ export class TunnelWorkspace {
   /** Children this workspace was asked to run that are still coming up. */
   childrenPending(): string[] {
     return this.supervisor.statusList()
+      .filter((st) => this.wanted.has(st.name))
       .filter((st) => st.process === "restarting" || st.process === "stopped")
       .map((st) => st.name);
   }
@@ -394,6 +418,7 @@ export class TunnelWorkspace {
     // Re-built per tunnel: the pending map is IPC, and a reply from a stale
     // tunnel landing on a fresh one would be wrong.
     const creds = new CredsCoordinator({ send: (frame) => pendingTunnel.send(frame), supervisor: this.supervisor, log: this.log });
+    this.currentCreds = creds;
     // v1.4 — fresh per dial, same lifetime as `creds` (not `webhooks`): a
     // pending call whose tunnel drops mid-flight should fail fast rather than
     // resume across reconnect.
@@ -457,7 +482,7 @@ export class TunnelWorkspace {
       if (frame.type === "mcp-config-snapshot") { void this.mcpConfig.handleSnapshot(frame); return; }
       if (frame.type === "mcp-config-delta") { void this.mcpConfig.handleDelta(frame); return; }
       if (frame.type === "local-mcps-rescan") { void this.localMcps.rescanFromController(); return; }
-      if (frame.type === "mcp-enable") { void this.approval.handleEnable(frame); return; }
+      if (frame.type === "mcp-enable") { void this.onEnable(frame); return; }
       if (frame.type === "mcp-disable") { void this.approval.handleDisable(frame); return; }
       if (frame.type === "controller-call-response") { this.controllerApi?.handleResponse(frame); return; }
       if (frame.type === "register-ack" && !frame.error) {
@@ -655,14 +680,72 @@ export class TunnelWorkspace {
   }
 
   private async announceDiscovered(): Promise<void> {
+    const discovery = this.shared.discovery;
+    // A RUNNING child answers for itself (its live list is authoritative,
+    // creds and all); a gated one not yet started answers from the cache.
+    const offerOf = async (name: string) => {
+      const conn = this.servers.get(name);
+      if (conn || !discovery) return undefined;
+      const spec = this.lookupSpec(name);
+      return spec ? discovery.describe(spec as SupervisedSpec) : undefined;
+    };
     const result = await announceDropinsLoop({
       gated: [...this.gatedSpecsByName.values()],
       approval: this.approval,
-      supervisor: this.supervisor,
-      servers: this.servers,
+      supervisor: {
+        fetchEnvKeys: async (name) => (await offerOf(name))?.envKeys ?? this.supervisor.fetchEnvKeys(name),
+      },
+      servers: new Map([...this.gatedSpecsByName.keys()].map((name) => [name, {
+        listTools: async () => {
+          const live = this.servers.get(name);
+          if (live) return live.listTools();
+          return ((await offerOf(name))?.tools ?? []) as Awaited<ReturnType<McpServerConnection["listTools"]>>;
+        },
+      } as McpServerConnection])),
       log: this.log,
     });
     if (result.totalDropins > 0) this.log.info(result, `mcp-discovered fan-out complete`);
+  }
+
+  // Lazy spawn (§5.3): start a gated child the first time it is enabled, then
+  // let the approval coordinator apply env, refresh the manifest and ack — so
+  // the manifest-delta carrying its tools still precedes the ack (v1.3 rule).
+  // A failed spawn still reaches handleEnable: the MCP is then approved but
+  // absent, which dispatch already reports as not found, and the ack says
+  // enabled with toolsCount 0. mcp-disable deliberately does NOT stop the
+  // child: MCP-PROTOCOL.md makes "no stop" part of mcp-disable's contract
+  // (re-enable is sub-second), and a stop belongs to a future mcp-stop frame.
+  private async onEnable(frame: Parameters<ApprovalCoordinator["handleEnable"]>[0]): Promise<void> {
+    const name = frame.mcp;
+    // Not already running: a rescan-added drop-in is spawned by the rescan
+    // itself, and starting a running entry again would spawn a second child.
+    const running = this.servers.has(name);
+    const startedNow = this.gatedSpecsByName.has(name) && !this.wanted.has(name) && !running && this.supervisor.hasEntry(name);
+    if (running) this.wanted.add(name);
+    if (startedNow) await this.startChild(name, "mcp-enable");
+    await this.approval.handleEnable(frame);
+    // A child started here missed the post-register-ack creds fan-out.
+    if (startedNow && this.servers.has(name)) {
+      const req = this.credsRequestFor(name);
+      if (req && this.currentCreds) {
+        const envKeys = await this.supervisor.fetchEnvKeys(name);
+        void this.currentCreds.reload(req.mcp, req.author, envKeys, req.mcpId).catch((err) => {
+          this.log.warn({ mcp: name, err: err as Error }, `creds-request for an mcp-enable-started child failed`);
+        });
+      }
+    }
+  }
+
+  private async startChild(name: string, reason: string): Promise<void> {
+    this.wanted.add(name);
+    try {
+      await this.supervisor.startOne(name, reason);
+    } catch (err) {
+      // startEntry already marked it permanently-failed and logged; keep the
+      // workspace up (continue-on-fail, same as boot).
+      this.log.error({ name, err: err as Error }, `MCP start failed — continuing`);
+    }
+    this.publishStatuses();
   }
 
   private async onMcpAdded(name: string): Promise<void> {
