@@ -62,12 +62,12 @@ const logLine = log.info.bind(log);
 // The highest tunnel-protocol major this connector will SPEAK. A session's
 // major is min(this, the controller's advertised max), decided at register-ack.
 //
-// 1 until the 2.x cutover (MULTI-PLATFORM-MCP Phase 2b step 4). Deliberately a
-// code constant, not an env var: switching what every connector sends on the
-// wire is a release decision reviewed in a commit, not a knob an operator
-// flips — and the qualified-naming code it gates is already built and tested,
-// so raising it is the whole cutover.
-const SPEAK_MAJOR: 1 | 2 = 1;
+// 2 since the 2.x cutover (MULTI-PLATFORM-MCP Phase 2b step 4), made after the
+// live 1.x ⇄ 2.x matrix passed, including a mixed fleet of both on one org. A
+// 1.x controller still negotiates this down to 1. Deliberately a code constant,
+// not an env var: switching what every connector sends on the wire is a
+// release decision reviewed in a commit, not a knob an operator flips.
+const SPEAK_MAJOR: 1 | 2 = 2;
 
 export async function boot(): Promise<void> {
   await bootFromDb();

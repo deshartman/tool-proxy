@@ -61,8 +61,7 @@ export function qualifiedNaming(shimId: string): WireNaming {
 // the controller advertised in register-ack. min(ours, theirs): 2.x only when
 // BOTH speak 2. A controller that advertised nothing (predates the field) is
 // 1.x. Pure, so every (ceiling, controller) pair is unit-testable without a
-// tunnel — the shipped ceiling is 1 until the cutover, which would otherwise
-// leave the 2.x branch unexercised.
+// tunnel — a live test only exercises whichever ceiling is shipped.
 export function negotiateNaming(
   speakMajor: number,
   controllerMax: { major: number } | undefined,
