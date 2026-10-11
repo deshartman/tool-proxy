@@ -6,6 +6,17 @@
 
 Open it at <http://localhost:9090/> (or via SSH port-forward / `kubectl exec` from a deployed container). On Fly.io neither works — `fly proxy` cannot present a loopback origin — so run [`scripts/fly-inspector.sh <app>`](../scripts/fly-inspector.sh), which prints a URL and cleans up on Ctrl-C.
 
+## Several controllers
+
+One connector can serve several controllers. Each controller entry is its own **workspace**: its own tunnel, its own MCP children, approvals, creds, webhooks and message history. Nothing is shared between them except the MCP code on disk.
+
+- **Tunnel panel** lists every controller. **Add controller** opens the same form as Configure tunnel and adds a new entry (a new workspace) — it never overwrites an existing one. Each entry's detail has **Edit**, **Force re-registration** and **Remove**. Remove closes that tunnel, stops every MCP child running for it, and **deletes its stored MCP state** (for example agentic-memory's memory for that controller). It cannot be undone.
+- **Workspace picker.** With two or more controllers, a picker appears in the header. Every per-workspace panel — MCP Server, MCP Status, Webhooks, Frames, the message history, session creds — shows the workspace you picked. With one controller there is no picker and the page looks as it always did.
+- **Network Access** follows the picker: an API client you add is bound to the workspace on screen, and can only ever drive that controller's tunnel. Each controller has its own federated trusted issuer; two controllers cannot trust the same issuer + audience.
+- **Readiness.** `/readyz` is ready once at least one controller is configured and no MCP a controller enabled is still starting. One controller's tunnel being down does not make the connector unready — the others are still serving.
+
+Workspaces are not an OS boundary: they run as one user, so a sibling MCP can read another workspace's state. If you need separation between controllers, run separate connector instances — see [deploy/MULTI-INSTANCE.md](../deploy/MULTI-INSTANCE.md).
+
 ## Layout
 
 The inspector has a **left column** (panels) and a **right pane** (detail view). The left column is draggable; the width persists in `localStorage`.
@@ -133,7 +144,7 @@ If you find a leak, that's a **bug** — file an issue or rerun the leak test pa
 
 ## HTTP endpoints
 
-The inspector exposes a small set of HTTP routes. From the loopback bind, **every one of these is unauthenticated** — the trust boundary there is the loopback bind itself, exactly as it's always been. From anywhere else, only `POST /oauth/token` is reachable at all — everything else 403s unconditionally, whether or not any API client exists. There is no session, no login, no header that changes this for any other route.
+The inspector exposes a small set of HTTP routes. The per-workspace ones (`/events`, `/reconnect`, `/tool/call` and every `/mcp/*` route) take `?ws=<controller-entry-id>`; with one controller it may be omitted, and with several, omitting it is a `400` rather than a guess. The SDK IPC routes take no `ws` — the child's own token says which workspace it belongs to. From the loopback bind, **every one of these is unauthenticated** — the trust boundary there is the loopback bind itself, exactly as it's always been. From anywhere else, only `POST /oauth/token` is reachable at all — everything else 403s unconditionally, whether or not any API client exists. There is no session, no login, no header that changes this for any other route.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -152,6 +163,10 @@ The inspector exposes a small set of HTTP routes. From the loopback bind, **ever
 | `POST` | `/tool/call`   | Invoke a tool through the same dispatch path the controller uses |
 | `GET`  | `/internal/webhook/stream?mcp=<name>` | SDK ↔ connector IPC: SSE stream of webhook events |
 | `POST` | `/internal/webhook/revoke` | SDK ↔ connector IPC: explicit teardown |
+| `GET`  | `/internal/tunnels` | Every controller entry — secrets never included, only presence flags |
+| `POST` | `/internal/tunnel/add` | Add a controller entry (starts a new workspace) |
+| `POST` | `/internal/tunnel/creds` | Edit an entry (`{id, …}`); without `id`, the single-controller configure-or-update |
+| `POST` | `/internal/tunnel/remove` | `{id}` — stop that workspace and delete its storage |
 | `GET`  | `/internal/network-access/status` | `{enabled}` — loopback-only |
 | `POST` \| `GET` | `/internal/network-access/clients` | Mint / list machine-API `client_id`+`client_secret` pairs ("Add API client") — loopback-only. The FIRST client added flips `enabled` and live-rebinds `/oauth/token` non-loopback |
 | `POST` | `/internal/network-access/clients/revoke` | Revoke a machine-API client — loopback-only |
