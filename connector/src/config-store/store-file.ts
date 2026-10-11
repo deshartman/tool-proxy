@@ -77,6 +77,14 @@ export interface ControllerDoc {
   updatedAt: string;
   lastConnectedAt: string | null;
   lastDisconnectReason: string | null;
+  /**
+   * This controller's federated trust config (MULTI-PLATFORM-MCP §5.6). Each
+   * entry has its own, because one IdP must not mint tokens valid for two
+   * tunnels. Absent on a store written before Phase 6; the legacy top-level
+   * `StoreDoc.trustedIssuer` is moved in here by ConfigStore (see
+   * `adoptLegacyBindings`).
+   */
+  trustedIssuer?: TrustedIssuerDoc | null;
 }
 
 export interface ApiClientDoc {
@@ -85,6 +93,15 @@ export interface ApiClientDoc {
   name: string | null;
   createdAt: string;
   revokedAt: string | null;
+  /**
+   * The controller entry this client drives (MULTI-PLATFORM-MCP §5.6). A
+   * machine-API call runs on that entry's tunnel only. Absent on a client
+   * minted before Phase 6, or before any controller existed; ConfigStore binds
+   * such a client to the controller it was used with (see
+   * `adoptLegacyBindings`), so an unbound client exists only while the store
+   * has no controller at all.
+   */
+  controllerId?: string;
 }
 
 export interface TrustedIssuerDoc {
@@ -108,12 +125,17 @@ export interface StoreDoc {
    */
   shimId?: string;
   /**
-   * An array from day one even though a `CHECK` constraint limited Postgres to
-   * one row, so MULTI-ACCOUNT.md's Phase-2 fan-out needs no reshape here.
-   * Everything today reads index 0.
+   * One entry per controller this shim dials; each is one TunnelWorkspace
+   * (MULTI-PLATFORM-MCP Phase 6), identified by its `id`. An array from day
+   * one, so Phase 6 needed no reshape here.
    */
   controllers: ControllerDoc[];
   networkAccess: { enabled: boolean };
+  /**
+   * Legacy, pre-Phase-6 location of the trusted issuer. Since Phase 6 it is
+   * per controller entry; this field only holds a value while the store has
+   * no controller, and moves into the first entry added.
+   */
   trustedIssuer: TrustedIssuerDoc | null;
   apiClients: ApiClientDoc[];
 }

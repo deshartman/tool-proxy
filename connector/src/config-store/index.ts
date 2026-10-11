@@ -9,9 +9,9 @@ import {
   readDoc,
   resolveStatePath,
   writeDocAtomic,
-  type ApiClientDoc,
   type ControllerDoc,
   type StoreDoc,
+  type TrustedIssuerDoc,
 } from "./store-file.js";
 import type { TrustedIssuerConfig } from "../auth/jwt.js";
 
@@ -55,6 +55,8 @@ export interface ApiClientSummary {
   name: string | null;
   createdAt: Date;
   revokedAt: Date | null;
+  /** The controller entry this client drives; absent only before any controller exists. */
+  controllerId: string | null;
 }
 
 const iso = (d: Date): string => d.toISOString();
@@ -111,14 +113,19 @@ export class ConfigStore {
         `controller via the inspector (which discards the sealed tunnel identity).`,
       );
     }
+    let dirty = false;
     if (doc.shimId === undefined) {
       // Back-fill a store written before shimId existed. Done here, before the
       // constructor, rather than through mutate(): no other writer can hold
       // this store yet, and the id must exist before anything reads it.
       // Written once; never re-minted for a store that already has one.
       doc.shimId = mintShimId();
-      writeDocAtomic(path, doc);
+      dirty = true;
     }
+    // A pre-Phase-6 store had at most one controller, so binding its legacy
+    // trusted issuer and API clients to that controller is exact, not a guess.
+    if (doc.controllers[0] && adoptLegacyBindings(doc, doc.controllers[0])) dirty = true;
+    if (dirty) writeDocAtomic(path, doc);
     return new ConfigStore(path, masterKey);
   }
 
@@ -189,78 +196,148 @@ export class ConfigStore {
     };
   }
 
+  // ─── Controllers ────────────────────────────────────────────────────────
+  // One entry per controller this shim dials (MULTI-PLATFORM-MCP Phase 6).
+  // Each is one TunnelWorkspace, identified by the entry's `id`, which is
+  // stable across credential rotation.
+
+  async listControllers(): Promise<ControllerRow[]> {
+    return this.read().controllers.map((c) => this.hydrate(c));
+  }
+
+  async getControllerById(id: string): Promise<ControllerRow | null> {
+    const c = this.read().controllers.find((x) => x.id === id);
+    return c ? this.hydrate(c) : null;
+  }
+
+  /**
+   * The single-controller view that predates Phase 6: the first entry, or
+   * null. Kept for callers that only ever deal with one controller; anything
+   * that may see several uses listControllers / getControllerById.
+   */
   async getController(): Promise<ControllerRow | null> {
     const doc = this.read();
     const c = doc.controllers[0];
     return c ? this.hydrate(c) : null;
   }
 
-  async upsertController(input: ControllerInput): Promise<ControllerRow> {
-    if (!input.name || !input.controllerUrl || !input.connectorName) {
-      throw new Error("name, controllerUrl, and connectorName are required");
-    }
-
+  /** Add a new controller entry — a new workspace. */
+  async addController(input: ControllerInput): Promise<ControllerRow> {
+    requireIdentityFields(input);
     return this.mutate((doc) => {
-      // Read the prior authMode + sealed-secret presence so the "secret is
-      // required" rule relaxes when the caller is only updating display
-      // fields. Preservation is valid ONLY when authMode is unchanged; a
-      // switch between static-bearer and oauth2-cc must supply the new secret.
-      const prior = doc.controllers[0];
-      const canPreserveTunnelAuthToken =
-        prior?.authMode === "static-bearer" && prior?.tunnelAuthTokenCt !== null;
-      const canPreserveOauthClientSecret =
-        prior?.authMode === "oauth2-cc" && prior?.oauthClientSecretCt !== null;
-
-      if (input.authMode === "static-bearer" && !input.tunnelAuthToken && !canPreserveTunnelAuthToken) {
-        throw new Error("tunnelAuthToken is required when authMode is static-bearer");
-      }
-      if (input.authMode === "oauth2-cc") {
-        if (!input.oauthClientId || !input.oauthTokenUrl) {
-          throw new Error("oauthClientId and oauthTokenUrl are required when authMode is oauth2-cc");
-        }
-        if (!input.oauthClientSecret && !canPreserveOauthClientSecret) {
-          throw new Error("oauthClientSecret is required when authMode is oauth2-cc");
-        }
-      }
-
-      const now = iso(new Date());
-      const nextTunnelCt =
-        input.authMode === "static-bearer" && input.tunnelAuthToken
-          ? b64(seal(Buffer.from(input.tunnelAuthToken, "utf8"), this.key.bytes))
-          : null;
-      const nextOauthCt =
-        input.authMode === "oauth2-cc" && input.oauthClientSecret
-          ? b64(seal(Buffer.from(input.oauthClientSecret, "utf8"), this.key.bytes))
-          : null;
-
-      const next: ControllerDoc = {
-        id: prior ? prior.id : randomUUID(),
-        name: input.name,
-        controllerUrl: input.controllerUrl,
-        connectorName: input.connectorName,
-        environment: input.environment,
-        authMode: input.authMode,
-        // `?? prior` mirrors the old SQL COALESCE(EXCLUDED.x, controllers.x).
-        // Note the inherited quirk this preserves deliberately: switching to
-        // the other posture leaves the previous posture's sealed secret in
-        // place, because the incoming value is null. It is unreachable — the
-        // authMode decides which one callers read — so behaviour parity wins
-        // over tidying it up during a backend swap.
-        tunnelAuthTokenCt: nextTunnelCt ?? prior?.tunnelAuthTokenCt ?? null,
-        oauthClientId: input.oauthClientId ?? null,
-        oauthClientSecretCt: nextOauthCt ?? prior?.oauthClientSecretCt ?? null,
-        oauthTokenUrl: input.oauthTokenUrl ?? null,
-        registrationTokenCt: prior?.registrationTokenCt ?? null,
-        enabled: prior?.enabled ?? true,
-        createdAt: prior?.createdAt ?? now,
-        updatedAt: now,
-        lastConnectedAt: prior?.lastConnectedAt ?? null,
-        lastDisconnectReason: prior?.lastDisconnectReason ?? null,
-      };
-
-      doc.controllers = [next];
+      const next = this.buildControllerDoc(undefined, input);
+      doc.controllers.push(next);
+      // The FIRST controller inherits whatever was configured before any
+      // controller existed: the legacy trusted issuer and unbound API clients.
+      if (doc.controllers.length === 1) adoptLegacyBindings(doc, next);
       return this.hydrate(next);
     });
+  }
+
+  /** Replace one entry's fields, keeping its id, token and sealed secrets where allowed. */
+  async updateController(id: string, input: ControllerInput): Promise<ControllerRow> {
+    requireIdentityFields(input);
+    return this.mutate((doc) => {
+      const index = doc.controllers.findIndex((x) => x.id === id);
+      if (index < 0) throw new Error(`no controller with id ${id}`);
+      const next = this.buildControllerDoc(doc.controllers[index], input);
+      doc.controllers[index] = next;
+      return this.hydrate(next);
+    });
+  }
+
+  /**
+   * Remove one entry. API clients bound to it are left in place but can no
+   * longer drive anything — their workspace is gone, so a call fails closed.
+   */
+  async removeController(id: string): Promise<boolean> {
+    return this.mutate((doc) => {
+      const before = doc.controllers.length;
+      doc.controllers = doc.controllers.filter((x) => x.id !== id);
+      return doc.controllers.length < before;
+    });
+  }
+
+  /**
+   * Pre-Phase-6 single-controller upsert: update the first entry, or add one.
+   * The update-or-add decision is made INSIDE the lock — taken outside it,
+   * concurrent first-time upserts each see an empty store and each add an
+   * entry (pinned by write-serialisation.test.ts).
+   */
+  async upsertController(input: ControllerInput): Promise<ControllerRow> {
+    requireIdentityFields(input);
+    return this.mutate((doc) => {
+      const prior = doc.controllers[0];
+      const next = this.buildControllerDoc(prior, input);
+      if (prior) {
+        doc.controllers[0] = next;
+      } else {
+        doc.controllers.push(next);
+        adoptLegacyBindings(doc, next);
+      }
+      return this.hydrate(next);
+    });
+  }
+
+  private buildControllerDoc(prior: ControllerDoc | undefined, input: ControllerInput): ControllerDoc {
+    // Read the prior authMode + sealed-secret presence so the "secret is
+    // required" rule relaxes when the caller is only updating display
+    // fields. Preservation is valid ONLY when authMode is unchanged; a
+    // switch between static-bearer and oauth2-cc must supply the new secret.
+    const canPreserveTunnelAuthToken =
+      prior?.authMode === "static-bearer" && prior?.tunnelAuthTokenCt !== null;
+    const canPreserveOauthClientSecret =
+      prior?.authMode === "oauth2-cc" && prior?.oauthClientSecretCt !== null;
+
+    if (input.authMode === "static-bearer" && !input.tunnelAuthToken && !canPreserveTunnelAuthToken) {
+      throw new Error("tunnelAuthToken is required when authMode is static-bearer");
+    }
+    if (input.authMode === "oauth2-cc") {
+      if (!input.oauthClientId || !input.oauthTokenUrl) {
+        throw new Error("oauthClientId and oauthTokenUrl are required when authMode is oauth2-cc");
+      }
+      if (!input.oauthClientSecret && !canPreserveOauthClientSecret) {
+        throw new Error("oauthClientSecret is required when authMode is oauth2-cc");
+      }
+    }
+
+    const now = iso(new Date());
+    const nextTunnelCt =
+      input.authMode === "static-bearer" && input.tunnelAuthToken
+        ? b64(seal(Buffer.from(input.tunnelAuthToken, "utf8"), this.key.bytes))
+        : null;
+    const nextOauthCt =
+      input.authMode === "oauth2-cc" && input.oauthClientSecret
+        ? b64(seal(Buffer.from(input.oauthClientSecret, "utf8"), this.key.bytes))
+        : null;
+
+    return {
+      id: prior ? prior.id : randomUUID(),
+      name: input.name,
+      controllerUrl: input.controllerUrl,
+      connectorName: input.connectorName,
+      environment: input.environment,
+      authMode: input.authMode,
+      // `?? prior` mirrors the old SQL COALESCE(EXCLUDED.x, controllers.x).
+      // Note the inherited quirk this preserves deliberately: switching to
+      // the other posture leaves the previous posture's sealed secret in
+      // place, because the incoming value is null. It is unreachable — the
+      // authMode decides which one callers read — so behaviour parity wins
+      // over tidying it up during a backend swap.
+      tunnelAuthTokenCt: nextTunnelCt ?? prior?.tunnelAuthTokenCt ?? null,
+      oauthClientId: input.oauthClientId ?? null,
+      oauthClientSecretCt: nextOauthCt ?? prior?.oauthClientSecretCt ?? null,
+      oauthTokenUrl: input.oauthTokenUrl ?? null,
+      registrationTokenCt: prior?.registrationTokenCt ?? null,
+      enabled: prior?.enabled ?? true,
+      createdAt: prior?.createdAt ?? now,
+      updatedAt: now,
+      lastConnectedAt: prior?.lastConnectedAt ?? null,
+      lastDisconnectReason: prior?.lastDisconnectReason ?? null,
+      // Rotating an entry's credential keeps its workspace, and with it the
+      // workspace's federated trust config.
+      ...(prior?.trustedIssuer ? { trustedIssuer: prior.trustedIssuer } : {}),
+    };
   }
 
   async updateRegistrationToken(id: string, token: string): Promise<void> {
@@ -296,6 +373,7 @@ export class ConfigStore {
     });
   }
 
+  /** Pre-Phase-6: remove every controller entry. */
   async deleteController(): Promise<boolean> {
     return this.mutate((doc) => {
       const had = doc.controllers.length > 0;
@@ -327,44 +405,95 @@ export class ConfigStore {
   // together: set writes all three, clear nulls the lot, get returns
   // undefined unless all three are present.
 
-  async getTrustedIssuerConfig(): Promise<TrustedIssuerConfig | undefined> {
-    const t = this.read().trustedIssuer;
-    if (!t || !t.issuer || !t.jwksUrl || !t.audience) return undefined;
-    return { issuer: t.issuer, jwksUrl: t.jwksUrl, audience: t.audience };
+  // Per controller entry since Phase 6 (§5.6): each workspace has its own
+  // issuer + audience, and a federated token is routed to the entry whose
+  // `iss` + `aud` it carries. `controllerId` is optional on every method so
+  // the single-controller callers keep working: omitted, it means "the only
+  // controller" (or the legacy top-level slot when there is none), and it is
+  // an error to omit it once there are several.
+
+  async getTrustedIssuerConfig(controllerId?: string): Promise<TrustedIssuerConfig | undefined> {
+    const doc = this.read();
+    const slot = controllerId === undefined && doc.controllers.length === 0
+      ? doc.trustedIssuer
+      : resolveController(doc, controllerId).trustedIssuer;
+    return toTrustedIssuer(slot);
   }
 
-  async setTrustedIssuerConfig(config: TrustedIssuerConfig): Promise<void> {
+  /** Every configured trusted issuer, with the controller entry it belongs to. */
+  async listTrustedIssuers(): Promise<Array<TrustedIssuerConfig & { controllerId: string }>> {
+    const out: Array<TrustedIssuerConfig & { controllerId: string }> = [];
+    for (const c of this.read().controllers) {
+      const t = toTrustedIssuer(c.trustedIssuer);
+      if (t) out.push({ ...t, controllerId: c.id });
+    }
+    return out;
+  }
+
+  /** The controller entry whose trusted issuer is exactly this `iss` + `aud`. */
+  async findControllerByIssuer(issuer: string, audience: string): Promise<string | undefined> {
+    return (await this.listTrustedIssuers()).find((t) => t.issuer === issuer && t.audience === audience)?.controllerId;
+  }
+
+  async setTrustedIssuerConfig(config: TrustedIssuerConfig, controllerId?: string): Promise<void> {
     await this.mutate((doc) => {
-      doc.trustedIssuer = {
-        issuer: config.issuer,
-        jwksUrl: config.jwksUrl,
-        audience: config.audience,
-      };
+      const value = { issuer: config.issuer, jwksUrl: config.jwksUrl, audience: config.audience };
+      if (controllerId === undefined && doc.controllers.length === 0) {
+        doc.trustedIssuer = value;
+        return;
+      }
+      const target = resolveController(doc, controllerId);
+      // One IdP must not mint tokens valid for two tunnels: a federated token
+      // is routed by iss + aud, so a second entry with the same pair would make
+      // the route ambiguous.
+      const clash = doc.controllers.find((c) =>
+        c.id !== target.id && c.trustedIssuer?.issuer === value.issuer && c.trustedIssuer?.audience === value.audience);
+      if (clash) {
+        throw new Error(`issuer ${value.issuer} with audience ${value.audience} is already trusted by another controller — use a distinct audience per controller`);
+      }
+      target.trustedIssuer = value;
     });
   }
 
-  async clearTrustedIssuerConfig(): Promise<void> {
+  async clearTrustedIssuerConfig(controllerId?: string): Promise<void> {
     await this.mutate((doc) => {
-      doc.trustedIssuer = null;
+      if (controllerId === undefined && doc.controllers.length === 0) {
+        doc.trustedIssuer = null;
+        return;
+      }
+      resolveController(doc, controllerId).trustedIssuer = null;
     });
   }
 
   // ─── Machine-API client credentials ────────────────────────────────────
 
-  async mintApiClient(name?: string): Promise<{ clientId: string; clientSecret: string }> {
+  // A client is bound to one controller entry (§5.6): its tokens drive that
+  // workspace's tunnel and no other. `controllerId` omitted means the only
+  // controller; with none configured yet the client stays unbound and is bound
+  // to the first controller added (adoptLegacyBindings).
+  async mintApiClient(name?: string, controllerId?: string): Promise<{ clientId: string; clientSecret: string }> {
     const clientId = randomBytes(16).toString("hex");
     const clientSecret = randomBytes(32).toString("base64url");
-    const entry: ApiClientDoc = {
-      clientId,
-      clientSecretCt: b64(seal(Buffer.from(clientSecret, "utf8"), this.key.bytes)),
-      name: name ?? null,
-      createdAt: iso(new Date()),
-      revokedAt: null,
-    };
     await this.mutate((doc) => {
-      doc.apiClients.push(entry);
+      const bound = controllerId === undefined && doc.controllers.length === 0
+        ? undefined
+        : resolveController(doc, controllerId).id;
+      doc.apiClients.push({
+        clientId,
+        clientSecretCt: b64(seal(Buffer.from(clientSecret, "utf8"), this.key.bytes)),
+        name: name ?? null,
+        createdAt: iso(new Date()),
+        revokedAt: null,
+        ...(bound ? { controllerId: bound } : {}),
+      });
     });
     return { clientId, clientSecret };
+  }
+
+  /** The controller entry an active client is bound to, if any. */
+  async apiClientController(clientId: string): Promise<string | undefined> {
+    const entry = this.read().apiClients.find((c) => c.clientId === clientId && c.revokedAt === null);
+    return entry?.controllerId;
   }
 
   // Unknown client_id and wrong-secret-for-a-known-client_id both return
@@ -415,10 +544,60 @@ export class ConfigStore {
         name: c.name,
         createdAt: toDate(c.createdAt),
         revokedAt: toDateOrNull(c.revokedAt),
+        controllerId: c.controllerId ?? null,
       }));
   }
 
   // Retained for interface parity — there is no pool to drain now. Callers
   // (tests, shutdown paths) still call it.
   async close(): Promise<void> {}
+}
+
+function requireIdentityFields(input: ControllerInput): void {
+  if (!input.name || !input.controllerUrl || !input.connectorName) {
+    throw new Error("name, controllerUrl, and connectorName are required");
+  }
+}
+
+/**
+ * The controller entry a per-controller setting applies to. `id` omitted is
+ * the single-controller shorthand: valid only while there is exactly one, so a
+ * caller that predates Phase 6 can never silently pick one of several.
+ */
+function resolveController(doc: StoreDoc, id: string | undefined): ControllerDoc {
+  if (id !== undefined) {
+    const c = doc.controllers.find((x) => x.id === id);
+    if (!c) throw new Error(`no controller with id ${id}`);
+    return c;
+  }
+  if (doc.controllers.length === 1) return doc.controllers[0];
+  if (doc.controllers.length === 0) throw new Error("no controller configured");
+  throw new Error("several controllers are configured — name one");
+}
+
+function toTrustedIssuer(t: TrustedIssuerDoc | null | undefined): TrustedIssuerConfig | undefined {
+  if (!t || !t.issuer || !t.jwksUrl || !t.audience) return undefined;
+  return { issuer: t.issuer, jwksUrl: t.jwksUrl, audience: t.audience };
+}
+
+/**
+ * Move settings made before any controller existed (or before Phase 6) onto a
+ * controller entry: the top-level trusted issuer, and every unbound API client.
+ * Returns whether anything moved. Only ever applied to the first controller,
+ * which is exact for a pre-Phase-6 store (it had at most one).
+ */
+function adoptLegacyBindings(doc: StoreDoc, controller: ControllerDoc): boolean {
+  let moved = false;
+  if (doc.trustedIssuer) {
+    if (!controller.trustedIssuer) controller.trustedIssuer = doc.trustedIssuer;
+    doc.trustedIssuer = null;
+    moved = true;
+  }
+  for (const client of doc.apiClients) {
+    if (client.controllerId === undefined) {
+      client.controllerId = controller.id;
+      moved = true;
+    }
+  }
+  return moved;
 }
