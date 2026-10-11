@@ -67,7 +67,7 @@ const Policy = z.object({
 
 export type ReconnectPolicyConfig = z.infer<typeof ReconnectPolicy>;
 
-const ConfigSchema = z.object({
+export const ConfigSchema = z.object({
   // The tunnel: block is legacy — retained in the schema so old
   // connector.yaml files parse cleanly, but bootFromDb ignores its contents
   // entirely (tunnel identity + creds live in the sealed config store).

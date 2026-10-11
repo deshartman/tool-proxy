@@ -276,6 +276,11 @@ export interface SupervisorOpts {
   // listener is owned by the connection — no explicit deregister on
   // close. Stays optional so tests / older boot paths can omit it.
   onConnect?: (name: string, connection: McpServerConnection) => void;
+  // MCP_STATE_DIR, the write contract (MULTI-PLATFORM-MCP §5.3): the one
+  // directory a child may write, per (workspace, MCP). Called before each
+  // spawn and expected to create the directory. Absent → no MCP_STATE_DIR is
+  // injected (single-supervisor tests, older boot paths).
+  stateDirFor?: (mcp: string) => string;
   // Child-port allocator. Share ONE across every supervisor in the process:
   // two supervisors with private reservations can both probe the same free
   // port, and the second child then fails EADDRINUSE at listen. Absent → a
@@ -1075,6 +1080,12 @@ export class McpSupervisor {
     // The child's SDK helper createWebhookEndpoint reads this to prove
     // its identity when subscribing to the inspector's webhook stream.
     out.MCP_WEBHOOK_TOKEN = entry.webhookToken;
+    // Supervisor-owned for the same reason: a workspace's child must write
+    // under ITS workspace's directory, so no user layer may redirect it.
+    if (this.opts.stateDirFor) {
+      out.MCP_STATE_DIR = this.opts.stateDirFor(entry.spec.name);
+      sources.MCP_STATE_DIR = "process.env";
+    }
     return out;
   }
 

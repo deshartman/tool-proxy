@@ -40,7 +40,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BodyTooLargeError, readJsonBody } from "./read-body.js";
-import { verifyAccessToken, type JwtVerifierConfig } from "../auth/jwt.js";
+import { verifyAccessToken, type AccessTokenClaims, type JwtVerifierConfig } from "../auth/jwt.js";
 import type { ControllerApiCoordinator } from "../tunnel/controller-api-coordinator.js";
 
 export interface MemoryEventsRouteDeps {
@@ -48,12 +48,16 @@ export interface MemoryEventsRouteDeps {
   // add/change/clear the trusted-issuer (federated) config live, and it must
   // take effect with no restart. Same read-live-state rationale as
   // getCoordinator below.
-  getVerifierConfig: () => Promise<JwtVerifierConfig>;
+  getVerifierConfig: (token: string) => Promise<JwtVerifierConfig>;
   // Reads the live coordinator at call time, not at wiring time — a fresh
   // instance is constructed per tunnel dial and dropped to undefined between
   // reconnects (see boot/lifecycle.ts's ControllerApiCoordinator LIFETIME
   // note).
-  getCoordinator: () => ControllerApiCoordinator | undefined;
+  // Phase 6 (§5.6): the verified claims select the workspace — a self-issued
+  // token's `sub` names a client bound to one controller entry, a federated
+  // token's `iss` + `aud` name the entry that trusts it. Undefined when that
+  // workspace has no live tunnel, or the credential is bound to none.
+  getCoordinator: (claims: AccessTokenClaims) => ControllerApiCoordinator | undefined | Promise<ControllerApiCoordinator | undefined>;
 }
 
 const WIRE_ACTION = "memory.inject_context";
@@ -77,7 +81,7 @@ async function authenticate(
   req: IncomingMessage,
   res: ServerResponse,
   deps: MemoryEventsRouteDeps,
-): Promise<string | undefined> {
+): Promise<AccessTokenClaims | undefined> {
   const header = req.headers["authorization"];
   const auth = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
   const m = /^Bearer\s+(.+)$/i.exec(auth ?? "");
@@ -86,12 +90,12 @@ async function authenticate(
     sendJson(res, 401, { error: { code: "not_authorized", message: "missing bearer token" } });
     return undefined;
   }
-  const verified = await verifyAccessToken(token, await deps.getVerifierConfig());
+  const verified = await verifyAccessToken(token, await deps.getVerifierConfig(token));
   if (!verified.valid || !verified.claims) {
     sendJson(res, 401, { error: { code: "not_authorized", message: verified.error ?? "invalid bearer token" } });
     return undefined;
   }
-  return verified.claims.sub;
+  return verified.claims;
 }
 
 // Presence + type validation only. `identityId` and `agentId` are checked for
@@ -203,8 +207,9 @@ export async function handleMemoryEvents(
   res: ServerResponse,
   deps: MemoryEventsRouteDeps,
 ): Promise<void> {
-  const clientId = await authenticate(req, res, deps);
-  if (!clientId) return;
+  const claims = await authenticate(req, res, deps);
+  if (!claims) return;
+  const clientId = claims.sub;
 
   let body: MemoryEventsBody;
   try {
@@ -221,7 +226,7 @@ export async function handleMemoryEvents(
   const validated = validateMemoryEventBody(body, res);
   if (!validated) return;
 
-  const coordinator = deps.getCoordinator();
+  const coordinator = await deps.getCoordinator(claims);
   if (!coordinator) {
     sendJson(res, 503, { error: { code: "tunnel_unavailable", message: "no tunnel connected" } });
     return;

@@ -48,6 +48,33 @@ export interface HealthState {
   childrenPending: string[];
 }
 
+/** What a workspace contributes to process readiness (MULTI-PLATFORM-MCP §5.7). */
+export interface WorkspaceHealth {
+  childrenPending(): string[];
+}
+
+/**
+ * Aggregate readiness across every tunnel workspace (Phase 6, §5.7).
+ *
+ * `tunnelOpen` is "at least one workspace is configured", NOT "every tunnel is
+ * open", deliberately. Under D5 one tenant's controller outage must not take
+ * the shim out of rotation for the others, so no single tunnel may gate the
+ * process — a workspace whose tunnel is down still serves nothing to the
+ * orchestrator that a restart would fix. The one tunnel-shaped rule left is
+ * zero workspaces: that stays 503 `tunnel_not_open`, which preserves "a fresh
+ * deploy is deliberately not ready" and the long readiness grace built on it.
+ *
+ * Children still gate, summed across workspaces: a child a workspace was asked
+ * to run that is still `restarting`/`stopped` is real unreadiness.
+ */
+export function workspacesHealth(configLoaded: boolean, workspaces: readonly WorkspaceHealth[]): HealthState {
+  return {
+    configLoaded,
+    tunnelOpen: workspaces.length > 0,
+    childrenPending: workspaces.flatMap((ws) => ws.childrenPending()),
+  };
+}
+
 export interface HealthResult {
   status: number;
   body: { ok: boolean; reason?: string; detail?: Record<string, unknown> };

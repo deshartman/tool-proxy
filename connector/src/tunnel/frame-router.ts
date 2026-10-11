@@ -15,7 +15,7 @@
 // Other frame types (heartbeat, rpc, manifest-delta, goodbye) are no-ops here
 // — the dispatcher / heartbeat plumbing handle them on the TunnelClient itself.
 
-import type { Inspector } from "../inspector/server.js";
+import type { WorkspaceView } from "../inspector/server.js";
 import type { Logger } from "../logger.js";
 import type { ReconnectController } from "./reconnect.js";
 import type { WebhookRegistry } from "./webhook-registry.js";
@@ -42,7 +42,9 @@ export interface FrameRouterOpts {
   // tunnel-protocol range. Caller stores its MAX on the tunnel so a newer-minor
   // controller's frames parse tolerantly (see TunnelClient.peerProtocol).
   onPeerProtocol?: (range: { min: string; max: string }) => void;
-  inspector: Inspector | undefined;
+  // The view of the workspace this tunnel belongs to (Phase 6). Only its
+  // identity/header setters are used.
+  inspector: Pick<WorkspaceView, "setIdentity" | "setHeader"> | undefined;
   reconnect: ReconnectController;
   log: Logger;
   // Connector name — surfaced in the name_taken error path so the operator

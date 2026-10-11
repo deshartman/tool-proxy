@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import type { AddressInfo } from "node:net";
-import { startHealthServer, livez, readyz, type HealthState } from "../../src/health/server.js";
+import { startHealthServer, livez, readyz, workspacesHealth, type HealthState } from "../../src/health/server.js";
 
 // Stage A of architectural-plans/DEPLOY-ARCHITECTURE.md. These endpoints exist
 // because the inspector cannot be probed: it binds 127.0.0.1 and refuses every
@@ -207,3 +207,26 @@ describe("health server — bind clash", () => {
     expect(fatal).toBe(false);
   });
 });
+
+// MULTI-PLATFORM-MCP §5.7 — readiness across several tunnel workspaces.
+describe("workspacesHealth — aggregate readiness (Phase 6)", () => {
+  const ws = (...pending: string[]) => ({ childrenPending: () => pending });
+
+  it("zero workspaces stays 503 tunnel_not_open (a fresh deploy is not ready)", () => {
+    expect(readyz(workspacesHealth(true, []))).toEqual({ status: 503, body: { ok: false, reason: "tunnel_not_open" } });
+  });
+
+  it("one tenant's tunnel being down does not gate readiness — only configured workspaces count", () => {
+    // Workspace tunnel state is deliberately not an input at all: there is no
+    // way to express "A down, B up" that changes the answer.
+    expect(readyz(workspacesHealth(true, [ws(), ws()])).status).toBe(200);
+  });
+
+  it("a child still starting in ANY workspace gates readiness, and is named", () => {
+    const r = readyz(workspacesHealth(true, [ws(), ws("crm")]));
+    expect(r.status).toBe(503);
+    expect(r.body.reason).toBe("mcp_children_starting");
+    expect(r.body.detail).toEqual({ pending: ["crm"] });
+  });
+});
+

@@ -189,6 +189,18 @@ describe("entrypoint.sh — state volume provisioning", () => {
     expect(defaultDir!.startsWith(`${root}/`)).toBe(true);
   });
 
+  // MULTI-PLATFORM-MCP §5.3: per-workspace MCP_STATE_DIRs live under
+  // state/controllers/. No new chown is needed — and none must be added as a
+  // recursive one — because the connector, running as `mcp` inside the
+  // `mcp`-owned state/, creates that tree itself. Pin that it really is
+  // nested under the store's directory, which the loop above provisions.
+  it("per-workspace storage nests inside the store directory (covered by nesting)", async () => {
+    const { workspaceRoot } = await import("../../src/boot/workspace-storage.js");
+    const { DEFAULT_STATE_DIR } = await import("../../src/config-store/store-file.js");
+    const root = workspaceRoot({} as NodeJS.ProcessEnv);
+    expect(root).toBe(`${DEFAULT_STATE_DIR}/controllers`);
+  });
+
   it("runs the provisioning BEFORE dropping privileges", () => {
     // chown needs root. After the su-exec line this would be dead code that
     // still looks correct in review.
