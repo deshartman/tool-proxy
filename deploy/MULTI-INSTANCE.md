@@ -4,6 +4,13 @@ Running one connector per host and running several on the same host are both
 supported. Each connector is its own process with its own tunnel, its own
 identity, and its own state. The controller cannot tell the difference.
 
+**You may not need several.** One connector can hold several controllers
+(**Add controller** in the inspector's Tunnel panel): each gets its own
+tunnel, MCP children, approvals and MCP state, inside one process. Run
+separate instances when you need OS-level separation between controllers —
+one process shares one user id, one network namespace, and one crash or OOM
+— or when controllers need different image versions.
+
 Choose separate **containers** when you can: each container has its own
 network namespace and volume, so nothing below can collide. Choose separate
 **processes** (systemd units, or the dev script) when containers are not an
@@ -16,8 +23,7 @@ option, and give each instance the values in the table.
 | `INSPECTOR_PORT` | The dashboard and the loopback IPC that MCPs use for webhooks and controller calls | `9090` |
 | `HEALTH_PORT` | `/livez` and `/readyz`, bound on `0.0.0.0`. A second instance on the same port can't bind it, and a probe on that port would then read the **first** instance's readiness | `9100` |
 | `MCP_BASE_PORT` | The start of the auto-assigned port range for spawned MCP children. Space instances 100 apart | `7100` |
-| `CONNECTOR_STATE_DIR` | Holds `config.json`: the sealed tunnel credential and the connector's identity. Two instances sharing it would share one identity | `/var/lib/mcp-connector/state` |
-| `AGENTIC_MEMORY_STATE_PATH` | The bundled agentic-memory MCP's state file. If shared, memory written for one controller is read back for another | `/var/lib/mcp-connector/agentic-memory/.state.json` (image) |
+| `CONNECTOR_STATE_DIR` | Holds `config.json` (the sealed tunnel credentials and the connector's identity) and, under `controllers/`, every MCP's state — agentic-memory's included. Two instances sharing it would share one identity | `/var/lib/mcp-connector/state` |
 | `CONNECTOR_KEY_FILE` | The master key that seals `config.json`. Sharing one is allowed; one per instance is recommended | — |
 
 **If `HEALTH_PORT` is set explicitly and already taken, the connector exits at boot**
@@ -77,7 +83,6 @@ INSPECTOR_PORT=9091 \
 HEALTH_PORT=9301 \
 MCP_BASE_PORT=7200 \
 CONNECTOR_STATE_DIR=/var/lib/mcp-connector-b/state \
-AGENTIC_MEMORY_STATE_PATH=/var/lib/mcp-connector-b/agentic-memory/.state.json \
 CONNECTOR_KEY_FILE=/etc/mcp-connector-b/connector.key \
 node dist/index.js start
 ```

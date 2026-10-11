@@ -24,7 +24,7 @@
 // local-mcps-rescan-ack carries only the diff summary.
 //
 // LIFETIME — same shape as McpConfigCoordinator (read its LIFETIME comment
-// before changing this one). Constructed ONCE per connector process: the
+// before changing this one). Constructed ONCE per workspace (TunnelWorkspace): the
 // coordinator's only state is an in-flight debounce flag, which must NOT
 // reset on WS reconnect — a click against the inspector during a
 // controller-triggered rescan should still be deduped. Per-tunnel rebind

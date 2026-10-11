@@ -237,7 +237,7 @@ Save. The inspector pill transitions `closed` → `connecting` → **`open`** (g
 ## Verify
 
 ```bash
-fly ssh console -a mcp-connector-acme-prod -C "mcp-connector doctor"
+fly ssh console -a mcp-connector-acme-prod -C "sh -c 'cd /app/connector && node dist/index.js doctor'"
 ```
 
 Exit 0 = all green. In the inspector, the MCP Server panel should show every MCP from your `connector.yaml` with "Ready" verdicts, and (if you deployed the mock) the crm drop-in's `get_customer` tool should return the demo Alice.

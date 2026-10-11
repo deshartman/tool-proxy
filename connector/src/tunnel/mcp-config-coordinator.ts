@@ -79,7 +79,8 @@ interface RosterEntry {
 
 // LIFETIME — read this before changing the construction site.
 //
-// The coordinator is constructed ONCE per connector process and outlives WS
+// The coordinator is constructed ONCE per workspace (TunnelWorkspace; once per
+// process before MULTI-PLATFORM-MCP Phase 6) and outlives that workspace's WS
 // reconnects. Its `roster` and `nameToMcpId` maps are the connector's view of
 // "which supervisor entries did I register from controller-config snapshots /
 // deltas". That view tracks the supervisor (which also outlives reconnects)
