@@ -57,7 +57,7 @@ export class DiscoveryCache {
   describe(spec: SupervisedSpec): Promise<DiscoveredOffer> {
     const dir = (spec as { dir?: string }).dir;
     if (!dir) return Promise.resolve({ tools: [], envKeys: [] });
-    const key = cacheKey(dir);
+    const key = folderFingerprint(dir);
     const hit = this.cache.get(key);
     if (hit) return hit;
     const pending = this.spawnAndRead(spec).catch((err) => {
@@ -98,10 +98,13 @@ export class DiscoveryCache {
   }
 }
 
-// Real path + content hash of every file the runner would load. Hashing
-// content, not mtimes: a `git checkout` that restores identical bytes is not a
-// change, and a copy that preserves mtimes but changes bytes is.
-function cacheKey(dir: string): string {
+/**
+ * Real path + content hash of every file the runner would load — the cache
+ * key, and what a rescan compares to decide a folder's code changed. Hashing
+ * content, not mtimes: a `git checkout` that restores identical bytes is not a
+ * change, and a copy that preserves mtimes but changes bytes is.
+ */
+export function folderFingerprint(dir: string): string {
   let real = dir;
   try { real = realpathSync(dir); } catch { /* the spawn will report it */ }
   const hash = createHash("sha256");

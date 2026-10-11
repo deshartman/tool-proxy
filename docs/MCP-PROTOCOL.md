@@ -967,9 +967,9 @@ Two frames, both opaque to the customer:
 
 No payload. The connector decides what's there; the controller just triggers. Sent when the operator clicks **Refresh local MCPs** in the controller UI (Connector detail → MCPs tab). The connector re-runs `discoverDropins({yamlNames})` against `MCP_DROPIN_DIR`, diffs against the running supervisor entries, then:
 
-- For added entries: `supervisor.registerOne(spec, { source: "local" }) → startOne(name)` and fan out a `creds-request` for that MCP.
+- For added entries: `supervisor.registerOne(spec, { source: "local" })` and an `mcp-discovered` for that MCP. The child is **not** started — it is described by a one-off scratch spawn, and starts on its `mcp-enable` like every gated MCP (MULTI-PLATFORM-MCP Phase 6 lazy spawn). Before Phase 6 the child was started here.
 - For removed entries: `supervisor.unregister(name)`.
-- For changed entries (e.g. `dir/.env` edited or tools added): `supervisor.replaceSpec(name, newSpec)`.
+- For changed entries — a known folder whose code (anything under `tools/`, `prompts/`, `resources/`) hashes differently from the last scan: the spec is replaced. If the child is running it restarts, and its new tool list arrives as a `manifest-delta`. If it is not running, the folder is re-described and a **second `mcp-discovered`** for the same `mcp` carries the new `tools` / `envKeys` — the controller MUST treat it as an upsert of the pending entry. A changed folder is still listed under `unchanged` in the ack, which describes the folder set.
 
 Manifest changes ride the existing `manifest-delta` path. The dedicated `local-mcps-rescan-ack` carries only the diff summary so the controller's UI can show "Done — N added, M removed."
 
@@ -987,7 +987,7 @@ Manifest changes ride the existing `manifest-delta` path. The dedicated `local-m
 
 | Field | Type | Notes |
 |---|---|---|
-| `added` | `{name, toolsCount}[]` | New folders accepted. `toolsCount` is the post-spawn `tools/list` size. |
+| `added` | `{name, toolsCount}[]` | New folders accepted. `toolsCount` is the folder's `tools/list` size as discovered (the child is not running yet). |
 | `removed` | `string[]` | Folders no longer present. Names — drop-ins don't have `mcpId`. |
 | `unchanged` | `string[]` | Folders that scanned identically to the prior pass. |
 | `errors` | `{name, error}[]` | Folders the connector tried to add but couldn't (spawn failed, port exhausted, etc). Per-folder isolation: one bad drop-in does not abort the rescan. |
@@ -1177,7 +1177,7 @@ interface McpDiscoveredFrame {
 Sent at two emission points:
 
 1. **Boot.** After `register` is sent (so the controller has a `connectorId` to scope against), one frame per gated MCP — bundled, drop-in and yaml. The connector emits this for ALL drop-ins, including ones the controller may have approved previously — the connector has no persistent approval state, and trusts the controller to reply `mcp-enable` for the ones it has on file.
-2. **Runtime rescan.** When [`LocalMcpsCoordinator.rescan()`](../connector/src/tunnel/local-mcps-coordinator.ts) discovers a new drop-in folder and spawns its child, one frame per added MCP.
+2. **Runtime rescan.** When [`LocalMcpsCoordinator.rescan()`](../connector/src/tunnel/local-mcps-coordinator.ts) discovers a new drop-in folder, one frame per added MCP — and, again, one frame for a known folder whose code changed while it was not running. A repeat `mcp-discovered` for an `mcp` the controller already holds is an **upsert** of its tools and envKeys, never a duplicate to drop.
 
 **Deliberately NOT in the payload:**
 - `inputSchema` / `outputSchema` — the actual call surface; withheld until approval.

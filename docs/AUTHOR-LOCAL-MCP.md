@@ -162,7 +162,9 @@ Two ways to get the connector to pick up a new folder:
 | **Refresh local MCPs** (controller UI: Connector detail → MCPs tab) | Live. No restart needed. |
 | **Refresh local MCPs** (inspector at <http://localhost:9090/>) | Live, local-dev path. |
 
-Both refresh paths re-run the drop-in scanner, register new folders with the supervisor, fan out an `mcp-discovered` frame for each new drop-in, and (after the operator approves) emit a `manifest-delta` so the controller picks up the new tools.
+Both refresh paths re-run the drop-in scanner, register new folders with the supervisor, fan out an `mcp-discovered` frame for each new drop-in, and (after the operator approves) emit a `manifest-delta` so the controller picks up the new tools. A new folder is not started by Refresh — it starts when it is approved.
+
+Refresh also picks up **edits** to a folder it already knows — a changed, added or removed file under `tools/`, `prompts/` or `resources/`. If the MCP is approved and running, its child restarts on the new code and the new tools reach the controller straight away. If it is still pending, the controller's pending entry is updated with the new tool list. An edit you don't Refresh is picked up at the next restart.
 
 ## In-process state is a cache, not the truth
 

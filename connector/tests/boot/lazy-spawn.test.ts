@@ -131,6 +131,8 @@ beforeAll(async () => {
   // can both take one port and one file's teardown kills the other's child.
   // (Production is one process with one allocator; this is a test-only race.)
   process.env.MCP_BASE_PORT = "17300";
+  // Refresh (local-mcps-rescan) re-scans MCP_DROPIN_DIR.
+  process.env.MCP_DROPIN_DIR = dropinRoot;
 
   ctlA = await mockController();
   ctlB = await mockController();
@@ -176,6 +178,7 @@ afterAll(async () => {
   rmSync(dropinRoot, { recursive: true, force: true });
   delete process.env.MCP_DROPIN_ALLOW_SYMLINK_ESCAPE;
   delete process.env.MCP_BASE_PORT;
+  delete process.env.MCP_DROPIN_DIR;
   await fixture?.cleanup();
 }, 30000);
 
@@ -238,4 +241,62 @@ describe("lazy spawn (§5.3)", () => {
     expect(wsA.isMcpEnabled("sample")).toBe(true);
     expect(wsA.statuses().find((s) => s.name === "sample")!.restartCount).toBe(before);
   });
+});
+
+// Plan §10 q6, hybrid: connect-time discovery stays (cached); the
+// controller's Refresh describes NEW folders without starting them and
+// re-describes folders whose code CHANGED.
+const pingTool = (name: string, envKey: string) => [
+  'import type { Tool } from "@mcp-shim/connector/sdk";',
+  `export const t: Tool = {`,
+  `  name: "${name}",`,
+  `  envKeys: ["${envKey}"],`,
+  '  register(server) {',
+  `    server.registerTool("${name}", { description: "${name}" }, async () => ({ content: [{ type: "text", text: "ok" }] }));`,
+  '  },',
+  '};',
+  'export default t;',
+  '',
+].join("\n");
+
+const discoveredFor = (ctl: MockController, mcp: string) => ctl.frames.filter((f) => f.type === "mcp-discovered" && f.mcp === mcp);
+
+describe("Refresh from the controller (hybrid discovery)", () => {
+  it("a folder added after boot is described but NOT started", async () => {
+    mkdirSync(join(dropinRoot, "fresh", "tools"), { recursive: true });
+    writeFileSync(join(dropinRoot, "fresh", "tools", "hello.ts"), pingTool("hello", "FRESH_KEY"));
+    ctlB.send({ type: "local-mcps-rescan" });
+    const ack = await ctlB.waitFor((f) => f.type === "local-mcps-rescan-ack", 40000);
+    expect(ack.added).toEqual([{ name: "fresh", toolsCount: 1 }]);
+    const [frame] = discoveredFor(ctlB, "fresh");
+    expect((frame.tools as Array<{ name: string }>).map((t) => t.name)).toEqual(["hello"]);
+    expect(frame.envKeys).toEqual(["FRESH_KEY"]);
+    expect(wsB.statuses().find((s) => s.name === "fresh")!.process).toBe("stopped");
+  }, 60000);
+
+  it("an un-started folder whose code changed is re-described with the new tools", async () => {
+    const before = discoveredFor(ctlB, "keyed").length;
+    writeFileSync(join(dropinRoot, "keyed", "tools", "pong.ts"), pingTool("pong", "KEYED_API_TOKEN"));
+    const acks = ctlB.frames.filter((f) => f.type === "local-mcps-rescan-ack").length;
+    ctlB.send({ type: "local-mcps-rescan" });
+    const deadline = Date.now() + 40000;
+    while (ctlB.frames.filter((f) => f.type === "local-mcps-rescan-ack").length === acks && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const frames = discoveredFor(ctlB, "keyed");
+    expect(frames.length).toBe(before + 1);
+    expect((frames.at(-1)!.tools as Array<{ name: string }>).map((t) => t.name).sort()).toEqual(["ping", "pong"]);
+    expect(wsB.statuses().find((s) => s.name === "keyed")!.process).toBe("stopped");
+  }, 60000);
+
+  it("an unchanged folder is not re-described", async () => {
+    const before = discoveredFor(ctlB, "sample").length;
+    const acks = ctlB.frames.filter((f) => f.type === "local-mcps-rescan-ack").length;
+    ctlB.send({ type: "local-mcps-rescan" });
+    const deadline = Date.now() + 20000;
+    while (ctlB.frames.filter((f) => f.type === "local-mcps-rescan-ack").length === acks && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(discoveredFor(ctlB, "sample").length).toBe(before);
+  }, 30000);
 });

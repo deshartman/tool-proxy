@@ -47,7 +47,7 @@ import { NotificationForwarder } from "../tunnel/notification-forwarder.js";
 import { McpSupervisor, type McpStatus, type SupervisedSpec } from "../mcp-supervisor.js";
 import { discoverDropins, type DropinSpec } from "../dropin.js";
 import type { PortAllocator } from "../port-allocator.js";
-import type { DiscoveryCache } from "./discovery-cache.js";
+import { folderFingerprint, type DiscoveryCache, type DiscoveredOffer } from "./discovery-cache.js";
 import { resolveAuthFromRow, type AuthResolution } from "./auth.js";
 import { announceDiscoveredDropins as announceDropinsLoop, describeGated, type GatedDescriptor } from "./announce-dropins.js";
 import type { ConfigStore, ControllerRow } from "../config-store/index.js";
@@ -228,6 +228,14 @@ export class TunnelWorkspace {
       yamlNames: shared.yamlNames,
       onApplied: () => this.refreshManifestAndPushDelta(),
       onMcpAdded: (name) => this.onMcpAdded(name),
+      // Lazy spawn (§5.3): a folder Refresh finds is described, not started.
+      // It starts on its mcp-enable like every other gated MCP.
+      startOnAdd: !shared.discovery,
+      ...(shared.discovery ? {
+        fingerprint: folderFingerprint,
+        initial: dropins,
+        onMcpChanged: (spec: DropinSpec) => this.onMcpChanged(spec),
+      } : {}),
     });
 
     this.reconnectCtl = new ReconnectController({
@@ -681,16 +689,18 @@ export class TunnelWorkspace {
     this.publishStatuses();
   }
 
-  private async announceDiscovered(): Promise<void> {
+  // What a gated MCP offers. A RUNNING child answers for itself (its live
+  // list is authoritative, creds and all); one not yet started answers from
+  // the shared DiscoveryCache. Undefined = no cache, or nothing to describe.
+  private async offerOf(name: string): Promise<DiscoveredOffer | undefined> {
     const discovery = this.shared.discovery;
-    // A RUNNING child answers for itself (its live list is authoritative,
-    // creds and all); a gated one not yet started answers from the cache.
-    const offerOf = async (name: string) => {
-      const conn = this.servers.get(name);
-      if (conn || !discovery) return undefined;
-      const spec = this.lookupSpec(name);
-      return spec ? discovery.describe(spec as SupervisedSpec) : undefined;
-    };
+    if (this.servers.has(name) || !discovery) return undefined;
+    const spec = this.lookupSpec(name);
+    return spec ? discovery.describe(spec as SupervisedSpec) : undefined;
+  }
+
+  private async announceDiscovered(): Promise<void> {
+    const offerOf = (name: string) => this.offerOf(name);
     const result = await announceDropinsLoop({
       gated: [...this.gatedSpecsByName.values()],
       approval: this.approval,
@@ -750,7 +760,9 @@ export class TunnelWorkspace {
     this.publishStatuses();
   }
 
-  private async onMcpAdded(name: string): Promise<void> {
+  // Returns the tool count it announced, so the rescan ack can carry it for
+  // a folder that (under lazy spawn) has no child to count.
+  private async onMcpAdded(name: string): Promise<number | void> {
     const status = this.supervisor.statusList().find((s) => s.name === name);
     // Rescan only ever adds customer drop-ins (it scans MCP_DROPIN_DIR).
     // `source === "local"` is the supervisor's word for "scanned folder".
@@ -759,28 +771,50 @@ export class TunnelWorkspace {
         if (!this.dropinSpecsByName.has(spec.name)) this.dropinSpecsByName.set(spec.name, spec);
         this.gatedSpecsByName.set(spec.name, describeGated(spec, "dropin"));
       }
-      const gated = this.gatedSpecsByName.get(name);
-      try {
-        const envKeys = await this.supervisor.fetchEnvKeys(name);
-        const conn = this.servers.get(name);
-        const tools = conn ? await conn.listTools() : [];
-        this.approval.emitDiscovered({
-          mcp: name,
-          envKeys,
-          tools: tools.map((t) => ({ name: t.name, description: t.description })),
-          author: gated?.author ?? "customer",
-          source: gated?.source ?? "dropin",
-          ...(gated?.kind ? { kind: gated.kind } : {}),
-        });
-      } catch (err) {
-        this.log.warn({ name, err: err as Error }, `mcp-discovered emission for newly-added drop-in failed`);
-      }
-      return;
+      return this.emitDiscoveredFor(name);
     }
     try {
       await this.view?.mcpActions?.reloadCreds(name);
     } catch (err) {
       this.log.warn({ name, err: err as Error }, `creds-request for newly-added drop-in failed — will retry on next reconnect`);
+    }
+  }
+
+  // Refresh found a known folder whose code changed (§10 q6, hybrid). The
+  // spec is swapped either way, so the next start runs the new code. A child
+  // this workspace runs is restarted by replaceSpec, and its new tools reach
+  // the platform as a manifest-delta (rescan's onApplied). One not running is
+  // re-described — the cache keys on the code fingerprint, so this is a fresh
+  // scratch spawn — and announced again with mcp-discovered, which the
+  // platform already treats as an upsert (it is replayed after every register).
+  private async onMcpChanged(spec: DropinSpec): Promise<void> {
+    const fresh = cloneSpec(spec);
+    this.dropinSpecsByName.set(fresh.name, fresh);
+    this.gatedSpecsByName.set(fresh.name, describeGated(fresh, "dropin"));
+    const running = this.servers.has(fresh.name);
+    await this.supervisor.replaceSpec(fresh.name, fresh, "local-mcps-rescan: code changed");
+    this.log.info({ mcp: fresh.name, running }, `drop-in code changed — ${running ? "restarted" : "re-described"}`);
+    if (!running) await this.emitDiscoveredFor(fresh.name);
+  }
+
+  private async emitDiscoveredFor(name: string): Promise<number | void> {
+    const gated = this.gatedSpecsByName.get(name);
+    try {
+      const offer = await this.offerOf(name);
+      const envKeys = offer?.envKeys ?? await this.supervisor.fetchEnvKeys(name);
+      const conn = this.servers.get(name);
+      const tools = offer?.tools ?? (conn ? (await conn.listTools()).map((t) => ({ name: t.name, description: t.description })) : []);
+      this.approval.emitDiscovered({
+        mcp: name,
+        envKeys,
+        tools,
+        author: gated?.author ?? "customer",
+        source: gated?.source ?? "dropin",
+        ...(gated?.kind ? { kind: gated.kind } : {}),
+      });
+      return tools.length;
+    } catch (err) {
+      this.log.warn({ name, err: err as Error }, `mcp-discovered emission for drop-in failed`);
     }
   }
 

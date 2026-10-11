@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -308,3 +308,79 @@ describe("LocalMcpsCoordinator — rescan reconciles drop-in folders", () => {
     expect(onApplied).not.toHaveBeenCalled();
   });
 });
+
+// Plan §10 q6, hybrid discovery: under lazy spawn the coordinator registers
+// an added folder without starting it, and — given a fingerprint — reports a
+// known folder whose code changed.
+describe("LocalMcpsCoordinator — lazy add and code-change detection", () => {
+  let dropinRoot: string;
+  beforeEach(() => {
+    dropinRoot = mkdtempSync(join(tmpdir(), "mcp-l2-lazy-"));
+    process.env.MCP_DROPIN_DIR = dropinRoot;
+  });
+  afterEach(() => {
+    delete process.env.MCP_DROPIN_DIR;
+    rmSync(dropinRoot, { recursive: true, force: true });
+  });
+
+  // Fingerprint = the stub file's text, enough to see an edit.
+  const fp = (dir: string) => require_text(join(dir, "tools", "foo.ts"));
+  function require_text(path: string): string {
+    try { return readFileSync(path, "utf8"); } catch { return ""; }
+  }
+
+  it("startOnAdd:false registers without starting and takes the hook's tool count", async () => {
+    makeDropinFolder(dropinRoot, "orders");
+    const { fake, supervisor } = buildSupervisor();
+    const coord = new LocalMcpsCoordinator({
+      send: () => undefined, supervisor, log: fakeLogger(), yamlNames: new Set(),
+      startOnAdd: false,
+      onMcpAdded: () => 3,
+    });
+    const ack = await coord.rescan();
+    expect(fake.started).toEqual([]);
+    expect(fake.registered.has("orders")).toBe(true);
+    expect(ack.added).toEqual([{ name: "orders", toolsCount: 3 }]);
+  });
+
+  it("a changed folder calls onMcpChanged once; an unchanged one never", async () => {
+    makeDropinFolder(dropinRoot, "orders");
+    makeDropinFolder(dropinRoot, "inventory");
+    const changed: string[] = [];
+    const { supervisor } = buildSupervisor();
+    const coord = new LocalMcpsCoordinator({
+      send: () => undefined, supervisor, log: fakeLogger(), yamlNames: new Set(),
+      startOnAdd: false,
+      fingerprint: fp,
+      onMcpChanged: (spec) => { changed.push(spec.name); },
+    });
+    await coord.rescan();
+    writeFileSync(join(dropinRoot, "orders", "tools", "foo.ts"), "// edited");
+    const ack = await coord.rescan();
+    expect(changed).toEqual(["orders"]);
+    expect(ack.unchanged.sort()).toEqual(["inventory", "orders"]);
+    await coord.rescan();
+    expect(changed).toEqual(["orders"]);
+  });
+
+  it("`initial` seeds the baseline, so an edit made before the first Refresh is seen", async () => {
+    makeDropinFolder(dropinRoot, "orders");
+    const { supervisor } = buildSupervisor([
+      { name: "orders", process: "stopped", credsSource: "none", restartCount: 0, toolsCount: 0, source: "local" },
+    ]);
+    const { discoverDropins } = await import("../../src/dropin.js");
+    const initial = discoverDropins({ yamlNames: new Set() });
+    const changed: string[] = [];
+    // Built at workspace construction, straight after the boot scan…
+    const coord = new LocalMcpsCoordinator({
+      send: () => undefined, supervisor, log: fakeLogger(), yamlNames: new Set(),
+      fingerprint: fp, initial,
+      onMcpChanged: (spec) => { changed.push(spec.name); },
+    });
+    // …then the folder is edited before anyone clicks Refresh.
+    writeFileSync(join(dropinRoot, "orders", "tools", "foo.ts"), "// edited before refresh");
+    await coord.rescan();
+    expect(changed).toEqual(["orders"]);
+  });
+});
+
