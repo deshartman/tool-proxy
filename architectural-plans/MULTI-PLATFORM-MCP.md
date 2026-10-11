@@ -486,6 +486,15 @@ This follows the "docs before merge" rule.
 
 ## 10. Open questions (shim side)
 
+> **Decided by the user 2026-10-12:**
+> 1. Package home — `protocol/` in this repo (D17). Stands.
+> 2. Registry — public npm, `@gtmi` scope. Stands.
+> 3. 1.x window — leave as built: 2.x shim, falls back to 1.x only for a controller that cannot do 2.x.
+> 4. Regenerate id — redials immediately. Stands as built.
+> 5. Demo MCPs — keep them in the production image.
+> 6. Discovery cost — **hybrid, implemented**: connect-time discovery stays (cached); the controller's Refresh describes a new folder without starting it, and re-describes (or, if running, restarts) a folder whose code fingerprint changed. Skipping connect-time discovery entirely is left as a later option for very large folder counts.
+> 7. Process-wide concurrency cap — leave for now; per-workspace `max_concurrent_calls` (default 64) only.
+
 1. **Protocol package home.** Should it be a second workspace in this repo (proposed), or its own repo? A second workspace keeps the schema next to the code that emits it. Its own repo makes the platform's dependency cleaner and avoids publishing anything from a repo that ships a carve-out to customers (`feature/customer-repo-carve-out`): does the carve-out need to exclude `protocol/`, or include it?
 2. **Which registry.** The internal npm registry, or GitHub Packages? This is an org-policy question, like the CI notes in CLAUDE.md about `allowed_actions`.
 3. **The 1.x window.** How long does a 2.0 shim keep accepting the bare `<server>.<tool>` form against a 1.x platform, if at all? The proposal is "only when the platform sent no `supportedTunnelProtocol`", meaning an old platform, and dropping it once both sides ship 2.0.
