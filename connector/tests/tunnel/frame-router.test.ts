@@ -111,6 +111,7 @@ function buildHarness(initialToken?: string, opts?: { withInspector?: boolean })
     reconnect: fakeReconnect as unknown as FrameRouterOpts["reconnect"],
     log: fakeLog as unknown as FrameRouterOpts["log"],
     connectorName: "test-connector",
+    ourTunnelProtocol: "3.0",
   };
 
   return {
@@ -246,6 +247,37 @@ describe("frame-router register-ack error sub-table", () => {
     // Error-level log (this is a fault that needs operator action).
     expect(h.log.error).toHaveLength(1);
     expect(h.log.error[0].msg).toContain("test-connector");
+  });
+
+  // Plan §2.4. Sticky like the default branch, but the inspector message names
+  // BOTH versions — the default would show only the controller's own text.
+  it("marks rejected on unsupported_tunnel_protocol and names both versions", () => {
+    const h = buildHarness("tok_intact_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    h.router({
+      type: "register-ack",
+      error: { code: "unsupported_tunnel_protocol", message: "no" },
+      supportedTunnelProtocol: { min: "2.0", max: "2.3" },
+    });
+
+    expect(h.reconnect.rejectedCount).toBe(1);
+    expect(h.tokenClearedCount).toBe(0);
+    expect(h.reconnect.acceptedCount).toBe(0);
+    const identity = h.inspector.identityCalls[0] as { kind: string; reason: string; message: string };
+    expect(identity).toEqual({
+      kind: "rejected",
+      reason: "unsupported_tunnel_protocol",
+      message: "controller requires tunnel protocol 2.0–2.3; this connector speaks 3.0",
+    });
+    expect(h.log.error).toHaveLength(1);
+    expect(h.log.error[0].msg).toContain("auto-reconnect suppressed");
+  });
+
+  it("unsupported_tunnel_protocol without a range still names our version", () => {
+    const h = buildHarness();
+    h.router({ type: "register-ack", error: { code: "unsupported_tunnel_protocol", message: "too new" } });
+    expect(h.reconnect.rejectedCount).toBe(1);
+    const identity = h.inspector.identityCalls[0] as { message: string };
+    expect(identity.message).toBe("controller does not support tunnel protocol 3.0 (too new)");
   });
 
   it("marks rejected on an unknown error code (fail-safe default for forward compat)", () => {

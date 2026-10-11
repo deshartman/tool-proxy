@@ -68,6 +68,9 @@ const logLine = log.info.bind(log);
 // not an env var: switching what every connector sends on the wire is a
 // release decision reviewed in a commit, not a knob an operator flips.
 const SPEAK_MAJOR: 1 | 2 = 2;
+// What `register.tunnelProtocol` carries. One value for the frame and the
+// rejection message, so the two can never name different versions.
+const OUR_TUNNEL_PROTOCOL = SPEAK_MAJOR >= 2 ? LATEST_PROTOCOL_VERSION : PROTOCOL_VERSION;
 
 export async function boot(): Promise<void> {
   await bootFromDb();
@@ -731,6 +734,7 @@ async function bootFromDb(): Promise<void> {
       reconnect: reconnectCtl,
       log,
       connectorName: row.connectorName,
+      ourTunnelProtocol: OUR_TUNNEL_PROTOCOL,
     });
     pendingTunnel.onframe = (frame) => {
       if (frame.type === "creds-response") { creds.handleResponse(frame); return; }
@@ -822,7 +826,7 @@ async function bootFromDb(): Promise<void> {
       // Advertise what we can SPEAK. shimId goes out only when we speak 2.x;
       // 1.0.1 controllers tolerate it, but a 1.0.0 controller's strict parse
       // would not, so a 1.x-only connector never sends it.
-      tunnelProtocol: SPEAK_MAJOR >= 2 ? LATEST_PROTOCOL_VERSION : PROTOCOL_VERSION,
+      tunnelProtocol: OUR_TUNNEL_PROTOCOL,
       ...(SPEAK_MAJOR >= 2 ? { shimId } : {}),
       ...(currentToken ? { registrationToken: currentToken } : {}),
     });

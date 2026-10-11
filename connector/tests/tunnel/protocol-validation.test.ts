@@ -115,6 +115,7 @@ describe("tunnel-protocol handshake", () => {
       reconnect: { markAccepted: noop, markRejected: noop } as unknown as FrameRouterOpts["reconnect"],
       log: { info: noop, warn: noop, error: noop } as unknown as FrameRouterOpts["log"],
       connectorName: "test",
+      ourTunnelProtocol: "2.0",
     });
     router({ type: "register-ack", accepted: true, supportedTunnelProtocol: { min: "1.0", max: "1.4" } });
     expect(ranges).toEqual([{ min: "1.0", max: "1.4" }]);
@@ -131,6 +132,7 @@ describe("tunnel-protocol handshake", () => {
       reconnect: { markAccepted: noop, markRejected: noop } as unknown as FrameRouterOpts["reconnect"],
       log: { info: noop, warn: noop, error: noop } as unknown as FrameRouterOpts["log"],
       connectorName: "test",
+      ourTunnelProtocol: "2.0",
     });
     router({ type: "register-ack", accepted: true });
     expect(ranges).toEqual([]);

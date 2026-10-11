@@ -9,7 +9,7 @@
 //   * webhook-allocate-ack → webhook registry
 //   * webhook              → webhook registry
 //   * register-ack         → either an error sub-handler (unknown_registration_token,
-//                           name_taken, or generic) or the success path
+//                           name_taken, unsupported_tunnel_protocol, or generic) or the success path
 //                           (mark accepted, mark webhooks tunnel-open, persist
 //                           freshly-minted token, stamp inspector header).
 // Other frame types (heartbeat, rpc, manifest-delta, goodbye) are no-ops here
@@ -20,6 +20,7 @@ import type { Logger } from "../logger.js";
 import type { ReconnectController } from "./reconnect.js";
 import type { WebhookRegistry } from "./webhook-registry.js";
 import type { InboundTunnelFrame, RegisterAckFrame } from "./frames.js";
+import { UNSUPPORTED_TUNNEL_PROTOCOL } from "@gtmi/toolproxy-protocol";
 
 export interface FrameRouterOpts {
   webhooks: WebhookRegistry;
@@ -47,6 +48,9 @@ export interface FrameRouterOpts {
   // Connector name — surfaced in the name_taken error path so the operator
   // log carries the value they need to fix.
   connectorName: string;
+  // The tunnelProtocol this connector sent on register — named in the
+  // unsupported_tunnel_protocol message beside the controller's range.
+  ourTunnelProtocol: string;
 }
 
 export function createFrameRouter(opts: FrameRouterOpts): (frame: InboundTunnelFrame) => void {
@@ -153,6 +157,20 @@ function handleRegisterAckError(frame: RegisterAckFrame, opts: FrameRouterOpts):
         message: `name "${opts.connectorName}" already bound to another connector row`,
       });
       return;
+    case UNSUPPORTED_TUNNEL_PROTOCOL: {
+      // The controller refuses our major (plan §2.4). Sticky: a redial sends
+      // the same version and is refused again — the fix is upgrading one side.
+      // The default branch would also stop, but with the controller's message
+      // only; this one names both versions, which is what the operator needs.
+      const range = frame.supportedTunnelProtocol;
+      const message = range
+        ? `controller requires tunnel protocol ${range.min}–${range.max}; this connector speaks ${opts.ourTunnelProtocol}`
+        : `controller does not support tunnel protocol ${opts.ourTunnelProtocol}${error.message ? ` (${error.message})` : ""}`;
+      opts.log.error({ code: error.code, ours: opts.ourTunnelProtocol, theirs: range }, `${message} — upgrade the older side. auto-reconnect suppressed.`);
+      opts.reconnect.markRejected();
+      opts.inspector?.setIdentity({ kind: "rejected", reason: error.code, message });
+      return;
+    }
     default:
       opts.log.error({ code: error.code, message: error.message }, `register-ack rejected`);
       opts.reconnect.markRejected();
