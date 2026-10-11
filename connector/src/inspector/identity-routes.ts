@@ -79,7 +79,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BodyTooLargeError, readJsonBody } from "./read-body.js";
-import { verifyAccessToken, type JwtVerifierConfig } from "../auth/jwt.js";
+import { verifyAccessToken, type AccessTokenClaims, type JwtVerifierConfig } from "../auth/jwt.js";
 import type { ControllerApiCoordinator } from "../tunnel/controller-api-coordinator.js";
 
 export interface IdentityRoutesDeps {
@@ -87,8 +87,12 @@ export interface IdentityRoutesDeps {
   // rationale as the outbound and memory routes: the operator can set/clear the
   // federated trusted-issuer config without a restart, and the coordinator is
   // rebuilt per tunnel dial (undefined between reconnects).
-  getVerifierConfig: () => Promise<JwtVerifierConfig>;
-  getCoordinator: () => ControllerApiCoordinator | undefined;
+  getVerifierConfig: (token: string) => Promise<JwtVerifierConfig>;
+  // Phase 6 (§5.6): the verified claims select the workspace — a self-issued
+  // token's `sub` names a client bound to one controller entry, a federated
+  // token's `iss` + `aud` name the entry that trusts it. Undefined when that
+  // workspace has no live tunnel, or the credential is bound to none.
+  getCoordinator: (claims: AccessTokenClaims) => ControllerApiCoordinator | undefined | Promise<ControllerApiCoordinator | undefined>;
 }
 
 const LIST_ACTION = "identity.list";
@@ -135,7 +139,7 @@ async function authenticate(
   req: IncomingMessage,
   res: ServerResponse,
   deps: IdentityRoutesDeps,
-): Promise<string | undefined> {
+): Promise<AccessTokenClaims | undefined> {
   const header = req.headers["authorization"];
   const auth = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
   const m = /^Bearer\s+(.+)$/i.exec(auth ?? "");
@@ -144,12 +148,12 @@ async function authenticate(
     sendJson(res, 401, { error: { code: "not_authorized", message: "missing bearer token" } });
     return undefined;
   }
-  const verified = await verifyAccessToken(token, await deps.getVerifierConfig());
+  const verified = await verifyAccessToken(token, await deps.getVerifierConfig(token));
   if (!verified.valid || !verified.claims) {
     sendJson(res, 401, { error: { code: "not_authorized", message: verified.error ?? "invalid bearer token" } });
     return undefined;
   }
-  return verified.claims.sub;
+  return verified.claims;
 }
 
 function isIdentityChannel(v: unknown): v is (typeof IDENTITY_CHANNELS)[number] {
@@ -161,8 +165,9 @@ export async function handleIdentityList(
   res: ServerResponse,
   deps: IdentityRoutesDeps,
 ): Promise<void> {
-  const clientId = await authenticate(req, res, deps);
-  if (!clientId) return;
+  const claims = await authenticate(req, res, deps);
+  if (!claims) return;
+  const clientId = claims.sub;
 
   let body: IdentityListBody;
   try {
@@ -225,7 +230,7 @@ export async function handleIdentityList(
     Math.max(LIST_MIN_TIMEOUT_MS, typeof body.timeoutMs === "number" ? body.timeoutMs : LIST_DEFAULT_TIMEOUT_MS),
   );
 
-  const coordinator = deps.getCoordinator();
+  const coordinator = await deps.getCoordinator(claims);
   if (!coordinator) {
     sendJson(res, 503, { error: { code: "tunnel_unavailable", message: "no tunnel connected" } });
     return;

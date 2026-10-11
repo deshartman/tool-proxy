@@ -55,8 +55,9 @@
 //      doesn't change at runtime; the closure capture is intentional.
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { PortAllocator } from "./port-allocator.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createServer, createConnection } from "node:net";
+import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -275,6 +276,16 @@ export interface SupervisorOpts {
   // listener is owned by the connection — no explicit deregister on
   // close. Stays optional so tests / older boot paths can omit it.
   onConnect?: (name: string, connection: McpServerConnection) => void;
+  // MCP_STATE_DIR, the write contract (MULTI-PLATFORM-MCP §5.3): the one
+  // directory a child may write, per (workspace, MCP). Called before each
+  // spawn and expected to create the directory. Absent → no MCP_STATE_DIR is
+  // injected (single-supervisor tests, older boot paths).
+  stateDirFor?: (mcp: string) => string;
+  // Child-port allocator. Share ONE across every supervisor in the process:
+  // two supervisors with private reservations can both probe the same free
+  // port, and the second child then fails EADDRINUSE at listen. Absent → a
+  // private allocator, which is today's single-supervisor behaviour.
+  ports?: PortAllocator;
 }
 
 export type EnvSource = "controller" | "session" | "dir/.env" | "yaml" | "process.env";
@@ -286,7 +297,7 @@ const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export class McpSupervisor {
   private readonly entries = new Map<string, Entry>();
-  private readonly reservedPorts = new Set<number>();
+  private readonly ports: PortAllocator;
   private readonly opts: Required<Pick<SupervisorOpts, "basePort" | "readyTimeoutMs">> & SupervisorOpts;
   // W-E4: per-supervisor OAuth2 client_credentials provider cache, shared
   // across MCPs. Key = `${tokenUrl} ${clientId} ${clientSecret}`. Two MCPs
@@ -308,6 +319,7 @@ export class McpSupervisor {
       readyTimeoutMs: opts.readyTimeoutMs ?? 15000,
       ...opts,
     };
+    this.ports = opts.ports ?? new PortAllocator();
   }
 
   // Register specs without spawning. Use this when the boot flow wants to
@@ -833,7 +845,7 @@ export class McpSupervisor {
         });
       }
       entry.child = undefined;
-      if (typeof port === "number") this.reservedPorts.delete(port);
+      if (typeof port === "number") this.ports.release(port);
       // Restore the spec to its pre-spawn shape so isType1Spawn() classifies
       // it correctly on the next startEntry. spawnChild() mutates `endpoint`
       // and `__port` at boot; without clearing them here, a creds-driven
@@ -852,8 +864,7 @@ export class McpSupervisor {
 
   private async spawnChild(entry: Entry): Promise<void> {
     const spec = entry.spec;
-    const port = await this.findAvailablePort(this.opts.basePort);
-    this.reservedPorts.add(port);
+    const port = await this.ports.reserve(this.opts.basePort);
 
     const dir = (spec as { dir: string }).dir;
     const dropin = isDropinSpec(spec);
@@ -917,7 +928,7 @@ export class McpSupervisor {
         );
         proc.kill("SIGKILL");
       }
-      this.reservedPorts.delete(port);
+      this.ports.release(port);
       throw new Error(`MCP child "${spec.name}" did not become ready on port ${port} within ${this.opts.readyTimeoutMs}ms: ${(error as Error).message}`);
     }
 
@@ -1069,16 +1080,15 @@ export class McpSupervisor {
     // The child's SDK helper createWebhookEndpoint reads this to prove
     // its identity when subscribing to the inspector's webhook stream.
     out.MCP_WEBHOOK_TOKEN = entry.webhookToken;
+    // Supervisor-owned for the same reason: a workspace's child must write
+    // under ITS workspace's directory, so no user layer may redirect it.
+    if (this.opts.stateDirFor) {
+      out.MCP_STATE_DIR = this.opts.stateDirFor(entry.spec.name);
+      sources.MCP_STATE_DIR = "process.env";
+    }
     return out;
   }
 
-  private async findAvailablePort(from: number): Promise<number> {
-    for (let p = from; p < from + 1000; p++) {
-      if (this.reservedPorts.has(p)) continue;
-      if (await canBind(p)) return p;
-    }
-    throw new Error(`no free port found above ${from}`);
-  }
 }
 
 function nowMs(): number {
@@ -1170,19 +1180,6 @@ function computeCredsSource(entry: { spec: SupervisedSpec; controllerEnv: Record
   if (hasController) return "controller";
   if (hasSession) return "session";
   return entry.spec.env ? "dir/.env" : "none";
-}
-
-// Pre-spawn port probe. The host here MUST match the host the child actually
-// binds — sdk/http-server.ts's LOOPBACK_BIND (MCP-AUDIT #14). It didn't before
-// #1: the probe tested 127.0.0.1 while the child bound all interfaces, so a
-// process holding 192.168.x.x:7100 left the probe reporting free and the child
-// then failed EADDRINUSE at listen. Widening either side alone reopens that gap.
-function canBind(port: number): Promise<boolean> {
-  return new Promise((res) => {
-    const srv = createServer();
-    srv.once("error", () => res(false));
-    srv.listen(port, "127.0.0.1", () => srv.close(() => res(true)));
-  });
 }
 
 function waitForPort(port: number, timeoutMs: number): Promise<void> {

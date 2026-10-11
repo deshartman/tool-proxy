@@ -162,7 +162,9 @@ Two ways to get the connector to pick up a new folder:
 | **Refresh local MCPs** (controller UI: Connector detail → MCPs tab) | Live. No restart needed. |
 | **Refresh local MCPs** (inspector at <http://localhost:9090/>) | Live, local-dev path. |
 
-Both refresh paths re-run the drop-in scanner, register new folders with the supervisor, fan out an `mcp-discovered` frame for each new drop-in, and (after the operator approves) emit a `manifest-delta` so the controller picks up the new tools.
+Both refresh paths re-run the drop-in scanner, register new folders with the supervisor, fan out an `mcp-discovered` frame for each new drop-in, and (after the operator approves) emit a `manifest-delta` so the controller picks up the new tools. A new folder is not started by Refresh — it starts when it is approved.
+
+Refresh also picks up **edits** to a folder it already knows — a changed, added or removed file under `tools/`, `prompts/` or `resources/`. If the MCP is approved and running, its child restarts on the new code and the new tools reach the controller straight away. If it is still pending, the controller's pending entry is updated with the new tool list. An edit you don't Refresh is picked up at the next restart.
 
 ## In-process state is a cache, not the truth
 
@@ -194,10 +196,26 @@ So treat in-process state as a **cache you may lose at any moment**:
   `REFUND_LEDGER` is a `Map` that a restart wipes, and `agentic-memory` writes a
   JSON file precisely so it doesn't.
 
-If you need durability, write it to a file under `/var/lib/mcp-connector/` (the
-one writable path — `/app` ships root-owned and read-only) or put the state
-behind an HTTP call to a service you own, the way `crm` talks to
-`examples/mock-backend/`.
+If you need durability, write it under **`$MCP_STATE_DIR`** — the one place an
+MCP may write. The connector creates it before every spawn and sets the
+variable in your child's env; nothing else is promised to be writable (`/app`
+ships root-owned and read-only). Read it with `envString("MCP_STATE_DIR")` and
+write files inside it, e.g. `join(envString("MCP_STATE_DIR"), "ledger.json")`.
+
+It is **per controller as well as per MCP**:
+`${CONNECTOR_STATE_DIR}/controllers/<controller-entry-id>/<your-mcp>/`. One
+connector can serve several controllers, each in its own workspace with its own
+child of your MCP, and each child gets its own directory — so state you write
+for one controller is never read back for another. Removing a controller from
+the inspector deletes its directory. `agentic-memory` is the worked example: it
+keeps its `.state.json` there.
+
+Two limits to know. The directory is mode 0700, but every workspace runs as the
+same OS user, so it keeps your data off other users and out of a careless
+volume snapshot — it does **not** hide it from a sibling MCP. And it is the
+connector's volume, not a database: for state that must survive the volume, or
+be shared between connectors, put it behind an HTTP call to a service you own,
+the way `crm` talks to `examples/mock-backend/`.
 
 **Reading env is a special case of the same rule, and it is why a module-level
 read is correct** rather than merely convenient: new creds arrive as a *new
@@ -206,20 +224,22 @@ Re-reading `process.env` inside a handler buys nothing.
 
 ## Approval — the operator's one click
 
-In v1.3+, customer-authored drop-in MCPs go through an explicit operator approval gate before the LLM can call their tools. The flow:
+Every MCP the connector runs itself — your drop-ins, the bundled ones and yaml-listed ones — goes through an explicit operator approval gate before the LLM can call its tools. The flow:
 
-1. **You drop the folder.** Connector scans `${MCP_DROPIN_DIR}`, spawns the child, lists tools, but **withholds them from the manifest** (because they're customer-authored and not yet approved).
-2. **Connector emits `mcp-discovered`** with your MCP's name, the `envKeys` list you declared, and the tool names + descriptions.
+1. **You drop the folder.** Connector scans `${MCP_DROPIN_DIR}` and learns what the folder offers by starting it once, briefly, with no controller creds and a throwaway state directory — then stops it. Your MCP is **not running** yet, and its tools are **withheld from the manifest**.
+2. **Connector emits `mcp-discovered`** with your MCP's name, the `envKeys` list you declared, and the tool names + descriptions. (A tool you only register when a cred is present won't appear here — the discovery run has no creds. It appears in the manifest once your MCP is approved and has them.)
 3. **Controller UI surfaces the MCP** in a "Pending approval" lane within the connector detail view's custom-MCPs section. The operator sees the tool names + descriptions and an inline form for the `envKeys` you declared.
 4. **Operator clicks Approve.** They paste env values inline (or skip — they can be added later via Edit creds).
-5. **Controller sends `mcp-enable`** to the connector. The connector merges the env, restarts the child, adds the tools to the manifest, emits a `manifest-delta`.
+5. **Controller sends `mcp-enable`** to the connector. The connector **starts your child** (this is its first real start, so the first call after an approval can take about a second longer), merges the env, adds the tools to the manifest, emits a `manifest-delta`.
 6. **Tools light up in the LLM's view.** Now callable via the controller's normal procedure dispatch.
 
 After this one-time approval, ongoing creds rotation goes through the existing **Edit creds** path (NOT through repeated approvals). The controller persists the approval row keyed on `(connectorId, mcp-name)`. After every connector restart, the controller automatically re-sends `mcp-enable` — no operator action needed for the replay.
 
 **Disable.** The operator can click **Disable** at any time. The connector drops the tools from the manifest immediately, but the child process keeps running — re-enabling is sub-second (no spawn cost).
 
-**What gates and what doesn't.** Only customer drop-ins (folders under `${MCP_DROPIN_DIR}` with `author: "customer"`) go through the gate. Yaml-listed Type 1 hand-written MCPs and Twilio-bundled MCPs auto-enable as before — the yaml listing IS the acceptance for those. 3rd-party MCPs (added via the controller's New 3rd Party MCP button) are also unaffected — they're already operator-authored.
+**Per controller.** One connector can serve several controllers. Approval is per controller: an MCP approved by one is still pending for another, and each controller that approves it gets its own child, with its own creds and its own `$MCP_STATE_DIR`.
+
+**What gates and what doesn't.** Customer drop-ins, Twilio-bundled MCPs and yaml-listed MCPs all go through the gate. 3rd-party MCPs (added via the controller's New 3rd Party MCP button) are not gated — adding one is already the operator's consent.
 
 **Wire details:** see [MCP-PROTOCOL.md §"v1.3 — Customer drop-in approval gate"](MCP-PROTOCOL.md).
 

@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 const here = fileURLToPath(new URL(".", import.meta.url));
 export default defineConfig({
   test: {
-    include: ["connector/tests/**/*.test.ts"],
+    include: ["connector/tests/**/*.test.ts", "protocol/tests/**/*.test.ts"],
     environment: "node",
     unstubEnvs: true,
   },

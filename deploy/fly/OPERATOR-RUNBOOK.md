@@ -173,7 +173,7 @@ Save. Inspector transitions `closed` → `connecting` → **`open`** (green pill
 
 ```bash
 # Runs the doctor preflight inside the Machine — exit 0 = all green.
-fly ssh console -a mcp-connector-acme-prod -C "mcp-connector doctor"
+fly ssh console -a mcp-connector-acme-prod -C "sh -c 'cd /app/connector && node dist/index.js doctor'"
 ```
 
 You should also see in the inspector:

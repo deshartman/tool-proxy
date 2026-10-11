@@ -22,12 +22,17 @@ WORKDIR /repo
 # graph (per CLAUDE.md) — their deps install in a separate step below so
 # their node_modules don't bloat the connector layer.
 COPY package.json package-lock.json ./
+COPY protocol/package.json protocol/
 COPY connector/package.json connector/
 
 RUN npm ci --workspaces --include-workspace-root
 
 # Now the source.
 COPY tsconfig.base.json ./
+# @gtmi/toolproxy-protocol is a workspace sibling the connector depends on.
+# npm links it into node_modules as a symlink to ../../protocol, so its source
+# (for the build) and its dist (for the runtime, below) must both be present.
+COPY protocol protocol
 COPY connector connector
 
 # Note: prior versions copied .env.example + connector.yaml.example here
@@ -106,6 +111,11 @@ COPY --from=node-build /repo/connector/node_modules       ./connector/node_modul
 COPY --from=node-build /repo/connector/dist               ./connector/dist
 COPY --from=node-build /repo/connector/public             ./connector/public
 COPY --from=node-build /repo/connector/package.json       ./connector/package.json
+# node_modules/@gtmi/toolproxy-protocol is a workspace symlink to ../../protocol.
+# Without these two lines that link dangles in the image and the connector
+# fails at its first import. dist + package.json only — no source, no tests.
+COPY --from=node-build /repo/protocol/dist                ./protocol/dist
+COPY --from=node-build /repo/protocol/package.json        ./protocol/package.json
 COPY --from=node-build /repo/package.json                          ./package.json
 
 # Bundled MCPs (Twilio-authored, Type 1 Node). The customer's runtime config

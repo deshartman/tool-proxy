@@ -70,7 +70,12 @@ export function isEmptyDelta(delta: ManifestDelta): boolean {
     && (delta.changedResources ?? []).length === 0
     && (delta.addedResourceTemplates ?? []).length === 0
     && (delta.removedResourceTemplates ?? []).length === 0
-    && (delta.changedResourceTemplates ?? []).length === 0;
+    && (delta.changedResourceTemplates ?? []).length === 0
+    // 2.x server lifecycle. A server with NO tools appearing or vanishing
+    // produces a delta carrying only these; without them here it would read as
+    // empty and never be sent, so the controller would not learn of it.
+    && (delta.addedServers ?? []).length === 0
+    && (delta.removedServers ?? []).length === 0;
 }
 
 function flattenTools(manifest: ToolManifest): Map<string, { server: string; tool: ToolDescriptor }> {
@@ -198,4 +203,44 @@ function schemasEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return a === b;
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// 2.x server lifecycle (MULTI-PLATFORM-MCP §2.5a). A server present in `next`
+// but not `prev` is ADDED, with the metadata the receiver needs to label it; a
+// server present in `prev` but not `next` is REMOVED. Kept separate from
+// diffManifest so the 1.x delta is untouched, and pure so it is unit-testable.
+export function diffServers(prev: ToolManifest, next: ToolManifest): {
+  addedServers: NonNullable<ManifestDelta["addedServers"]>;
+  removedServers: string[];
+} {
+  const before = new Set(prev.servers.map((s) => s.name));
+  const after = new Set(next.servers.map((s) => s.name));
+  const addedServers = next.servers
+    .filter((s) => !before.has(s.name))
+    .map((s) => ({
+      name: s.name,
+      transport: s.transport,
+      author: s.author,
+      ...(s.protocolVersion !== undefined ? { protocolVersion: s.protocolVersion } : {}),
+    }));
+  const removedServers = prev.servers.filter((s) => !after.has(s.name)).map((s) => s.name);
+  return { addedServers, removedServers };
+}
+
+// Attach server lifecycle to a delta for a 2.x session; leave it untouched for
+// 1.x. Empty arrays are omitted so a 2.x delta with no server change is the
+// same shape as a 1.x one.
+export function withServerLifecycle(
+  delta: ManifestDelta,
+  prev: ToolManifest,
+  next: ToolManifest,
+  sessionMajor: number,
+): ManifestDelta {
+  if (sessionMajor < 2) return delta;
+  const { addedServers, removedServers } = diffServers(prev, next);
+  return {
+    ...delta,
+    ...(addedServers.length > 0 ? { addedServers } : {}),
+    ...(removedServers.length > 0 ? { removedServers } : {}),
+  };
 }

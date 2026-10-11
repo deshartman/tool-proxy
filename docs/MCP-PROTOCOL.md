@@ -967,9 +967,9 @@ Two frames, both opaque to the customer:
 
 No payload. The connector decides what's there; the controller just triggers. Sent when the operator clicks **Refresh local MCPs** in the controller UI (Connector detail → MCPs tab). The connector re-runs `discoverDropins({yamlNames})` against `MCP_DROPIN_DIR`, diffs against the running supervisor entries, then:
 
-- For added entries: `supervisor.registerOne(spec, { source: "local" }) → startOne(name)` and fan out a `creds-request` for that MCP.
+- For added entries: `supervisor.registerOne(spec, { source: "local" })` and an `mcp-discovered` for that MCP. The child is **not** started — it is described by a one-off scratch spawn, and starts on its `mcp-enable` like every gated MCP (MULTI-PLATFORM-MCP Phase 6 lazy spawn). Before Phase 6 the child was started here.
 - For removed entries: `supervisor.unregister(name)`.
-- For changed entries (e.g. `dir/.env` edited or tools added): `supervisor.replaceSpec(name, newSpec)`.
+- For changed entries — a known folder whose code (anything under `tools/`, `prompts/`, `resources/`) hashes differently from the last scan: the spec is replaced. If the child is running it restarts, and its new tool list arrives as a `manifest-delta`. If it is not running, the folder is re-described and a **second `mcp-discovered`** for the same `mcp` carries the new `tools` / `envKeys` — the controller MUST treat it as an upsert of the pending entry. A changed folder is still listed under `unchanged` in the ack, which describes the folder set.
 
 Manifest changes ride the existing `manifest-delta` path. The dedicated `local-mcps-rescan-ack` carries only the diff summary so the controller's UI can show "Done — N added, M removed."
 
@@ -987,7 +987,7 @@ Manifest changes ride the existing `manifest-delta` path. The dedicated `local-m
 
 | Field | Type | Notes |
 |---|---|---|
-| `added` | `{name, toolsCount}[]` | New folders accepted. `toolsCount` is the post-spawn `tools/list` size. |
+| `added` | `{name, toolsCount}[]` | New folders accepted. `toolsCount` is the folder's `tools/list` size as discovered (the child is not running yet). |
 | `removed` | `string[]` | Folders no longer present. Names — drop-ins don't have `mcpId`. |
 | `unchanged` | `string[]` | Folders that scanned identically to the prior pass. |
 | `errors` | `{name, error}[]` | Folders the connector tried to add but couldn't (spawn failed, port exhausted, etc). Per-folder isolation: one bad drop-in does not abort the rescan. |
@@ -1145,13 +1145,14 @@ Approval state lives **controller-only**. After every `register-ack`, the contro
 
 ### What gates and what doesn't
 
-| MCP type | Source field | Gated in v1.3? |
-|---|---|---|
-| Customer drop-in | `source: "local"` (`__dropin: true` marker) | **YES** — requires `mcp-enable` |
-| Yaml-listed Type 1 hand-written | `source: "yaml"` | NO — yaml IS the acceptance |
-| 3rd-party Type 2 (controller-pushed) | `source: "controller-config"` | NO — already operator-authored |
+| MCP type | Wire `source` on `mcp-discovered` | Gated in v1.3 | Gated since Phase 2c |
+|---|---|---|---|
+| Customer drop-in | `"dropin"` (was `"local"`) | **YES** | **YES** |
+| Twilio-bundled (incl. demos, `kind: "example"`) | `"bundled"` | NO | **YES** — ships inactive (D3) |
+| Yaml-listed Type 1 hand-written | `"yaml"` | NO | **YES** |
+| 3rd-party Type 2 (controller-pushed) | — (never sent) | NO | NO — pushing it is already the operator's consent |
 
-The gate predicate on the connector side is exactly `author === "customer"` AND `source === "local"`. Anything else flows through unchanged.
+Since Phase 2c the connector-side rule is: **gated unless controller-pushed.** The v1.3 predicate (`author === "customer"` AND `source === "local"`) is retired. The wire `source` is not the supervisor's internal `McpStatus.source`, which still reads `"local"` for every scanned folder, bundled or drop-in.
 
 ### `mcp-discovered` (connector → controller)
 
@@ -1159,8 +1160,9 @@ The gate predicate on the connector side is exactly `author === "customer"` AND 
 interface McpDiscoveredFrame {
   type: "mcp-discovered";
   mcp: string;                    // folder name; stable identity across reconnects
-  author: "customer";             // always — bundled / yaml / 3rd-party MCPs don't go through this gate
-  source: "local";                // always — co-occurs with author:"customer" but kept distinct for clarity
+  author: string;                 // "twilio" (under MCP_BUNDLED_DIR) | "customer" today; typed open for forward-compat
+  source: "bundled" | "dropin" | "yaml"; // how it got here — 3rd-party (Type 2) MCPs never go through this gate
+  kind?: "example";               // demos only (an `.example` marker in the MCP's folder); absent otherwise
   envKeys: string[];              // de-duped union from the child's /envkeys endpoint
   tools: Array<{
     name: string;                 // e.g. "issue_refund"
@@ -1170,10 +1172,12 @@ interface McpDiscoveredFrame {
 }
 ```
 
+> **Widened in the gated-everything change (MULTI-PLATFORM-MCP Phase 2c).** Every MCP the connector runs itself is now gated — bundled (Twilio-shipped, demos included), customer drop-in and yaml-listed. Only controller-pushed (Type 2) MCPs bypass it. Before this change only customer drop-ins were gated, and the frame carried the literals `author: "customer"`, `source: "local"`. **Back-compat:** controllers MUST accept `source: "local"` as a synonym for `"dropin"` from older connectors, and MUST treat a connector as gated once it sends any of `"bundled" | "dropin" | "yaml"` — so a controller's legacy auto-approve fallback (below) stops for that connector.
+
 Sent at two emission points:
 
-1. **Boot.** After `register` is sent (so the controller has a `connectorId` to scope against), one frame per drop-in MCP discovered on disk. The connector emits this for ALL drop-ins, including ones the controller may have approved previously — the connector has no persistent approval state, and trusts the controller to reply `mcp-enable` for the ones it has on file.
-2. **Runtime rescan.** When [`LocalMcpsCoordinator.rescan()`](../connector/src/tunnel/local-mcps-coordinator.ts) discovers a new drop-in folder and spawns its child, one frame per added MCP.
+1. **Boot.** After `register` is sent (so the controller has a `connectorId` to scope against), one frame per gated MCP — bundled, drop-in and yaml. The connector emits this for ALL drop-ins, including ones the controller may have approved previously — the connector has no persistent approval state, and trusts the controller to reply `mcp-enable` for the ones it has on file.
+2. **Runtime rescan.** When [`LocalMcpsCoordinator.rescan()`](../connector/src/tunnel/local-mcps-coordinator.ts) discovers a new drop-in folder, one frame per added MCP — and, again, one frame for a known folder whose code changed while it was not running. A repeat `mcp-discovered` for an `mcp` the controller already holds is an **upsert** of its tools and envKeys, never a duplicate to drop.
 
 **Deliberately NOT in the payload:**
 - `inputSchema` / `outputSchema` — the actual call surface; withheld until approval.
@@ -1187,7 +1191,7 @@ Sent at two emission points:
   "type": "mcp-discovered",
   "mcp": "crm",
   "author": "customer",
-  "source": "local",
+  "source": "dropin",
   "envKeys": ["MOCK_CUSTOMERS_URL"],
   "tools": [
     { "name": "get_customer",  "description": "Returns the customer's identity profile keyed by phone." },
@@ -1310,7 +1314,7 @@ Error — controller approving something that isn't a drop-in:
 [Connector → Controller]   register { manifest: { servers: [...], excluding crm } }
 [Controller → Connector]   register-ack { connectorId: "conn_abc" }
 
-[Connector → Controller]   mcp-discovered { mcp: "crm", author: "customer", source: "local", envKeys: ["MOCK_CUSTOMERS_URL"], tools: [...], discoveredAt: "..." }
+[Connector → Controller]   mcp-discovered { mcp: "crm", author: "customer", source: "dropin", envKeys: ["MOCK_CUSTOMERS_URL"], tools: [...], discoveredAt: "..." }
 
 [Controller UI]            renders crm in "Pending approval" lane
                            operator clicks Approve, pastes MOCK_CUSTOMERS_URL value

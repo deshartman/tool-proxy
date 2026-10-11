@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,7 +39,8 @@ const CSP_POLICY = [
 
 describe("Inspector static-asset security headers", () => {
   let server: Server;
-  const port = 9093;
+  // Port 0: the OS picks a free one, so the suite runs beside a live connector.
+  let port: number;
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
@@ -62,7 +64,10 @@ describe("Inspector static-asset security headers", () => {
           res.statusCode = 404; res.end();
         }
       });
-      server.listen(port, "127.0.0.1", () => resolve());
+      server.listen(0, "127.0.0.1", () => {
+        port = (server.address() as AddressInfo).port;
+        resolve();
+      });
     });
   });
 

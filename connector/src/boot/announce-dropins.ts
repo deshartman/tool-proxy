@@ -23,12 +23,38 @@
 // tests/boot/announce-dropins.test.ts.
 
 import type { McpSupervisor } from "../mcp-supervisor.js";
+import type { McpServerSpec } from "../config.js";
+import { authorOf } from "../config.js";
 import type { McpServerConnection } from "../servers/index.js";
 import type { ApprovalCoordinator } from "../tunnel/approval-coordinator.js";
 import type { Logger } from "../logger.js";
 
+// How one gated MCP is described on mcp-discovered. Built once at boot from
+// the scan results and connector.yaml; see gatedSpecsByName in lifecycle.ts.
+export interface GatedDescriptor {
+  name: string;
+  author: string;
+  source: "bundled" | "dropin" | "yaml";
+  kind?: "example";
+}
+
+export function describeGated(
+  spec: McpServerSpec,
+  source: GatedDescriptor["source"],
+): GatedDescriptor {
+  const example = (spec as { __example?: true }).__example === true;
+  return {
+    name: spec.name,
+    author: authorOf(spec),
+    source,
+    ...(example ? { kind: "example" as const } : {}),
+  };
+}
+
 export interface AnnounceDropinsDeps {
-  dropinNames: readonly string[];
+  // Every gated MCP — bundled, drop-in and yaml since Phase 2c. (The name of
+  // this module predates the widening; it announces all of them.)
+  gated: readonly GatedDescriptor[];
   approval: ApprovalCoordinator;
   supervisor: Pick<McpSupervisor, "fetchEnvKeys">;
   servers: Map<string, McpServerConnection>;
@@ -43,12 +69,12 @@ export interface AnnounceDropinsResult {
 export async function announceDiscoveredDropins(
   deps: AnnounceDropinsDeps,
 ): Promise<AnnounceDropinsResult> {
-  const { dropinNames, approval, supervisor, servers, log } = deps;
-  if (dropinNames.length === 0) {
+  const { gated, approval, supervisor, servers, log } = deps;
+  if (gated.length === 0) {
     return { announced: 0, totalDropins: 0 };
   }
   let announced = 0;
-  for (const name of dropinNames) {
+  for (const { name, author, source, kind } of gated) {
     try {
       const envKeys = await supervisor.fetchEnvKeys(name);
       const conn = servers.get(name);
@@ -57,11 +83,14 @@ export async function announceDiscoveredDropins(
         mcp: name,
         envKeys,
         tools: tools.map((t) => ({ name: t.name, description: t.description })),
+        author,
+        source,
+        ...(kind ? { kind } : {}),
       });
       announced += 1;
     } catch (err) {
       log.warn({ name, err: err as Error }, `mcp-discovered emission failed for drop-in`);
     }
   }
-  return { announced, totalDropins: dropinNames.length };
+  return { announced, totalDropins: gated.length };
 }

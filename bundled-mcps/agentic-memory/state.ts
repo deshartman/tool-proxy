@@ -85,11 +85,17 @@ export function aliasKey(channel: Channel, normalisedValue: string): string {
 
 const log = createLogger("agentic-memory:state");
 
-// State file path resolution: env override wins (used by tests to isolate),
-// then default to `<this-folder>/.state.json`. import.meta.url gets us the
-// folder even after tsc compilation into dist/ or when tsx executes the
-// source in-place.
+// State file path resolution, in order:
+//   1. MCP_STATE_DIR — the connector's write contract (MULTI-PLATFORM-MCP
+//      §5.3): one directory per (workspace, MCP), so each controller's memory
+//      lives in its own file. Set by the supervisor on every spawn.
+//   2. AGENTIC_MEMORY_STATE_PATH — the pre-Phase-6 override (the Dockerfile
+//      sets it; tests use it to isolate).
+//   3. `<this-folder>/.state.json` — import.meta.url gets us the folder even
+//      after tsc compilation into dist/ or when tsx executes the source.
 export function defaultStatePath(): string {
+  const stateDir = process.env.MCP_STATE_DIR;
+  if (stateDir && stateDir.length > 0) return resolvePath(stateDir, ".state.json");
   const override = process.env.AGENTIC_MEMORY_STATE_PATH;
   if (override && override.length > 0) return override;
   const here = dirname(fileURLToPath(import.meta.url));

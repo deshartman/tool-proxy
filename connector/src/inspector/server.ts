@@ -62,8 +62,21 @@ export interface HeaderInfo {
 }
 
 // SSE event shape (mirrored as JSON.stringify(payload)).
+// One row of the workspace picker (MULTI-PLATFORM-MCP §5.8). A workspace is
+// one controller entry's tunnel; the inspector holds one view per workspace.
+export interface WorkspaceSummary {
+  id: string;
+  controllerUrl: string;
+  state: DisplayState;
+  // The operator's display name for the entry — what the picker shows. Two
+  // workspaces can share a connectorName or a hostname, never an entry.
+  label?: string;
+  connectorName?: string;
+}
+
 export type InspectorEvent =
-  | { kind: "snapshot"; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; identity?: Identity; header?: HeaderInfo; manifest?: ToolManifest; frames: FrameTap[]; webhooks?: WebhookSummary[]; mcpStatuses?: McpStatus[] }
+  | { kind: "snapshot"; ws?: string; workspaces?: WorkspaceSummary[]; controllerUrl: string; state: DisplayState; reconnect?: ReconnectInfo; identity?: Identity; header?: HeaderInfo; manifest?: ToolManifest; frames: FrameTap[]; webhooks?: WebhookSummary[]; mcpStatuses?: McpStatus[] }
+  | { kind: "workspaces"; workspaces: WorkspaceSummary[] }
   | { kind: "state"; state: DisplayState; reconnect?: ReconnectInfo }
   | { kind: "identity"; identity: Identity }
   | { kind: "header"; header: HeaderInfo }
@@ -160,8 +173,14 @@ export type ToolDispatch = (server: string, tool: string, args: unknown) => Prom
 
 export interface TunnelRouteHandlers {
   handleGetConfig: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  // Phase 6 — the controller list. Optional so single-controller harnesses
+  // that predate it still satisfy the interface.
+  handleListTunnels?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  handleAddTunnel?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  handleRemoveTunnel?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
   handlePostCreds: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
   handleForceReregister: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  handleRegenerateShimId: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 }
 
 export function guardCsrf(req: IncomingMessage, res: ServerResponse): boolean {
@@ -179,7 +198,17 @@ export function guardCsrf(req: IncomingMessage, res: ServerResponse): boolean {
   }
   return true;
 }
-export class Inspector {
+// The id of the view a single-workspace caller gets (tests, and the
+// pre-Phase-6 facade on Inspector). Production names every view by its
+// controller entry id.
+export const DEFAULT_WORKSPACE = "default";
+
+// Everything the inspector knows about ONE tunnel workspace (MULTI-PLATFORM-MCP
+// §5.8): its tunnel state, manifest, frames, MCP statuses, message tap and the
+// actions wired by that workspace. Before Phase 6 these lived on Inspector
+// itself; there is now one per controller entry, and nothing here is shared
+// between workspaces.
+export class WorkspaceView {
   // Caller can wire this to its reconnect routine; invoked when the UI
   // POSTs /reconnect.
   onReconnect?: () => void;
@@ -189,11 +218,209 @@ export class Inspector {
   toolDispatch?: ToolDispatch;
 
   // Per-MCP operator actions (Reload creds / Restart MCP). Wired by the
-  // boot loop; left undefined here means the routes return 503.
+  // workspace; left undefined here means the routes return 503.
   mcpActions?: McpActions;
 
-  // Tunnel routes — only wired in DB mode (bootFromDb). When undefined,
-  // the routes return 404 (env mode).
+  private readonly listeners = new Set<(e: InspectorEvent) => void>();
+  private readonly frames: FrameTap[] = [];
+  private readonly current: InspectorState;
+
+  constructor(
+    readonly id: string,
+    initial: InspectorState,
+    // Told whenever the picker-visible summary changes (state, URL, name).
+    private readonly onSummaryChange: () => void = () => {},
+  ) {
+    this.current = initial;
+  }
+
+  summary(): WorkspaceSummary {
+    return {
+      id: this.id,
+      controllerUrl: this.current.controllerUrl,
+      state: this.current.state,
+      ...(this.label ? { label: this.label } : {}),
+      ...(this.current.header?.connectorName ? { connectorName: this.current.header.connectorName } : {}),
+    };
+  }
+
+  private label: string | undefined;
+
+  // The entry's display name, for the workspace picker.
+  setLabel(label: string): void {
+    if (label === this.label) return;
+    this.label = label;
+    this.onSummaryChange();
+  }
+
+  // Read-only handle for the IPC routes below.
+  webhookRegistry(): WebhookRegistry | undefined {
+    return this.current.webhooks;
+  }
+
+  // The workspace constructs its registry after its view; attach it here.
+  setWebhooks(webhooks: WebhookRegistry): void {
+    this.current.webhooks = webhooks;
+  }
+
+  // Push a fresh webhooks snapshot to all SSE subscribers. Called by the
+  // /internal/webhook routes after they mutate the registry; the registry
+  // itself is intentionally framework-agnostic.
+  publishWebhookSnapshot(): void {
+    const reg = this.current.webhooks;
+    if (!reg) return;
+    this.broadcast({ kind: "webhooks", webhooks: reg.snapshot() });
+  }
+
+  setState(state: WsState): void {
+    this.current.state = state;
+    this.current.reconnect = undefined;
+    this.broadcast({ kind: "state", state });
+    this.onSummaryChange();
+  }
+
+  // Distinct from setState: the connector is in a backoff window between
+  // tunnel attempts. The tunnel itself is undefined here.
+  setReconnecting(info: ReconnectInfo): void {
+    this.current.state = "reconnecting";
+    this.current.reconnect = info;
+    this.broadcast({ kind: "state", state: "reconnecting", reconnect: info });
+    this.onSummaryChange();
+  }
+
+  setManifest(manifest: ToolManifest): void {
+    this.current.manifest = manifest;
+    this.broadcast({ kind: "manifest", manifest });
+  }
+
+  setMcpStatuses(statuses: McpStatus[]): void {
+    this.current.mcpStatuses = statuses;
+    this.broadcast({ kind: "mcpStatuses", mcpStatuses: statuses });
+  }
+
+  setIdentity(identity: Identity): void {
+    this.current.identity = identity;
+    this.broadcast({ kind: "identity", identity });
+  }
+
+  // Update the controller URL shown in the top-of-page header.
+  setControllerUrl(controllerUrl: string): void {
+    this.current.controllerUrl = controllerUrl;
+    this.broadcast({ kind: "controllerUrl", controllerUrl });
+    this.onSummaryChange();
+  }
+
+  // Patch one or more header fields. Caller passes only the fields that
+  // changed; existing values are preserved. Triggers a `header` broadcast
+  // so the UI can update without a full snapshot.
+  setHeader(patch: HeaderInfo): void {
+    const merged: HeaderInfo = this.current.header
+      ? { ...this.current.header, ...patch }
+      : { ...patch };
+    this.current.header = merged;
+    this.broadcast({ kind: "header", header: merged });
+    if (patch.connectorName !== undefined) this.onSummaryChange();
+  }
+
+  recordTap(tap: FrameTap): void {
+    this.frames.push(tap);
+    if (this.frames.length > RING_SIZE) {
+      this.frames.splice(0, this.frames.length - RING_SIZE);
+    }
+    this.broadcast({ kind: "frame", tap });
+  }
+
+  private readonly mcpMessages = new Map<string, McpMessageTap[]>();
+  private static readonly MCP_MESSAGE_RING_SIZE = 500;
+  // Per-entry payload ceiling (MCP-AUDIT #10, secondary). The ring caps ENTRIES,
+  // not bytes — one `salesforce.query` returning a few thousand records is a
+  // single entry, so 500 of those is unbounded memory in a process that is meant
+  // to run for months. Truncating each payload instead of running a byte budget
+  // with eviction keeps the bound deterministic (500 x 32 KB) and the code short.
+  // Costs one JSON.stringify per tap, only when an inspector is attached; the
+  // SSE listeners were already going to serialize the same value.
+  private static readonly MCP_MESSAGE_MAX_PAYLOAD_BYTES = 32 * 1024;
+
+  // Record one tap and broadcast it live. Called from the `record` callback
+  // wrapWithMessageTap() is given, wired in the workspace's onConnect.
+  // Deliberately NOT included in snapshot() — per-MCP logs multiplied across
+  // every connected MCP would bloat every subscriber's snapshot payload,
+  // most of whom never open this pane. Fetched on demand via GET
+  // /mcp/messages instead (see getMcpMessages).
+  recordMcpMessage(tap: McpMessageTap): void {
+    const capped = WorkspaceView.capPayload(tap);
+    const list = this.mcpMessages.get(tap.mcp) ?? [];
+    list.push(capped);
+    if (list.length > WorkspaceView.MCP_MESSAGE_RING_SIZE) {
+      list.splice(0, list.length - WorkspaceView.MCP_MESSAGE_RING_SIZE);
+    }
+    this.mcpMessages.set(tap.mcp, list);
+    this.broadcast({ kind: "mcpMessage", tap: capped });
+  }
+
+  // Replace an over-large payload with a marker naming its real size, so the
+  // pane shows that something was elided rather than silently displaying a
+  // truncated-and-therefore-invalid JSON fragment. An unserializable payload
+  // (a cycle) is passed through untouched — the ring is bounded by count in that
+  // case, and a value JSON.stringify cannot walk is not one we can measure.
+  private static capPayload(tap: McpMessageTap): McpMessageTap {
+    let size: number;
+    try {
+      size = JSON.stringify(tap.payload)?.length ?? 0;
+    } catch {
+      return tap;
+    }
+    if (size <= WorkspaceView.MCP_MESSAGE_MAX_PAYLOAD_BYTES) return tap;
+    return {
+      ...tap,
+      payload: `<elided: ${size} bytes exceeds the ${WorkspaceView.MCP_MESSAGE_MAX_PAYLOAD_BYTES}-byte per-entry cap>`,
+    };
+  }
+
+  // Read-only snapshot of one MCP's current log. Backs GET /mcp/messages.
+  getMcpMessages(mcp: string): McpMessageTap[] {
+    return [...(this.mcpMessages.get(mcp) ?? [])];
+  }
+
+  // Wipe one MCP's log and tell any open pane to clear. Called from the
+  // restart action, BEFORE the child actually restarts.
+  clearMcpMessages(mcp: string): void {
+    this.mcpMessages.delete(mcp);
+    this.broadcast({ kind: "mcpMessagesCleared", mcp });
+  }
+
+  snapshot(): InspectorEvent {
+    return {
+      kind: "snapshot",
+      ws: this.id,
+      controllerUrl: this.current.controllerUrl,
+      state: this.current.state,
+      reconnect: this.current.reconnect,
+      identity: this.current.identity,
+      header: this.current.header,
+      manifest: this.current.manifest,
+      frames: [...this.frames],
+      webhooks: this.current.webhooks?.snapshot(),
+      mcpStatuses: this.current.mcpStatuses,
+    };
+  }
+
+  subscribe(fn: (e: InspectorEvent) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private broadcast(e: InspectorEvent): void {
+    for (const fn of this.listeners) fn(e);
+  }
+}
+
+// The process's one inspector: a registry of workspace views plus the
+// process-level routes (tunnel list, network access, machine API). A
+// workspace-scoped route names its workspace with `?ws=<entryId>`; with
+// exactly one workspace the parameter may be omitted (§5.8).
+export class Inspector {
+  // Tunnel routes. When undefined, the routes return 404.
   // Accessed by startInspector to dispatch tunnel routes.
   tunnelRoutes?: TunnelRouteHandlers;
 
@@ -207,8 +434,8 @@ export class Inspector {
   }
 
   // CONNECTOR-NETWORK-EXPOSURE — POST /oauth/token handler. Optional so
-  // env/test boot paths that don't need the machine API can leave it
-  // unwired (route falls through to 404, same convention as tunnelRoutes).
+  // test boot paths that don't need the machine API can leave it unwired
+  // (route falls through to 404, same convention as tunnelRoutes).
   oauthTokenHandler?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 
   wireOauthToken(handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>): void {
@@ -248,182 +475,134 @@ export class Inspector {
     this.identityListHandler = handlers.handleList;
   }
 
-  private readonly listeners = new Set<(e: InspectorEvent) => void>();
-  private readonly frames: FrameTap[] = []
-  private readonly current: InspectorState;
+  private readonly views = new Map<string, WorkspaceView>();
+  // Subscribers to process-level events (the workspace list, tunnel config
+  // changes). Every SSE stream subscribes here as well as to its own view.
+  private readonly processListeners = new Set<(e: InspectorEvent) => void>();
 
-  constructor(initial: InspectorState) {
-    this.current = initial;
+  // `initial` creates one view under DEFAULT_WORKSPACE — the single-workspace
+  // shape every pre-Phase-6 caller and test uses. Production passes nothing
+  // and adds one view per controller entry.
+  constructor(initial?: InspectorState) {
+    if (initial) this.addWorkspace(DEFAULT_WORKSPACE, initial);
   }
 
-  // Wire tunnel routes — called by bootFromDb after creating the inspector.
+  // Wire tunnel routes — called at boot after creating the inspector.
   // Routes are loopback-only (127.0.0.1) and allow operators to configure
-  // the controller tunnel via the inspector UI.
+  // the controller tunnels via the inspector UI.
   wireTunnelRoutes(routes: TunnelRouteHandlers): void {
     this.tunnelRoutes = routes;
   }
 
-  // Read-only handle for the IPC routes below.
-  webhookRegistry(): WebhookRegistry | undefined {
-    return this.current.webhooks;
+  addWorkspace(id: string, initial: InspectorState): WorkspaceView {
+    const existing = this.views.get(id);
+    if (existing) return existing;
+    const view = new WorkspaceView(id, initial, () => this.publishWorkspaces());
+    this.views.set(id, view);
+    this.publishWorkspaces();
+    return view;
   }
 
-  // Push a fresh webhooks snapshot to all SSE subscribers. Called by the
-  // /internal/webhook routes after they mutate the registry; the registry
-  // itself is intentionally framework-agnostic.
-  publishWebhookSnapshot(): void {
-    const reg = this.current.webhooks;
-    if (!reg) return;
-    this.broadcast({ kind: "webhooks", webhooks: reg.snapshot() });
+  removeWorkspace(id: string): void {
+    if (this.views.delete(id)) this.publishWorkspaces();
   }
 
-  setState(state: WsState): void {
-    this.current.state = state;
-    this.current.reconnect = undefined;
-    this.broadcast({ kind: "state", state });
+  workspace(id: string): WorkspaceView | undefined {
+    return this.views.get(id);
   }
 
-  // Distinct from setState: the connector is in a backoff window between
-  // tunnel attempts. The tunnel itself is undefined here.
-  setReconnecting(info: ReconnectInfo): void {
-    this.current.state = "reconnecting";
-    this.current.reconnect = info;
-    this.broadcast({ kind: "state", state: "reconnecting", reconnect: info });
+  workspaceViews(): WorkspaceView[] {
+    return [...this.views.values()];
   }
 
-  setManifest(manifest: ToolManifest): void {
-    this.current.manifest = manifest;
-    this.broadcast({ kind: "manifest", manifest });
+  workspaceSummaries(): WorkspaceSummary[] {
+    return this.workspaceViews().map((v) => v.summary());
   }
 
-  setMcpStatuses(statuses: McpStatus[]): void {
-    this.current.mcpStatuses = statuses;
-    this.broadcast({ kind: "mcpStatuses", mcpStatuses: statuses });
+  /**
+   * The view a workspace-scoped request names. `ws` given: that view, or
+   * "unknown". Omitted: the only view when there is exactly one; "none" with
+   * zero; "ambiguous" with several — the caller must then name one.
+   */
+  resolveWorkspace(ws: string | null | undefined): WorkspaceView | "unknown" | "none" | "ambiguous" {
+    if (ws) return this.views.get(ws) ?? "unknown";
+    if (this.views.size === 1) return this.views.values().next().value as WorkspaceView;
+    return this.views.size === 0 ? "none" : "ambiguous";
   }
 
-  setIdentity(identity: Identity): void {
-    this.current.identity = identity;
-    this.broadcast({ kind: "identity", identity });
+  /**
+   * Which workspace's child presented this per-MCP bearer token (§5.5). The
+   * token is the child's identity across every workspace, so the lookup asks
+   * each workspace's supervisor. Exactly one match or nothing: two matches is a
+   * 2^-256 event, and failing closed is the only safe answer to it.
+   */
+  resolveWebhookToken(token: string): { view: WorkspaceView; mcp: string } | undefined {
+    const matches: Array<{ view: WorkspaceView; mcp: string }> = [];
+    for (const view of this.views.values()) {
+      const mcp = view.mcpActions?.resolveMcpByWebhookToken?.(token);
+      if (mcp) matches.push({ view, mcp });
+    }
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
-  // Update the controller URL shown in the top-of-page header. The inspector
-  // is constructed with a placeholder URL before the config store's controller
-  // record loads; bootFromDb calls this once the record is available (initial
-  // dial + inspector-triggered configure/rotate).
-  setControllerUrl(controllerUrl: string): void {
-    this.current.controllerUrl = controllerUrl;
-    this.broadcast({ kind: "controllerUrl", controllerUrl });
+  /** True when at least one view can resolve tokens — i.e. production wiring. */
+  hasTokenResolver(): boolean {
+    return this.workspaceViews().some((v) => v.mcpActions?.resolveMcpByWebhookToken !== undefined);
   }
 
-  // Signal the UI's tunnel-config panel (Convo Agent card) to re-fetch
-  // via GET /tunnel/config. Emitted after a successful register-ack under
-  // db mode so the REGISTRATION badge flips from "not registered" to
-  // "bound (len=N)" without requiring a page reload.
+  // Signal the UI's tunnel-config panel to re-fetch via GET
+  // /internal/tunnel/config. Emitted after a successful register-ack so the
+  // REGISTRATION badge flips without a page reload. Process-level: the
+  // tunnel list spans every workspace.
   publishTunnelConfigChanged(): void {
-    this.broadcast({ kind: "tunnelConfigChanged" });
+    this.broadcastProcess({ kind: "tunnelConfigChanged" });
   }
 
-  // Patch one or more header fields. Caller passes only the fields that
-  // changed; existing values are preserved. Triggers a `header` broadcast
-  // so the UI can update without a full snapshot.
-  setHeader(patch: HeaderInfo): void {
-    const merged: HeaderInfo = this.current.header
-      ? { ...this.current.header, ...patch }
-      : { ...patch };
-    this.current.header = merged;
-    this.broadcast({ kind: "header", header: merged });
+  private publishWorkspaces(): void {
+    this.broadcastProcess({ kind: "workspaces", workspaces: this.workspaceSummaries() });
   }
 
-  recordTap(tap: FrameTap): void {
-    this.frames.push(tap);
-    if (this.frames.length > RING_SIZE) {
-      this.frames.splice(0, this.frames.length - RING_SIZE);
-    }
-    this.broadcast({ kind: "frame", tap });
+  subscribeProcess(fn: (e: InspectorEvent) => void): () => void {
+    this.processListeners.add(fn);
+    return () => this.processListeners.delete(fn);
   }
 
-  private readonly mcpMessages = new Map<string, McpMessageTap[]>();
-  private static readonly MCP_MESSAGE_RING_SIZE = 500;
-  // Per-entry payload ceiling (MCP-AUDIT #10, secondary). The ring caps ENTRIES,
-  // not bytes — one `salesforce.query` returning a few thousand records is a
-  // single entry, so 500 of those is unbounded memory in a process that is meant
-  // to run for months. Truncating each payload instead of running a byte budget
-  // with eviction keeps the bound deterministic (500 x 32 KB) and the code short.
-  // Costs one JSON.stringify per tap, only when an inspector is attached; the
-  // SSE listeners were already going to serialize the same value.
-  private static readonly MCP_MESSAGE_MAX_PAYLOAD_BYTES = 32 * 1024;
-
-  // Record one tap and broadcast it live. Called from the `record` callback
-  // wrapWithMessageTap() is given, wired in boot/lifecycle.ts's onConnect.
-  // Deliberately NOT included in snapshot() — per-MCP logs multiplied across
-  // every connected MCP would bloat every subscriber's snapshot payload,
-  // most of whom never open this pane. Fetched on demand via GET
-  // /mcp/messages instead (see getMcpMessages).
-  recordMcpMessage(tap: McpMessageTap): void {
-    const capped = Inspector.capPayload(tap);
-    const list = this.mcpMessages.get(tap.mcp) ?? [];
-    list.push(capped);
-    if (list.length > Inspector.MCP_MESSAGE_RING_SIZE) {
-      list.splice(0, list.length - Inspector.MCP_MESSAGE_RING_SIZE);
-    }
-    this.mcpMessages.set(tap.mcp, list);
-    this.broadcast({ kind: "mcpMessage", tap: capped });
+  private broadcastProcess(e: InspectorEvent): void {
+    for (const fn of this.processListeners) fn(e);
   }
 
-  // Replace an over-large payload with a marker naming its real size, so the
-  // pane shows that something was elided rather than silently displaying a
-  // truncated-and-therefore-invalid JSON fragment. An unserializable payload
-  // (a cycle) is passed through untouched — the ring is bounded by count in that
-  // case, and a value JSON.stringify cannot walk is not one we can measure.
-  private static capPayload(tap: McpMessageTap): McpMessageTap {
-    let size: number;
-    try {
-      size = JSON.stringify(tap.payload)?.length ?? 0;
-    } catch {
-      return tap;
-    }
-    if (size <= Inspector.MCP_MESSAGE_MAX_PAYLOAD_BYTES) return tap;
-    return {
-      ...tap,
-      payload: `<elided: ${size} bytes exceeds the ${Inspector.MCP_MESSAGE_MAX_PAYLOAD_BYTES}-byte per-entry cap>`,
-    };
+  // ─── Single-workspace facade ───────────────────────────────────────────
+  // The pre-Phase-6 Inspector API, forwarded to the sole view (created on
+  // demand). Kept so single-workspace callers and their tests are unchanged;
+  // production code addresses views by id instead.
+
+  private primary(): WorkspaceView {
+    const first = this.views.values().next().value as WorkspaceView | undefined;
+    return first ?? this.addWorkspace(DEFAULT_WORKSPACE, { controllerUrl: "", state: "closed" });
   }
 
-  // Read-only snapshot of one MCP's current log. Backs GET /mcp/messages.
-  getMcpMessages(mcp: string): McpMessageTap[] {
-    return [...(this.mcpMessages.get(mcp) ?? [])];
-  }
+  get onReconnect(): (() => void) | undefined { return this.primary().onReconnect; }
+  set onReconnect(fn: (() => void) | undefined) { this.primary().onReconnect = fn; }
+  get toolDispatch(): ToolDispatch | undefined { return this.primary().toolDispatch; }
+  set toolDispatch(fn: ToolDispatch | undefined) { this.primary().toolDispatch = fn; }
+  get mcpActions(): McpActions | undefined { return this.primary().mcpActions; }
+  set mcpActions(actions: McpActions | undefined) { this.primary().mcpActions = actions; }
 
-  // Wipe one MCP's log and tell any open pane to clear. Called from the
-  // restart action in boot/lifecycle.ts, BEFORE the child actually restarts.
-  clearMcpMessages(mcp: string): void {
-    this.mcpMessages.delete(mcp);
-    this.broadcast({ kind: "mcpMessagesCleared", mcp });
-  }
-
-  snapshot(): InspectorEvent {
-    return {
-      kind: "snapshot",
-      controllerUrl: this.current.controllerUrl,
-      state: this.current.state,
-      reconnect: this.current.reconnect,
-      identity: this.current.identity,
-      header: this.current.header,
-      manifest: this.current.manifest,
-      frames: [...this.frames],
-      webhooks: this.current.webhooks?.snapshot(),
-      mcpStatuses: this.current.mcpStatuses,
-    };
-  }
-
-  subscribe(fn: (e: InspectorEvent) => void): () => void {
-    this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
-  }
-
-  private broadcast(e: InspectorEvent): void {
-    for (const fn of this.listeners) fn(e);
-  }
+  webhookRegistry(): WebhookRegistry | undefined { return this.primary().webhookRegistry(); }
+  publishWebhookSnapshot(): void { this.primary().publishWebhookSnapshot(); }
+  setState(state: WsState): void { this.primary().setState(state); }
+  setReconnecting(info: ReconnectInfo): void { this.primary().setReconnecting(info); }
+  setManifest(manifest: ToolManifest): void { this.primary().setManifest(manifest); }
+  setMcpStatuses(statuses: McpStatus[]): void { this.primary().setMcpStatuses(statuses); }
+  setIdentity(identity: Identity): void { this.primary().setIdentity(identity); }
+  setControllerUrl(controllerUrl: string): void { this.primary().setControllerUrl(controllerUrl); }
+  setHeader(patch: HeaderInfo): void { this.primary().setHeader(patch); }
+  recordTap(tap: FrameTap): void { this.primary().recordTap(tap); }
+  recordMcpMessage(tap: McpMessageTap): void { this.primary().recordMcpMessage(tap); }
+  getMcpMessages(mcp: string): McpMessageTap[] { return this.primary().getMcpMessages(mcp); }
+  clearMcpMessages(mcp: string): void { this.primary().clearMcpMessages(mcp); }
+  snapshot(): InspectorEvent { return this.primary().snapshot(); }
+  subscribe(fn: (e: InspectorEvent) => void): () => void { return this.primary().subscribe(fn); }
 }
 
 const STATIC_TYPES: Record<string, string> = {
@@ -486,7 +665,17 @@ async function serveStatic(res: ServerResponse, name: string): Promise<void> {
   }
 }
 
-function handleEvents(req: IncomingMessage, res: ServerResponse, inspector: Inspector): void {
+// One SSE stream per browser tab, scoped to one workspace (`?ws=`), plus the
+// process-level events every tab needs (the workspace list, tunnel config
+// changes). A stream is read-only, so an omitted `ws` with several workspaces
+// is answered with the first rather than refused — the snapshot names the
+// workspace it describes, and the UI switches by reconnecting with `?ws=`.
+// With zero workspaces the snapshot is empty and only process events follow.
+function handleEvents(req: IncomingMessage, res: ServerResponse, inspector: Inspector, ws: string | null): void {
+  const resolved = inspector.resolveWorkspace(ws);
+  if (resolved === "unknown") { res.statusCode = 404; res.end(`unknown workspace "${ws}"`); return; }
+  const view = resolved === "ambiguous" ? inspector.workspaceViews()[0] : resolved === "none" ? undefined : resolved;
+
   res.statusCode = 200;
   res.setHeader("content-type", "text/event-stream");
   res.setHeader("cache-control", "no-cache");
@@ -494,14 +683,39 @@ function handleEvents(req: IncomingMessage, res: ServerResponse, inspector: Insp
   res.flushHeaders?.();
 
   const send = (e: InspectorEvent) => res.write(`data: ${JSON.stringify(e)}\n\n`);
-  send(inspector.snapshot());
-  const unsubscribe = inspector.subscribe(send);
+  const workspaces = inspector.workspaceSummaries();
+  send(view
+    ? { ...(view.snapshot() as Extract<InspectorEvent, { kind: "snapshot" }>), workspaces }
+    : { kind: "snapshot", workspaces, controllerUrl: "", state: "closed", frames: [] });
+  const unsubscribeView = view?.subscribe(send);
+  const unsubscribeProcess = inspector.subscribeProcess(send);
   const cleanup = () => {
-    unsubscribe();
+    unsubscribeView?.();
+    unsubscribeProcess();
     try { res.end(); } catch { /* ignore */ }
   };
   req.on("close", cleanup);
   req.on("error", cleanup);
+}
+
+// Resolve the workspace a workspace-scoped route names (`?ws=<entryId>`), or
+// write the error and return undefined. Omitted `ws` means the only workspace;
+// with several it is a 400 rather than a guess (§5.8).
+function viewFor(res: ServerResponse, inspector: Inspector, ws: string | null): WorkspaceView | undefined {
+  const resolved = inspector.resolveWorkspace(ws);
+  if (resolved instanceof WorkspaceView) return resolved;
+  res.setHeader("content-type", "application/json");
+  if (resolved === "unknown") {
+    res.statusCode = 404;
+    res.end(JSON.stringify({ ok: false, error: `unknown workspace "${ws}"` }));
+  } else if (resolved === "ambiguous") {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ ok: false, error: "several workspaces are configured — name one with ?ws=<id>" }));
+  } else {
+    res.statusCode = 503;
+    res.end(JSON.stringify({ ok: false, error: "no tunnel configured" }));
+  }
+  return undefined;
 }
 
 // SDK ↔ connector IPC. The bundled MCP child runs in its own process and uses
@@ -515,8 +729,6 @@ interface RevokeBody { mcp?: unknown }
 
 async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector: Inspector): Promise<void> {
   if (!guardCsrf(req, res)) return;
-  const reg = inspector.webhookRegistry();
-  if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
   let body: RevokeBody;
   try { body = (await readJsonBody(req) as RevokeBody) ?? {}; }
   catch (error) {
@@ -525,12 +737,15 @@ async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector
   }
   const mcp = typeof body.mcp === "string" ? body.mcp : undefined;
   if (!mcp) { res.statusCode = 400; res.end('missing "mcp"'); return; }
-  if (!authorizeWebhookMcp(req, res, inspector, mcp)) return;
+  const view = authorizeWebhookMcp(req, res, inspector, mcp);
+  if (!view) { if (!res.writableEnded) { res.statusCode = 503; res.end("webhook registry not configured"); } return; }
+  const reg = view.webhookRegistry();
+  if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
   reg.revoke(mcp);
   res.statusCode = 200;
   res.setHeader("content-type", "application/json");
   res.end('{"ok":true}');
-  inspector.publishWebhookSnapshot();
+  view.publishWebhookSnapshot();
 }
 
 // F7: verify the caller's bearer token identifies them as owner of `mcp`.
@@ -541,29 +756,41 @@ async function handleRevoke(req: IncomingMessage, res: ServerResponse, inspector
 // createWebhookEndpoint sends it as Authorization: Bearer <token>.
 // Returns true if authorized (caller may continue); false if not (response
 // has already been written with 403).
+//
+// Phase 6 (§5.5): the token also selects the WORKSPACE, because each
+// workspace's supervisor mints its own. The caller is routed to the view whose
+// child holds the token, so a webhook stream or revoke reaches that
+// workspace's registry and no other. Returns the view on success; undefined
+// once a 403 has been written.
 function authorizeWebhookMcp(
   req: IncomingMessage,
   res: ServerResponse,
   inspector: Inspector,
   requestedMcp: string,
-): boolean {
-  const resolve = inspector.mcpActions?.resolveMcpByWebhookToken;
-  // If no resolver wired (test harness / older boot path), permit — the
-  // production boot path always wires it. Tests that want to exercise the
-  // auth gate must provide the resolver.
-  if (!resolve) return true;
-  const header = req.headers["authorization"];
-  const auth = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
-  const m = /^Bearer\s+(.+)$/i.exec(auth ?? "");
-  const token = m?.[1]?.trim();
-  const owner = token ? resolve(token) : undefined;
-  if (owner !== requestedMcp) {
+): WorkspaceView | undefined {
+  // If no resolver wired (test harness / older boot path), permit against the
+  // only workspace — the production boot path always wires it. Tests that want
+  // to exercise the auth gate must provide the resolver.
+  if (!inspector.hasTokenResolver()) {
+    const only = inspector.resolveWorkspace(undefined);
+    return only instanceof WorkspaceView ? only : undefined;
+  }
+  const token = bearerOf(req);
+  const owner = token ? inspector.resolveWebhookToken(token) : undefined;
+  if (!owner || owner.mcp !== requestedMcp) {
     res.statusCode = 403;
     res.setHeader("content-type", "application/json");
     res.end('{"ok":false,"error":"webhook subscription: token does not match requested MCP"}');
-    return false;
+    return undefined;
   }
-  return true;
+  return owner.view;
+}
+
+function bearerOf(req: IncomingMessage): string | undefined {
+  const header = req.headers["authorization"];
+  const auth = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
+  const m = /^Bearer\s+(.+)$/i.exec(auth ?? "");
+  return m?.[1]?.trim() || undefined;
 }
 
 interface ControllerApiCallBody {
@@ -586,22 +813,28 @@ async function handleControllerApiCall(
   inspector: Inspector,
 ): Promise<void> {
   if (!guardCsrf(req, res)) return;
-  const actions = inspector.mcpActions;
   res.setHeader("content-type", "application/json");
-  if (!actions?.resolveMcpByWebhookToken || !actions.isAuthorTwilio || !actions.callControllerApi) {
+  if (!inspector.hasTokenResolver()) {
     res.statusCode = 503;
     res.end(JSON.stringify({ error: { code: "not_configured", message: "controller API calls not configured" } }));
     return;
   }
 
-  const header = req.headers["authorization"];
-  const auth = typeof header === "string" ? header : Array.isArray(header) ? header[0] : "";
-  const m = /^Bearer\s+(.+)$/i.exec(auth ?? "");
-  const token = m?.[1]?.trim();
-  const mcp = token ? actions.resolveMcpByWebhookToken(token) : undefined;
-  if (!mcp) {
+  // Phase 6 (§5.5): the token names the calling child AND its workspace, so
+  // the call — including a webhook-driven one with no originating tools/call —
+  // goes out on that workspace's tunnel and no other.
+  const token = bearerOf(req);
+  const owner = token ? inspector.resolveWebhookToken(token) : undefined;
+  if (!owner) {
     res.statusCode = 403;
     res.end(JSON.stringify({ error: { code: "not_authorized", message: "invalid or missing bearer token" } }));
+    return;
+  }
+  const { view, mcp } = owner;
+  const actions = view.mcpActions;
+  if (!actions?.isAuthorTwilio || !actions.callControllerApi) {
+    res.statusCode = 503;
+    res.end(JSON.stringify({ error: { code: "not_configured", message: "controller API calls not configured" } }));
     return;
   }
   if (!actions.isAuthorTwilio(mcp)) {
@@ -633,7 +866,8 @@ async function handleControllerApiCall(
     const message = (err as Error)?.message ?? String(err);
     // "tunnel_unavailable" (no live tunnel) is a 503 — distinct from a
     // round-trip that actually reached the controller and failed (502).
-    res.statusCode = code === "tunnel_unavailable" ? 503 : 502;
+    // "mcp_not_enabled" (approval gate) is a 403 — refused locally, never sent.
+    res.statusCode = code === "tunnel_unavailable" ? 503 : code === "mcp_not_enabled" ? 403 : 502;
     res.end(JSON.stringify({ error: { code, message } }));
   }
 }
@@ -649,7 +883,7 @@ interface ToolCallBody {
 // index.ts) so this exercises the same callTool path the controller uses
 // for inbound RPC. Loopback-bound only — same trust boundary as the rest
 // of the inspector. See CLAUDE.md "Inspector port is localhost-only".
-async function handleToolCall(req: IncomingMessage, res: ServerResponse, inspector: Inspector): Promise<void> {
+async function handleToolCall(req: IncomingMessage, res: ServerResponse, inspector: WorkspaceView): Promise<void> {
   if (!guardCsrf(req, res)) return;
   const dispatch = inspector.toolDispatch;
   if (!dispatch) {
@@ -693,7 +927,7 @@ interface McpActionBody { mcp?: unknown }
 async function handleMcpAction(
   req: IncomingMessage,
   res: ServerResponse,
-  inspector: Inspector,
+  inspector: WorkspaceView,
   action: "reloadCreds" | "restart",
 ): Promise<void> {
   if (!guardCsrf(req, res)) return;
@@ -736,7 +970,7 @@ async function handleMcpAction(
 async function handleClearMcpMessages(
   req: IncomingMessage,
   res: ServerResponse,
-  inspector: Inspector,
+  inspector: WorkspaceView,
 ): Promise<void> {
   if (!guardCsrf(req, res)) return;
   let body: McpActionBody;
@@ -772,7 +1006,7 @@ async function handleClearMcpMessages(
 async function handleApplySessionCreds(
   req: IncomingMessage,
   res: ServerResponse,
-  inspector: Inspector,
+  inspector: WorkspaceView,
 ): Promise<void> {
   if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
@@ -831,7 +1065,7 @@ async function handleApplySessionCreds(
 async function handleClearSessionCreds(
   req: IncomingMessage,
   res: ServerResponse,
-  inspector: Inspector,
+  inspector: WorkspaceView,
 ): Promise<void> {
   if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
@@ -871,15 +1105,21 @@ async function handleClearSessionCreds(
 function handleSessionCredsRoute(
   req: IncomingMessage,
   res: ServerResponse,
-  inspector: Inspector,
+  inspector: WorkspaceView,
   path: string,
 ): boolean {
+  // Caught here (not at the dispatcher) because this helper answers "did the
+  // path match" synchronously; a rejection must still never escape.
+  const fail = (err: unknown) => {
+    log.error({ err: err as Error, path }, `inspector route failed`);
+    if (!res.writableEnded) { res.statusCode = 500; res.end('{"ok":false,"error":"internal error"}'); }
+  };
   if (path === "/mcp/session-creds-apply") {
-    void handleApplySessionCreds(req, res, inspector);
+    handleApplySessionCreds(req, res, inspector).catch(fail);
     return true;
   }
   if (path === "/mcp/session-creds-clear") {
-    void handleClearSessionCreds(req, res, inspector);
+    handleClearSessionCreds(req, res, inspector).catch(fail);
     return true;
   }
   return false;
@@ -892,7 +1132,7 @@ function handleSessionCredsRoute(
 async function handleEnvKeys(
   _req: IncomingMessage,
   res: ServerResponse,
-  inspector: Inspector,
+  inspector: WorkspaceView,
   mcp: string,
 ): Promise<void> {
   const actions = inspector.mcpActions;
@@ -915,7 +1155,7 @@ async function handleEnvKeys(
 async function handleRescanLocal(
   req: IncomingMessage,
   res: ServerResponse,
-  inspector: Inspector,
+  inspector: WorkspaceView,
 ): Promise<void> {
   if (!guardCsrf(req, res)) return;
   const actions = inspector.mcpActions;
@@ -936,9 +1176,10 @@ async function handleRescanLocal(
 }
 
 function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Inspector, mcp: string): void {
-  const reg = inspector.webhookRegistry();
+  const view = authorizeWebhookMcp(req, res, inspector, mcp);
+  if (!view) { if (!res.writableEnded) { res.statusCode = 503; res.end("webhook registry not configured"); } return; }
+  const reg = view.webhookRegistry();
   if (!reg) { res.statusCode = 503; res.end("webhook registry not configured"); return; }
-  if (!authorizeWebhookMcp(req, res, inspector, mcp)) return;
 
   res.statusCode = 200;
   res.setHeader("content-type", "text/event-stream");
@@ -965,7 +1206,7 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
       send("url", { url: handle.url });
       unsubscribe = handle.unsubscribe;
       unsubscribeUrl = handle.onUrl((url) => send("url", { url }));
-      inspector.publishWebhookSnapshot();
+      view.publishWebhookSnapshot();
     } catch (error) {
       send("error", { message: (error as Error).message });
       try { res.end(); } catch { /* ignore */ }
@@ -976,7 +1217,7 @@ function handleStream(req: IncomingMessage, res: ServerResponse, inspector: Insp
     unsubscribeUrl?.();
     unsubscribe?.();
     try { res.end(); } catch { /* ignore */ }
-    inspector.publishWebhookSnapshot();
+    view.publishWebhookSnapshot();
   };
   req.on("close", cleanup);
   req.on("error", cleanup);
@@ -1018,8 +1259,47 @@ function isAuthorizedRequest(req: IncomingMessage, path: string): boolean {
   return NON_LOOPBACK_ALLOWED_PATHS.has(path);
 }
 
+// The workspace-scoped routes. "mcp-query" marks the GETs that also require
+// `?mcp=`. Each handler still runs its own CSRF check; checking here as well
+// (before resolving the workspace) keeps a forged POST from learning whether
+// a workspace id exists.
+function workspaceRoute(method: string | undefined, path: string): "post" | "mcp-query" | undefined {
+  if (method === "POST" && WORKSPACE_POST_ROUTES.has(path)) return "post";
+  if (method === "GET" && (path === "/mcp/env-keys" || path === "/mcp/messages")) return "mcp-query";
+  return undefined;
+}
+
+const WORKSPACE_POST_ROUTES = new Set([
+  "/tool/call",
+  "/mcp/reload-creds",
+  "/mcp/restart",
+  "/mcp/messages/clear",
+  "/mcp/rescan-local",
+  "/mcp/session-creds-apply",
+  "/mcp/session-creds-clear",
+]);
+
 export function startInspector(port: number, inspector: Inspector, opts?: { networkAccessEnabled?: boolean }): Server {
+  // Every route promise is returned and caught HERE. A handler that throws or
+  // rejects must cost one request, never the process: with one workspace per
+  // tunnel (Phase 6) a crash takes every tenant's tunnel down with it. Found
+  // by the first two-workspace browser run — a single-controller-only store
+  // call threw inside a `void`ed handler and exited the connector.
   const server = createServer((req, res) => {
+    void Promise.resolve()
+      .then(() => dispatch(req, res))
+      .catch((err) => {
+        log.error({ err: err as Error, path: req.url, method: req.method }, `inspector route failed`);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader("content-type", "application/json");
+        }
+        if (!res.writableEnded) res.end(JSON.stringify({ ok: false, error: (err as Error)?.message ?? "internal error" }));
+      });
+  });
+
+  // Returns the route's promise (or undefined for a synchronous answer).
+  function dispatch(req: IncomingMessage, res: ServerResponse): unknown {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
 
@@ -1030,17 +1310,22 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
       return;
     }
 
-    if (path === "/events") return handleEvents(req, res, inspector);
+    const ws = url.searchParams.get("ws");
+    if (path === "/events") return handleEvents(req, res, inspector, ws);
     if (path === "/reconnect" && req.method === "POST") {
       if (!guardCsrf(req, res)) return;
-      inspector.onReconnect?.();
+      const view = viewFor(res, inspector, ws);
+      if (!view) return;
+      view.onReconnect?.();
       res.statusCode = 202;
       res.setHeader("content-type", "application/json");
       res.end('{"ok":true}');
       return;
     }
+    // Token-routed: the child's bearer names its workspace (§5.5), so these
+    // take no `ws` parameter.
     if (path === "/internal/webhook/revoke" && req.method === "POST") {
-      void handleRevoke(req, res, inspector);
+      return handleRevoke(req, res, inspector);
       return;
     }
     if (path === "/internal/webhook/stream" && req.method === "GET") {
@@ -1050,68 +1335,72 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
       return;
     }
     if (path === "/internal/controller-api/call" && req.method === "POST") {
-      void handleControllerApiCall(req, res, inspector);
+      return handleControllerApiCall(req, res, inspector);
       return;
     }
-    if (path === "/tool/call" && req.method === "POST") {
-      void handleToolCall(req, res, inspector);
-      return;
-    }
-    if (path === "/mcp/reload-creds" && req.method === "POST") {
-      void handleMcpAction(req, res, inspector, "reloadCreds");
-      return;
-    }
-    if (path === "/mcp/restart" && req.method === "POST") {
-      void handleMcpAction(req, res, inspector, "restart");
-      return;
-    }
-    if (path === "/mcp/messages/clear" && req.method === "POST") {
-      void handleClearMcpMessages(req, res, inspector);
-      return;
-    }
-    if (path === "/mcp/rescan-local" && req.method === "POST") {
-      void handleRescanLocal(req, res, inspector);
-      return;
-    }
-    // INSPECTOR-CREDS-VISIBILITY (W-S4): write-only routes for the
-    // developer-pasted session creds layer. The routes NEVER read back
-    // values — there is no GET sibling. See W-S9 L1 in the plan.
-    if (req.method === "POST" && handleSessionCredsRoute(req, res, inspector, path)) {
-      return;
-    }
-    if (path === "/mcp/env-keys" && req.method === "GET") {
-      const mcp = url.searchParams.get("mcp");
-      if (!mcp) { res.statusCode = 400; res.end('missing "mcp" query param'); return; }
-      void handleEnvKeys(req, res, inspector, mcp);
-      return;
-    }
-    if (path === "/mcp/messages" && req.method === "GET") {
-      const mcp = url.searchParams.get("mcp");
-      if (!mcp) { res.statusCode = 400; res.end('missing "mcp" query param'); return; }
-      res.setHeader("content-type", "application/json");
-      res.statusCode = 200;
-      res.end(JSON.stringify({ ok: true, messages: inspector.getMcpMessages(mcp) }));
-      return;
+    // Workspace-scoped operator routes (§5.8): `?ws=<entryId>`.
+    const scoped = workspaceRoute(req.method, path);
+    if (scoped) {
+      if (scoped === "mcp-query" && !url.searchParams.get("mcp")) { res.statusCode = 400; res.end('missing "mcp" query param'); return; }
+      if (req.method === "POST" && !guardCsrf(req, res)) return;
+      const view = viewFor(res, inspector, ws);
+      if (!view) return;
+      const mcp = url.searchParams.get("mcp") ?? "";
+      if (path === "/tool/call") { return handleToolCall(req, res, view); return; }
+      if (path === "/mcp/reload-creds") { return handleMcpAction(req, res, view, "reloadCreds"); return; }
+      if (path === "/mcp/restart") { return handleMcpAction(req, res, view, "restart"); return; }
+      if (path === "/mcp/messages/clear") { return handleClearMcpMessages(req, res, view); return; }
+      if (path === "/mcp/rescan-local") { return handleRescanLocal(req, res, view); return; }
+      // INSPECTOR-CREDS-VISIBILITY (W-S4): write-only routes for the
+      // developer-pasted session creds layer. The routes NEVER read back
+      // values — there is no GET sibling. See W-S9 L1 in the plan.
+      if (handleSessionCredsRoute(req, res, view, path)) return;
+      if (path === "/mcp/env-keys") { return handleEnvKeys(req, res, view, mcp); return; }
+      if (path === "/mcp/messages") {
+        res.setHeader("content-type", "application/json");
+        res.statusCode = 200;
+        res.end(JSON.stringify({ ok: true, messages: view.getMcpMessages(mcp) }));
+        return;
+      }
     }
 
     // Tunnel routes — only wired in DB mode (bootFromDb). Return 404 in env mode.
     if (path === "/internal/tunnel/config" && req.method === "GET") {
       if (inspector.tunnelRoutes) {
-        void inspector.tunnelRoutes.handleGetConfig(req, res);
+        return inspector.tunnelRoutes.handleGetConfig(req, res);
         return;
       }
       res.statusCode = 404; res.end(); return;
     }
+    if (path === "/internal/tunnels" && req.method === "GET") {
+      if (inspector.tunnelRoutes?.handleListTunnels) { return inspector.tunnelRoutes.handleListTunnels(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/tunnel/add" && req.method === "POST") {
+      if (inspector.tunnelRoutes?.handleAddTunnel) { return inspector.tunnelRoutes.handleAddTunnel(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/tunnel/remove" && req.method === "POST") {
+      if (inspector.tunnelRoutes?.handleRemoveTunnel) { return inspector.tunnelRoutes.handleRemoveTunnel(req, res); return; }
+      res.statusCode = 404; res.end(); return;
+    }
     if (path === "/internal/tunnel/creds" && req.method === "POST") {
       if (inspector.tunnelRoutes) {
-        void inspector.tunnelRoutes.handlePostCreds(req, res);
+        return inspector.tunnelRoutes.handlePostCreds(req, res);
         return;
       }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/tunnel/force-reregister" && req.method === "POST") {
       if (inspector.tunnelRoutes) {
-        void inspector.tunnelRoutes.handleForceReregister(req, res);
+        return inspector.tunnelRoutes.handleForceReregister(req, res);
+        return;
+      }
+      res.statusCode = 404; res.end(); return;
+    }
+    if (path === "/internal/identity/regenerate" && req.method === "POST") {
+      if (inspector.tunnelRoutes) {
+        return inspector.tunnelRoutes.handleRegenerateShimId(req, res);
         return;
       }
       res.statusCode = 404; res.end(); return;
@@ -1122,53 +1411,53 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     // api_clients table lives in the same always-present ConfigStore.
     // Loopback-only per the gate above — these are operator actions.
     if (path === "/internal/network-access/status" && req.method === "GET") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleStatus(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleStatus(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/clients" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleAddClient(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleAddClient(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/clients" && req.method === "GET") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleListClients(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleListClients(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/clients/revoke" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleRevokeClient(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleRevokeClient(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/clients/delete" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleDeleteClient(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleDeleteClient(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     // FEDERATED-JWT-MODE — trusted-issuer config, folded into the same
     // NetworkAccessRoutes factory (same deps, same loopback-only trust tier).
     if (path === "/internal/network-access/trusted-issuer" && req.method === "GET") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleGetTrustedIssuer(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleGetTrustedIssuer(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/trusted-issuer" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleSetTrustedIssuer(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleSetTrustedIssuer(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/trusted-issuer/clear" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleClearTrustedIssuer(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleClearTrustedIssuer(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/oauth/token" && req.method === "POST") {
-      if (inspector.oauthTokenHandler) { void inspector.oauthTokenHandler(req, res); return; }
+      if (inspector.oauthTokenHandler) { return inspector.oauthTokenHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/v1/outbound/calls" && req.method === "POST") {
-      if (inspector.outboundCallsHandler) { void inspector.outboundCallsHandler(req, res); return; }
+      if (inspector.outboundCallsHandler) { return inspector.outboundCallsHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/v1/memory/events" && req.method === "POST") {
-      if (inspector.memoryEventsHandler) { void inspector.memoryEventsHandler(req, res); return; }
+      if (inspector.memoryEventsHandler) { return inspector.memoryEventsHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/v1/identity/list" && req.method === "POST") {
-      if (inspector.identityListHandler) { void inspector.identityListHandler(req, res); return; }
+      if (inspector.identityListHandler) { return inspector.identityListHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
 
@@ -1176,7 +1465,7 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     if (path === "/app.js" || path === "/style.css") { void serveStatic(res, path.slice(1)); return; }
     res.statusCode = 404;
     res.end();
-  });
+  }
   server.requestTimeout = 0;
   server.headersTimeout = 0;
   server.keepAliveTimeout = 0;
@@ -1277,10 +1566,8 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     );
   }
   server.listen(port, bindAddr, () => {
-    const snap = inspector.snapshot();
-    const controllerUrl = snap.kind === "snapshot" ? snap.controllerUrl : "?";
     log.info(
-      { port, bindAddr, url: `http://${bindAddr === "127.0.0.1" ? "127.0.0.1" : `[${bindAddr}]`}:${port}/`, controllerUrl },
+      { port, bindAddr, url: `http://${bindAddr === "127.0.0.1" ? "127.0.0.1" : `[${bindAddr}]`}:${port}/`, workspaces: inspector.workspaceSummaries().length },
       `listening`
     );
   });

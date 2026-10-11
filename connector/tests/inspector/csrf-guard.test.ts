@@ -1,10 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { guardCsrf } from "../../src/inspector/server.js";
 
 describe("CSRF Guard on Inspector POST routes", () => {
   let server: Server;
-  const port = 9091;
+  // Ephemeral, not fixed. This used to be 9091 — the documented port for a
+  // SECOND connector (`scripts/start-connector.sh 9091`) — so the suite failed
+  // whenever a dev ran the multi-instance workflow, with requests landing on
+  // the live connector's inspector instead of this test server.
+  let port: number;
 
   beforeEach(async () => {
     await new Promise<void>((resolve) => {
@@ -19,7 +24,10 @@ describe("CSRF Guard on Inspector POST routes", () => {
         res.statusCode = 404;
         res.end();
       });
-      server.listen(port, "127.0.0.1", () => resolve());
+      server.listen(0, "127.0.0.1", () => {
+        port = (server.address() as AddressInfo).port;
+        resolve();
+      });
     });
   });
 

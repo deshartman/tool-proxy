@@ -48,6 +48,33 @@ export interface HealthState {
   childrenPending: string[];
 }
 
+/** What a workspace contributes to process readiness (MULTI-PLATFORM-MCP §5.7). */
+export interface WorkspaceHealth {
+  childrenPending(): string[];
+}
+
+/**
+ * Aggregate readiness across every tunnel workspace (Phase 6, §5.7).
+ *
+ * `tunnelOpen` is "at least one workspace is configured", NOT "every tunnel is
+ * open", deliberately. Under D5 one tenant's controller outage must not take
+ * the shim out of rotation for the others, so no single tunnel may gate the
+ * process — a workspace whose tunnel is down still serves nothing to the
+ * orchestrator that a restart would fix. The one tunnel-shaped rule left is
+ * zero workspaces: that stays 503 `tunnel_not_open`, which preserves "a fresh
+ * deploy is deliberately not ready" and the long readiness grace built on it.
+ *
+ * Children still gate, summed across workspaces: a child a workspace was asked
+ * to run that is still `restarting`/`stopped` is real unreadiness.
+ */
+export function workspacesHealth(configLoaded: boolean, workspaces: readonly WorkspaceHealth[]): HealthState {
+  return {
+    configLoaded,
+    tunnelOpen: workspaces.length > 0,
+    childrenPending: workspaces.flatMap((ws) => ws.childrenPending()),
+  };
+}
+
 export interface HealthResult {
   status: number;
   body: { ok: boolean; reason?: string; detail?: Record<string, unknown> };
@@ -127,6 +154,12 @@ export interface HealthServerOptions {
    * and an operator's kill-switch indistinguishable.
    */
   ephemeral?: boolean;
+  /**
+   * Treat `EADDRINUSE` as fatal (calls `onFatal`). Set when the operator
+   * chose HEALTH_PORT explicitly; the default port stays non-fatal.
+   */
+  failOnBindError?: boolean;
+  onFatal?: (error: Error) => void;
 }
 
 /**
@@ -179,9 +212,18 @@ export function startHealthServer(opts: HealthServerOptions): Server | undefined
   });
 
   server.on("error", (error) => {
-    // A port clash here must not be fatal. The connector's job is the tunnel;
-    // losing the probes degrades observability, not function.
+    // A port clash on the DEFAULT port must not be fatal. The connector's job
+    // is the tunnel; losing the probes degrades observability, not function.
+    //
+    // An EXPLICIT port is different. With several connectors on one host
+    // (D6), a second instance that silently lost its bind leaves its probe
+    // reading the first instance's /readyz — the orchestrator then judges
+    // this process by another's health. An operator who set HEALTH_PORT
+    // asked for that port specifically, so failing loudly is the honest answer.
     opts.log?.error({ err: error, port: opts.port }, "health server error");
+    if (opts.failOnBindError && (error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+      opts.onFatal?.(error);
+    }
   });
 
   server.listen(opts.port, bindAddr, () => {

@@ -27,6 +27,7 @@ import type {
   TunnelFrame,
 } from "./frames.js";
 import type { McpServerSpec } from "../config.js";
+import { isValidServerName, SERVER_NAME_RULE } from "../identity/server-name.js";
 import type { McpSupervisor, SupervisedSpec } from "../mcp-supervisor.js";
 import type { Logger } from "../logger.js";
 
@@ -78,7 +79,8 @@ interface RosterEntry {
 
 // LIFETIME — read this before changing the construction site.
 //
-// The coordinator is constructed ONCE per connector process and outlives WS
+// The coordinator is constructed ONCE per workspace (TunnelWorkspace; once per
+// process before MULTI-PLATFORM-MCP Phase 6) and outlives that workspace's WS
 // reconnects. Its `roster` and `nameToMcpId` maps are the connector's view of
 // "which supervisor entries did I register from controller-config snapshots /
 // deltas". That view tracks the supervisor (which also outlives reconnects)
@@ -449,6 +451,12 @@ export class McpConfigCoordinator {
   private toSpec(
     entry: McpConfigEntry,
   ): { spec: SupervisedSpec } | { error: string } {
+    // Checked first, for every transport: a pushed name with a '.' would make
+    // the dispatcher's server/tool split ambiguous. Surfaces as a per-MCP
+    // `skipped` ack, so one bad entry never blocks the rest of the roster.
+    if (!isValidServerName(entry.name)) {
+      return { error: `invalid_server_name: "${entry.name}" ${SERVER_NAME_RULE}` };
+    }
     if (entry.transport === "stdio") {
       if (!entry.command || entry.command.length === 0) {
         return { error: `stdio entry "${entry.name}" missing command` };

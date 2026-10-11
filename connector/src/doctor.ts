@@ -53,6 +53,7 @@ export async function runChecks(
   results.push(await checkEnvFile(opts.cwd ?? process.cwd()));
   results.push(await checkConnectorYaml(env, opts.cwd ?? process.cwd()));
   results.push(await checkInspectorPort(env));
+  results.push(await checkHealthPort(env));
   results.push(await checkMcpTree(env, opts.cwd ?? process.cwd()));
   results.push(await checkKeyFile(env));
   results.push(await checkConfigStore(env));
@@ -163,6 +164,57 @@ async function checkInspectorPort(env: NodeJS.ProcessEnv): Promise<CheckResult> 
     message: `:${port} already in use by something else`,
     remediation: `set INSPECTOR_PORT to a free port (or --inspector-port on start)`,
   };
+}
+
+async function checkHealthPort(env: NodeJS.ProcessEnv): Promise<CheckResult> {
+  const explicit = envOptional("HEALTH_PORT", env);
+  const raw = explicit ?? "9100";
+  const port = Number(raw);
+  if (!Number.isFinite(port) || port < 0 || port > 65535) {
+    return { name: "health-port", status: "fail", message: `HEALTH_PORT=${raw} is not a valid port` };
+  }
+  if (port === 0) {
+    return { name: "health-port", status: "warn", message: "HEALTH_PORT=0 disables /livez and /readyz — orchestrator probes will fail" };
+  }
+  // Probe 0.0.0.0, the address the health server binds — a loopback probe
+  // would miss a holder bound to another interface.
+  if (await probePort(port, "0.0.0.0")) {
+    return { name: "health-port", status: "ok", message: `:${port} free` };
+  }
+  // Unlike the inspector, every connector answers /livez identically, so a
+  // reply cannot tell THIS connector from a sibling on the same host. Report
+  // what is known and let the operator judge: a connector answering is the
+  // expected case on a running deployment, and the multi-instance clash
+  // (D6) when doctor runs before a second instance's start.
+  if (await answersLivez(port)) {
+    return {
+      name: "health-port",
+      status: "warn",
+      message: `:${port} is held by a connector — this one if it is running, otherwise another instance on this host`,
+      remediation: "if this is a second instance, give it its own HEALTH_PORT (start-connector.sh <port> does this)",
+    };
+  }
+  return {
+    name: "health-port",
+    status: explicit ? "fail" : "warn",
+    message: `:${port} already in use by something else`,
+    remediation: explicit
+      ? "the connector exits at boot when an explicit HEALTH_PORT is taken; choose a free port"
+      : "set HEALTH_PORT to a free port; with the default, boot continues but probes will not work",
+  };
+}
+
+async function answersLivez(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/livez`, {
+      signal: AbortSignal.timeout(750),
+      headers: { connection: "close" },
+    });
+    const body = await res.text();
+    return res.status === 200 && body.includes('"ok":true');
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -357,14 +409,14 @@ async function checkConfigStore(env: NodeJS.ProcessEnv): Promise<CheckResult> {
 
 
 
-async function probePort(port: number): Promise<boolean> {
+async function probePort(port: number, host = "127.0.0.1"): Promise<boolean> {
   return new Promise<boolean>((resolveP) => {
     const server = createServer();
     server.once("error", () => resolveP(false));
     server.once("listening", () => {
       server.close(() => resolveP(true));
     });
-    server.listen(port, "127.0.0.1");
+    server.listen(port, host);
   });
 }
 

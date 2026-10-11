@@ -197,7 +197,25 @@ export MCP_BASE_PORT="$((7100 + (PORT - 9090) * 100))"
 export CONNECTOR_STATE_DIR="${CONNECTOR_STATE_DIR:-$ROOT/.local/state-${PORT}}"
 mkdir -p "$CONNECTOR_STATE_DIR"
 
+# HEALTH_PORT and AGENTIC_MEMORY_STATE_PATH are per-instance too. Without
+# them every instance binds 9100 — the second one's bind fails, and a probe
+# on 9100 reads the FIRST instance's /readyz — and every instance shares
+# agentic-memory's module-relative .state.json, so memory written for one
+# controller is read back for another. Locked to the port arg like
+# INSPECTOR_PORT. The default 9090 instance keeps the documented 9100; any
+# other port maps into 9300+ rather than 9100+ — 9100 + (PORT - 9090) would
+# land inside the inspector range a third instance might use (port 9100 →
+# health 9110, which is a valid inspector port for a fourth).
+if [ "$PORT" = "9090" ]; then
+  export HEALTH_PORT=9100
+else
+  export HEALTH_PORT="$((9300 + PORT - 9090))"
+fi
+export AGENTIC_MEMORY_STATE_PATH="${AGENTIC_MEMORY_STATE_PATH:-$ROOT/.local/agentic-memory-${PORT}/.state.json}"
+mkdir -p "$(dirname "$AGENTIC_MEMORY_STATE_PATH")"
+
 echo "[start-connector] CONNECTOR_STATE_DIR=$CONNECTOR_STATE_DIR"
+echo "[start-connector] HEALTH_PORT=$HEALTH_PORT AGENTIC_MEMORY_STATE_PATH=$AGENTIC_MEMORY_STATE_PATH"
 echo "[start-connector] port=$PORT inspector=http://localhost:$PORT"
 echo "[start-connector] starting connector with CONNECTOR_CONFIG=$YAML_FILE"
 CONNECTOR_CONFIG="$YAML_FILE" node "$CONNECTOR_BIN" start &

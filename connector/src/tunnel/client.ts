@@ -1,6 +1,8 @@
 import WebSocket, { type RawData, type ClientOptions } from "ws";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import type { InboundTunnelFrame, TunnelFrame } from "./frames.js";
+import { parseFrame, type ProtocolVersion } from "@gtmi/toolproxy-protocol";
+import { bareNaming, type WireNaming } from "./naming.js";
 import { resolveProxy, type ProxyDecision } from "./proxy.js";
 
 export type WsState = "connecting" | "open" | "closed";
@@ -23,11 +25,30 @@ export interface FrameTap {
 // policy.reconnect.enabled=false in connector.yaml to opt out.
 export class TunnelClient {
   onframe?: (frame: InboundTunnelFrame) => void;
-  onclose?: () => void;
+  // `info` carries the WebSocket close code + reason the controller sent, so
+  // the reconnect policy (lifecycle.ts) can tell a refusal apart from a drop.
+  // This client decides nothing about reconnecting — it only reports.
+  onclose?: (info: { code: number; reason: string }) => void;
   onerror?: (err: Error) => void;
   // Inspector hook: every frame in/out, plus state transitions. Optional.
   ontap?: (tap: FrameTap) => void;
   onstate?: (state: WsState) => void;
+  // An inbound frame failed the @gtmi/toolproxy-protocol schema. LOG-ONLY:
+  // the frame is still delivered to onframe exactly as before. Strict
+  // validation against live traffic will surface drift the hand-written types
+  // tolerated, and a tunnel that worked yesterday must not break on that — so
+  // this phase makes the mismatch visible and changes nothing else. `issues`
+  // are field PATHS, never values (frames carry credentials).
+  onschemaviolation?: (info: { type: string | undefined; error: string; issues: string[] }) => void;
+  // The controller's tunnel protocol, once register-ack reports it. Absent →
+  // parse strictly. A newer minor of our major is then parsed tolerantly.
+  peerProtocol?: ProtocolVersion;
+  // How tool/prompt names look on THIS connection (Phase 2b). Starts on the
+  // bare 1.x form and is upgraded at register-ack when both sides speak 2.
+  // Lives on the connection because it belongs to it: the dispatcher and the
+  // manifest-delta sender read it from here, and a reconnect is a new client,
+  // so it re-negotiates from scratch.
+  wireNaming: WireNaming = bareNaming();
 
   private ws?: WebSocket;
   private opened = false;
@@ -141,9 +162,9 @@ export class TunnelClient {
           this.onerror?.(error);
         }
       });
-      ws.on("close", () => {
+      ws.on("close", (code, reason) => {
         clearDialTimer();
-        this.handleClose();
+        this.handleClose(code, reason.toString("utf8"));
       });
       ws.on("message", (data, isBinary) => {
         if (isBinary) return;
@@ -176,15 +197,19 @@ export class TunnelClient {
       this.onerror?.(new Error(`malformed frame: ${(error as Error).message}`));
       return;
     }
+    const checked = parseFrame("controller-to-connector", line, { peer: this.peerProtocol });
+    if (!checked.ok && !checked.ignored) {
+      this.onschemaviolation?.({ type: checked.type, error: checked.error, issues: checked.issues });
+    }
     this.ontap?.({ ts: Date.now(), direction: "in", frame });
     this.onframe?.(frame);
   }
 
-  private handleClose(): void {
+  private handleClose(code = 1006, reason = ""): void {
     if (this.closed) return;
     this.closed = true;
     this.setState("closed");
-    this.onclose?.();
+    this.onclose?.({ code, reason });
   }
 }
 

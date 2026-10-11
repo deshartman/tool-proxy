@@ -1,0 +1,45 @@
+{
+  "name": "@gtmi/toolproxy-protocol",
+  "version": "2.0.0",
+  "description": "Wire protocol for the Twilio MCP tool-proxy tunnel (connector \u21c4 controller): Zod schemas for protocol majors 1 and 2, derived types, a version-negotiating frame parser, and tool-name helpers.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/twilio-demos/conversation-agent-tool-sdk.git",
+    "directory": "protocol"
+  },
+  "keywords": [
+    "gtmi",
+    "mcp",
+    "tunnel",
+    "protocol",
+    "zod"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "build": "tsc -b",
+    "prepublishOnly": "npm run clean && npm run build && test -f dist/index.js && test -f dist/index.d.ts"
+  },
+  "peerDependencies": {
+    "zod": "^4.4.3"
+  }
+}

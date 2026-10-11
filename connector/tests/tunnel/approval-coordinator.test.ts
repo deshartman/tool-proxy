@@ -24,7 +24,8 @@ import type { Logger } from "../../src/logger.js";
 //     surface a stop call as a hard failure.
 //   * Re-enable after disable is sub-second and idempotent — no spawn,
 //     no creds restart unless env changed.
-//   * The gate predicate is `author === "customer" && source === "local"`.
+//   * Since Phase 2c every MCP the connector runs itself is gated (bundled,
+//     drop-in, yaml); only controller-config (Type 2) is not_gated.
 //     Yaml-listed and controller-config MCPs reply with not_gated.
 //   * applyControllerEnv failure rolls back the approved-set entry so the
 //     operator's view matches what the connector exposes.
@@ -126,6 +127,8 @@ describe("ApprovalCoordinator — emitDiscovered", () => {
 
     coord.emitDiscovered({
       mcp: "crm",
+      author: "customer",
+      source: "dropin",
       envKeys: ["MOCK_CUSTOMERS_URL"],
       tools: [
         { name: "get_customer", description: "..." },
@@ -140,7 +143,8 @@ describe("ApprovalCoordinator — emitDiscovered", () => {
     // The two literal fields are the gate predicate — they must always be
     // these exact values, never derived from the spec.
     expect(frame.author).toBe("customer");
-    expect(frame.source).toBe("local");
+    // Wire value since Phase 2c; the supervisor still says "local" internally.
+    expect(frame.source).toBe("dropin");
     expect(frame.envKeys).toEqual(["MOCK_CUSTOMERS_URL"]);
     expect(frame.tools).toHaveLength(2);
     // discoveredAt is wall-clock — ensure it's present + ISO8601-shaped.
@@ -215,17 +219,17 @@ describe("ApprovalCoordinator — handleEnable", () => {
     expect(ack.error).toBe("unknown_mcp");
   });
 
-  it("rejects yaml-listed MCP with not_gated reason", async () => {
+  // Phase 2c (D3): yaml entries are gated now, so mcp-enable must ACCEPT them.
+  // This test used to pin the opposite ("rejects yaml with not_gated").
+  it("accepts mcp-enable for a yaml-listed MCP (gated since Phase 2c)", async () => {
     const fake = buildSupervisor([yamlStatus("twilio")]);
     const { coord, sent } = buildCoord({ fakeSupervisor: fake });
 
     await coord.handleEnable({ type: "mcp-enable", mcp: "twilio" });
 
-    expect(coord.isApproved("twilio")).toBe(false);
-    const ack = sent[0] as McpEnableAckFrame;
-    expect(ack.status).toBe("error");
-    expect(ack.error).toContain("not_gated");
-    expect(ack.error).toContain("yaml");
+    expect(coord.isApproved("twilio")).toBe(true);
+    const ack = sent[sent.length - 1] as McpEnableAckFrame;
+    expect(ack.status).toBe("enabled");
   });
 
   it("rejects controller-config MCP with not_gated reason", async () => {
@@ -399,7 +403,7 @@ describe("ApprovalCoordinator — bind / lifetime", () => {
     expect(coord.isApproved("crm")).toBe(true);
 
     // New frames go to the new tunnel only.
-    coord.emitDiscovered({ mcp: "crm", envKeys: [], tools: [] });
+    coord.emitDiscovered({ mcp: "crm", author: "customer", source: "dropin", envKeys: [], tools: [] });
     expect(tunnel2).toHaveLength(1);
     expect(tunnel1).toHaveLength(1); // unchanged from before bind
   });
@@ -413,7 +417,7 @@ describe("ApprovalCoordinator — wire frame discriminators", () => {
     const fake = buildSupervisor([localStatus("crm", 1)]);
     const { coord, sent } = buildCoord({ fakeSupervisor: fake });
 
-    coord.emitDiscovered({ mcp: "crm", envKeys: [], tools: [] });
+    coord.emitDiscovered({ mcp: "crm", author: "customer", source: "dropin", envKeys: [], tools: [] });
     await coord.handleEnable({ type: "mcp-enable", mcp: "crm" });
     await coord.handleDisable({ type: "mcp-disable", mcp: "crm" });
 

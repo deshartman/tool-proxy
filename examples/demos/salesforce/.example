@@ -1,0 +1,2 @@
+# Marks this MCP as a demo. The connector reports it to the controller as
+# kind "example" so the approval UI can label it. See connector/src/dropin.ts.

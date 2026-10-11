@@ -4,10 +4,11 @@
   "private": true,
   "license": "MIT",
   "workspaces": [
+    "protocol",
     "connector"
   ],
   "scripts": {
-    "build": "tsc -b connector && node connector/scripts/postbuild.mjs",
+    "build": "tsc -b protocol connector && node connector/scripts/postbuild.mjs",
     "connector": "node connector/dist/index.js"
   },
   "//": "@types/node deliberately held at ^22 to match the node:22-alpine runtime image. Bumping ahead types against APIs not present at runtime. zod is declared here at the workspace root so all MCPs (which resolve `zod` via parent-dir walk to the hoisted root copy) and the connector itself converge on the same major.",

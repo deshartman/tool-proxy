@@ -567,3 +567,58 @@ describe("inspector-port — self versus a genuine conflict", () => {
     }
   });
 });
+
+// Several connectors on one host (D6). Every connector answers /livez the
+// same way, so unlike inspector-port this check cannot tell "this connector"
+// from "a sibling" — it reports a connector holder as a warn naming both
+// readings. An unrelated holder of an EXPLICIT HEALTH_PORT is a fail, because
+// boot exits on that (health/server.ts failOnBindError).
+describe("health-port — multi-instance clash", () => {
+  async function listen(handler: Parameters<typeof createServer>[1]) {
+    const server = createServer(handler);
+    await new Promise<void>((r) => server.listen(0, "0.0.0.0", r));
+    return { server, port: (server.address() as AddressInfo).port };
+  }
+  function close(server: ReturnType<typeof createServer>) {
+    server.closeAllConnections();
+    server.close();
+  }
+
+  it("reports ok when the port is free", async () => {
+    const { server, port } = await listen(() => undefined);
+    close(server);
+    await new Promise((r) => setImmediate(r));
+    const results = await runChecks({ HEALTH_PORT: String(port) }, { skipNetwork: false });
+    expect(results.find((c) => c.name === "health-port")!.status).toBe("ok");
+  });
+
+  it("warns when another connector's /livez answers on the port", async () => {
+    const { server, port } = await listen((req, res) => {
+      res.writeHead(req.url === "/livez" ? 200 : 404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    try {
+      const results = await runChecks({ HEALTH_PORT: String(port) }, { skipNetwork: false });
+      const check = results.find((c) => c.name === "health-port")!;
+      expect(check.status).toBe("warn");
+      expect(check.remediation).toContain("own HEALTH_PORT");
+    } finally {
+      close(server);
+    }
+  });
+
+  it("fails when an explicit HEALTH_PORT is held by something else", async () => {
+    const { server, port } = await listen((_req, res) => { res.writeHead(404); res.end("nope"); });
+    try {
+      const results = await runChecks({ HEALTH_PORT: String(port) }, { skipNetwork: false });
+      expect(results.find((c) => c.name === "health-port")!.status).toBe("fail");
+    } finally {
+      close(server);
+    }
+  });
+
+  it("warns when HEALTH_PORT=0 disables the probes", async () => {
+    const results = await runChecks({ HEALTH_PORT: "0" }, { skipNetwork: false });
+    expect(results.find((c) => c.name === "health-port")!.status).toBe("warn");
+  });
+});

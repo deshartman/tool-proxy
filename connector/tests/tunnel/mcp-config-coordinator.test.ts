@@ -516,6 +516,36 @@ describe("McpConfigCoordinator — unsupported transports report 'skipped'", () 
     expect(ack!.perMcp[1]).toMatchObject({ status: "skipped" });
     expect(ack!.perMcp[1].error).toMatch(/missing url/);
   });
+
+  // MULTI-PLATFORM-MCP §3.4: a '.' in a server name makes the dispatcher's
+  // server/tool split ambiguous. Pushed names were previously unchecked. One bad
+  // entry must not block the rest of the roster.
+  it("skips an entry whose name contains a dot, and still applies its siblings", async () => {
+    const { coordinator, sent, fake } = buildCoordinator();
+    const dotted: McpConfigEntry = {
+      mcpId: "mcp_dotted",
+      name: "crm.sales",
+      transport: "http",
+      url: "https://example.com/mcp",
+      auth: { kind: "none" },
+    };
+    const good: McpConfigEntry = {
+      mcpId: "mcp_good",
+      name: "crm-sales",
+      transport: "http",
+      url: "https://example.com/mcp",
+      auth: { kind: "none" },
+    };
+
+    await coordinator.handleSnapshot({ type: "mcp-config-snapshot", generation: 1, servers: [dotted, good] });
+
+    const ack = findAck(sent);
+    const byName = Object.fromEntries(ack!.perMcp.map((r) => [r.name, r]));
+    expect(byName["crm.sales"]).toMatchObject({ status: "skipped" });
+    expect(byName["crm.sales"].error).toMatch(/invalid_server_name/);
+    expect(fake.registered.has("crm.sales")).toBe(false);
+    expect(fake.registered.has("crm-sales")).toBe(true);
+  });
 });
 
 describe("McpConfigCoordinator — mcpIdFor lookup (creds-request enrichment)", () => {

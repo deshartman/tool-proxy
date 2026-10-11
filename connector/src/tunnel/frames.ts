@@ -113,6 +113,13 @@ export interface ManifestDelta {
   addedResourceTemplates?:  { server: string; resourceTemplate: ResourceTemplateDescriptor }[];
   removedResourceTemplates?: { server: string; resourceTemplate: string }[];
   changedResourceTemplates?: { server: string; resourceTemplate: ResourceTemplateDescriptor }[];
+  // 2.x ONLY — server lifecycle, so a server whose first appearance is a delta
+  // arrives with its author and transport instead of the receiver inferring
+  // them (MULTI-PLATFORM-MCP §2.5a). Never sent to a 1.x controller: a strict
+  // 1.x parse rejects these fields. Added by withServerLifecycle, not by
+  // diffManifest, so the 1.x delta stays byte-identical.
+  addedServers?: { name: string; transport: "http" | "stdio"; author: string; protocolVersion?: string }[];
+  removedServers?: string[];
 }
 
 export interface RegisterFrame {
@@ -128,6 +135,9 @@ export interface RegisterFrame {
   // controller on the first register-ack).
   name?: string;
   registrationToken?: string;
+  // "<major>.<minor>" — @gtmi/toolproxy-protocol's PROTOCOL_VERSION. Absent
+  // from connectors that predate it; a controller reads that as 1.x.
+  tunnelProtocol?: string;
 }
 
 // Some controllers send register-ack back on the first register frame. This
@@ -141,6 +151,9 @@ export interface RegisterAckFrame {
   error?: { code: string; message: string };
   acceptedToolCount?: number;
   registrationToken?: string;
+  // The controller's supported tunnel-protocol range, when it reports one.
+  // Lets the connector parse a newer-minor controller tolerantly.
+  supportedTunnelProtocol?: { min: string; max: string };
 }
 export interface ManifestDeltaFrame  { type: "manifest-delta"; delta: ManifestDelta }
 export interface RpcFrame            { type: "rpc";            payload: unknown }
@@ -399,8 +412,17 @@ export interface McpNotificationFrame {
 export interface McpDiscoveredFrame {
   type: "mcp-discovered";
   mcp: string;                          // folder name; stable identity across reconnects
-  author: "customer";                   // gate predicate, always literal
-  source: "local";                      // gate predicate, always literal
+  // Who shipped it: "twilio" for MCPs under MCP_BUNDLED_DIR, else "customer".
+  // `string`, like ServerDescriptor.author, so a new value isn't a wire break.
+  author: string;
+  // How it got here. "bundled" = shipped in the image; "dropin" = a customer
+  // folder under MCP_DROPIN_DIR; "yaml" = a connector.yaml entry. Type 2
+  // (controller-pushed) MCPs are never gated, so never appear. Pre-2c shims
+  // sent the literal "local" for drop-ins; controllers accept it as "dropin".
+  source: "bundled" | "dropin" | "yaml";
+  // Set only for demos (an `.example` marker in the MCP's folder), so the
+  // controller's pending lane can label them. Absent for everything else.
+  kind?: "example";
   envKeys: string[];                    // de-duped union from the child's /envkeys endpoint
   tools: Array<{
     name: string;

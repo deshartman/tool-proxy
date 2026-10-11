@@ -94,8 +94,8 @@ Umbrella: [deploy/README.md](deploy/README.md).
 
 ### First-connect flow (all deploy paths)
 
-1. Container boots. Postgres is empty. The inspector renders "Configure
-   Tunnel".
+1. Container boots. The config store (`state/config.json`) is empty, so no
+   MCP child runs yet. The inspector renders "Configure Tunnel".
 2. Reach the inspector — `ssh -L 9090:127.0.0.1:9090 <host>`, `docker exec`,
    or `kubectl port-forward`. **Never** expose the inspector port to a public
    LB — the Webhooks panel surfaces bcrypt-protected URLs by design.
@@ -104,6 +104,9 @@ Umbrella: [deploy/README.md](deploy/README.md).
    the Tunnel Security row Name in your controller UI, case-sensitive),
    auth posture (static bearer OR OAuth2).
 4. Save. The inspector pill transitions closed → connecting → **open**.
+5. Optional: **Add controller** in the Tunnel panel connects the same
+   connector to a second controller — its own tunnel, MCP children,
+   approvals and state. See [docs/INSPECTOR.md](docs/INSPECTOR.md).
 
 No `.env` edits. No `connector.yaml`. No shell access after the initial
 port-forward.
@@ -227,11 +230,11 @@ Multi-arch defaults are `linux/amd64,linux/arm64` (Graviton + ARM Macs).
 ## Verifying a deployment
 
 ```bash
-docker exec <container> mcp-connector doctor
+docker exec <container> node dist/index.js doctor
 ```
 
-Exit 0 = all preflight checks pass (Postgres reachable, master key readable,
-required env vars set). Exit 1 = something's wrong; exit 2 = warn-only.
+Exit 0 = all preflight checks pass (config store usable, master key readable
+and matching it, required env vars set). Exit 1 = something's wrong; exit 2 = warn-only.
 Designed for `doctor && start` runbooks in your entrypoint.
 
 ## Contributing (in-repo development)
@@ -242,5 +245,5 @@ npm run build
 ./scripts/start-connector.sh
 ```
 
-You'll need a local Postgres (or `docker compose -f deploy/compose/docker-compose.prod.yml
-up postgres`) and a master key at `$CONNECTOR_KEY_FILE`. Tests: `cd connector && npm test`.
+There is no database. You need only a 32-byte master key at `$CONNECTOR_KEY_FILE`
+(`head -c 32 /dev/urandom > .local/master.key`). Tests: `cd connector && npm test`.

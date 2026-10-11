@@ -1,7 +1,12 @@
-// Tunnel routes for inspector — DB mode only (env mode returns 404)
-// These routes are only wired when bootFromDb is active; they allow
-// operators to configure, edit, and force re-registration of the
-// controller tunnel via the localhost inspector UI.
+// Tunnel routes for the inspector. They let operators add, edit, remove and
+// force re-registration of controller entries via the localhost inspector UI.
+//
+// Phase 6 (MULTI-PLATFORM-MCP §5.1): one controller entry = one workspace.
+// Adding an entry starts a workspace, editing one cycles it, removing one
+// stops it and deletes its storage. The pre-Phase-6 routes keep their
+// single-controller contract — `/internal/tunnel/creds` with no `id`
+// add-or-updates the first entry, and `/internal/tunnel/config` reports it —
+// so a UI that predates the tunnel list keeps working.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { guardCsrf } from "./server.js";
@@ -53,8 +58,13 @@ function rowToSummary(row: ControllerRow): TunnelConfigSummary {
 
 interface TunnelRoutesDeps {
   configStore: ConfigStore;
+  // Start a workspace for a freshly-added entry.
   dialTunnel: (row: ControllerRow) => Promise<void>;
-  cycleTunnel: (reason: string) => Promise<void>;
+  // Re-read an entry and redial. `id` omitted = the only workspace.
+  cycleTunnel: (reason: string, id?: string) => Promise<void>;
+  // Stop a removed entry's workspace and delete its storage. Optional so
+  // single-controller test harnesses can omit it.
+  removeTunnel?: (id: string) => Promise<void>;
 }
 
 function setJsonHeaders(res: ServerResponse): void {
@@ -107,14 +117,17 @@ async function handleGetConfig(
 ): Promise<void> {
   try {
     const row = await configStore.getController();
+    // shimId rides on both answers: it exists from the first boot, before any
+    // controller is configured, and is not secret (it is in every tool name).
+    const shimId = configStore.getShimId();
     setJsonHeaders(res);
     if (!row) {
       res.statusCode = 200;
-      res.end(JSON.stringify({ configured: false }));
+      res.end(JSON.stringify({ configured: false, shimId }));
       return;
     }
     res.statusCode = 200;
-    res.end(JSON.stringify({ configured: true, row: rowToSummary(row) }));
+    res.end(JSON.stringify({ configured: true, shimId, row: rowToSummary(row) }));
   } catch (err) {
     setJsonHeaders(res);
     res.statusCode = 500;
@@ -122,8 +135,26 @@ async function handleGetConfig(
   }
 }
 
+// GET /internal/tunnels — every controller entry (one per workspace).
+async function handleListTunnels(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  { configStore }: Pick<TunnelRoutesDeps, "configStore">
+): Promise<void> {
+  setJsonHeaders(res);
+  try {
+    const rows = await configStore.listControllers();
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true, shimId: configStore.getShimId(), rows: rows.map(rowToSummary) }));
+  } catch (err) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
 // POST /internal/tunnel/creds
-// Body: ControllerInput-shaped JSON
+// Body: ControllerInput-shaped JSON, plus an optional `id` naming the entry to
+// edit. Without `id` this is the pre-Phase-6 single-controller upsert.
 // Flow:
 //   - Read the prior row FIRST — decides both INSERT-vs-UPDATE routing and
 //     whether the auth secret is optional on this submit.
@@ -145,7 +176,10 @@ async function handleGetConfig(
 async function handlePostCreds(
   req: IncomingMessage,
   res: ServerResponse,
-  { configStore, dialTunnel, cycleTunnel }: TunnelRoutesDeps
+  { configStore, dialTunnel, cycleTunnel }: TunnelRoutesDeps,
+  // "upsert": pre-Phase-6 — `id` names an entry to edit, absent edits the
+  // first entry or adds one. "add": always a new entry (a new workspace).
+  mode: "upsert" | "add" = "upsert",
 ): Promise<void> {
   if (!guardCsrf(req, res)) return;
   setJsonHeaders(res);
@@ -231,12 +265,20 @@ async function handlePostCreds(
   // the SQL COALESCE in upsertController preserves the existing value. A
   // switch of authMode (static-bearer ↔ oauth2-cc) always requires the new
   // secret because there is no matching prior sealed value to preserve.
+  const targetId = mode === "upsert" && typeof b.id === "string" && b.id ? b.id : undefined;
   let priorRow: ControllerRow | null;
   try {
-    priorRow = await configStore.getController();
+    priorRow = mode === "add"
+      ? null
+      : targetId ? await configStore.getControllerById(targetId) : await configStore.getController();
   } catch (err) {
     res.statusCode = 500;
     res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+    return;
+  }
+  if (targetId && !priorRow) {
+    res.statusCode = 404;
+    res.end(JSON.stringify({ ok: false, error: `no controller with id ${targetId}` }));
     return;
   }
   const hadPriorRow = priorRow !== null;
@@ -278,7 +320,10 @@ async function handlePostCreds(
 
   let newRow: ControllerRow;
   try {
-    newRow = await configStore.upsertController(input);
+    newRow = mode === "add"
+      ? await configStore.addController(input)
+      : priorRow && targetId ? await configStore.updateController(priorRow.id, input)
+      : await configStore.upsertController(input);
   } catch (err) {
     res.statusCode = 500;
     res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
@@ -287,18 +332,22 @@ async function handlePostCreds(
 
   try {
     if (hadPriorRow) {
-      await cycleTunnel("credential-rotated");
+      // Pass the id only when the caller named one, so the single-controller
+      // contract (cycleTunnel(reason)) is unchanged for pre-Phase-6 callers.
+      if (targetId) await cycleTunnel("credential-rotated", newRow.id);
+      else await cycleTunnel("credential-rotated");
     } else {
       await dialTunnel(newRow);
     }
     res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true }));
+    res.end(JSON.stringify({ ok: true, id: newRow.id }));
   } catch (dialErr) {
-    // Dial rejected. INSERT case: roll back so the DB stays empty.
-    // UPDATE case: leave the row in place so the operator can retry.
+    // Dial rejected. INSERT case: roll back THIS entry so the store holds
+    // only entries that started. UPDATE case: leave it so the operator can retry.
     if (!hadPriorRow) {
       try {
-        await configStore.deleteController();
+        if (mode === "add") await configStore.removeController(newRow.id);
+        else await configStore.deleteController();
       } catch {
         // Rollback failure is not the primary error — surface the dial
         // rejection to the operator and log the rollback issue elsewhere
@@ -320,7 +369,8 @@ async function handleForceReregister(
   setJsonHeaders(res);
 
   try {
-    const row = await configStore.getController();
+    const id = await optionalId(req);
+    const row = id ? await configStore.getControllerById(id) : await configStore.getController();
     if (!row) {
       res.statusCode = 409;
       res.end(JSON.stringify({ ok: false, error: "no controller row configured" }));
@@ -328,7 +378,8 @@ async function handleForceReregister(
     }
 
     await configStore.clearRegistrationToken(row.id);
-    await cycleTunnel("force-reregister");
+    if (id) await cycleTunnel("force-reregister", row.id);
+    else await cycleTunnel("force-reregister");
 
     res.statusCode = 200;
     res.end(JSON.stringify({ ok: true }));
@@ -338,13 +389,95 @@ async function handleForceReregister(
   }
 }
 
+// POST /internal/identity/regenerate
+// Mints a new shimId — the fix for a cloned volume, where two shims share one
+// identity. Operator-only: loopback (the server gate) plus CSRF (here). Every
+// procedure ref to this shim's tools breaks until the platform re-points them,
+// so the inspector confirms before calling this. Redials when a controller is
+// configured so the next register carries the new id; with no controller
+// there is nothing to redial.
+async function handleRegenerateShimId(
+  req: IncomingMessage,
+  res: ServerResponse,
+  { configStore, cycleTunnel }: Pick<TunnelRoutesDeps, "configStore" | "cycleTunnel">
+): Promise<void> {
+  if (!guardCsrf(req, res)) return;
+  setJsonHeaders(res);
+  try {
+    const previous = configStore.getShimId();
+    const shimId = await configStore.regenerateShimId();
+    // One shimId names this shim on EVERY tunnel, so every workspace redials.
+    const rows = await configStore.listControllers();
+    if (rows.length === 1) await cycleTunnel("shim-id-regenerated");
+    else for (const row of rows) await cycleTunnel("shim-id-regenerated", row.id);
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true, previous, shimId }));
+  } catch (err) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
+// POST /internal/tunnel/remove — body { id }. Stops that entry's workspace,
+// deletes its storage directory, then removes the entry (D15).
+async function handleRemoveTunnel(
+  req: IncomingMessage,
+  res: ServerResponse,
+  { configStore, removeTunnel }: TunnelRoutesDeps
+): Promise<void> {
+  if (!guardCsrf(req, res)) return;
+  setJsonHeaders(res);
+  try {
+    const id = await optionalId(req);
+    if (!id) {
+      res.statusCode = 400;
+      res.end(JSON.stringify({ ok: false, error: "missing id" }));
+      return;
+    }
+    if (!(await configStore.getControllerById(id))) {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ ok: false, error: `no controller with id ${id}` }));
+      return;
+    }
+    // Stop the workspace FIRST so nothing writes into the directory, or
+    // persists a registration token into the entry, after it is gone.
+    await removeTunnel?.(id);
+    await configStore.removeController(id);
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true }));
+  } catch (err) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+  }
+}
+
+// An optional `{ id }` body. A missing or empty body is "no id" — the
+// pre-Phase-6 routes were called with none.
+async function optionalId(req: IncomingMessage): Promise<string | undefined> {
+  try {
+    const body = await readJsonBody(req) as { id?: unknown } | undefined;
+    return body && typeof body.id === "string" && body.id ? body.id : undefined;
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) throw error;
+    return undefined;
+  }
+}
+
 export function createTunnelRoutes(deps: TunnelRoutesDeps) {
   return {
+    handleListTunnels: (req: IncomingMessage, res: ServerResponse) =>
+      handleListTunnels(req, res, deps),
+    handleAddTunnel: (req: IncomingMessage, res: ServerResponse) =>
+      handlePostCreds(req, res, deps, "add"),
+    handleRemoveTunnel: (req: IncomingMessage, res: ServerResponse) =>
+      handleRemoveTunnel(req, res, deps),
     handleGetConfig: (req: IncomingMessage, res: ServerResponse) =>
       handleGetConfig(req, res, deps),
     handlePostCreds: (req: IncomingMessage, res: ServerResponse) =>
       handlePostCreds(req, res, deps),
     handleForceReregister: (req: IncomingMessage, res: ServerResponse) =>
       handleForceReregister(req, res, deps),
+    handleRegenerateShimId: (req: IncomingMessage, res: ServerResponse) =>
+      handleRegenerateShimId(req, res, deps),
   };
 }

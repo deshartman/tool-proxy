@@ -4,9 +4,12 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { parse as parseDotenv } from "dotenv";
 import type { McpAuthSpec } from "./tunnel/frames.js";
+import { SERVER_NAME_RE, SERVER_NAME_RULE } from "./identity/server-name.js";
+
+const ServerName = z.string().regex(SERVER_NAME_RE, `server name ${SERVER_NAME_RULE}`);
 
 const HttpServer = z.object({
-  name: z.string().min(1),
+  name: ServerName,
   transport: z.literal("http"),
   // endpoint is optional: when absent and `dir` is set, the connector spawns
   // the folder as a Type 1 child and synthesizes endpoint at an auto-assigned
@@ -31,7 +34,7 @@ const HttpServer = z.object({
 });
 
 const StdioServer = z.object({
-  name: z.string().min(1),
+  name: ServerName,
   transport: z.literal("stdio"),
   command: z.array(z.string().min(1)).min(1),
   dir: z.string().optional(),
@@ -64,7 +67,7 @@ const Policy = z.object({
 
 export type ReconnectPolicyConfig = z.infer<typeof ReconnectPolicy>;
 
-const ConfigSchema = z.object({
+export const ConfigSchema = z.object({
   // The tunnel: block is legacy — retained in the schema so old
   // connector.yaml files parse cleanly, but bootFromDb ignores its contents
   // entirely (tunnel identity + creds live in the sealed config store).

@@ -49,6 +49,9 @@ export interface DiscoveredMcpInfo {
   mcp: string;
   envKeys: string[];
   tools: Array<{ name: string; description?: string }>;
+  author: string;
+  source: "bundled" | "dropin" | "yaml";
+  kind?: "example";
 }
 
 export interface ApprovalCoordinatorOpts {
@@ -100,6 +103,16 @@ export class ApprovalCoordinator {
     return this.approved.has(name);
   }
 
+  // The single runtime gate every entry point consults: tunnel dispatch,
+  // controller-call, and webhook delivery. `isApproved` answers "has the
+  // controller approved this name"; this answers "may the controller reach
+  // this MCP at all" — true for un-gated entries, the approval state for
+  // gated ones. `isGated` is supplied by the boot wiring (today: "is a
+  // drop-in"); widening the gate later edits only that predicate.
+  isEnabled(name: string, isGated: (name: string) => boolean): boolean {
+    return !isGated(name) || this.approved.has(name);
+  }
+
   // Read-only snapshot for tests + inspector status panels. The coordinator's
   // private set is the single source of truth — never widen this to a write
   // accessor. Approval is mutated only via handleEnable/handleDisable.
@@ -116,8 +129,9 @@ export class ApprovalCoordinator {
     const frame: McpDiscoveredFrame = {
       type: "mcp-discovered",
       mcp: info.mcp,
-      author: "customer",
-      source: "local",
+      author: info.author,
+      source: info.source,
+      ...(info.kind ? { kind: info.kind } : {}),
       envKeys: info.envKeys,
       tools: info.tools,
       // String-stamped at the call site rather than via Date.now() so the
@@ -127,7 +141,7 @@ export class ApprovalCoordinator {
     };
     this.send(frame);
     this.log.info(
-      { mcp: info.mcp, envKeys: info.envKeys, toolCount: info.tools.length },
+      { mcp: info.mcp, source: info.source, author: info.author, envKeys: info.envKeys, toolCount: info.tools.length },
       `mcp-discovered emitted`,
     );
   }
@@ -257,9 +271,8 @@ export class ApprovalCoordinator {
 // when the MCP is a customer drop-in (gate applies). Centralised so a
 // future widening of the gate predicate touches one place.
 function describeGateMismatch(status: McpStatus): string | undefined {
-  if (status.source === "yaml") {
-    return "not_gated: yaml-listed MCP, no approval needed";
-  }
+  // Phase 2c: yaml entries are gated too. Only controller-pushed (Type 2)
+  // MCPs stay outside the gate — pushing one is already the operator's consent.
   if (status.source === "controller-config") {
     return "not_gated: 3rd-party MCP, use mcp-config-snapshot";
   }

@@ -1,3 +1,15 @@
+// MULTI-PLATFORM-MCP Phase 6 (§5.8) — the inspector serves one view per tunnel
+// workspace. `currentWs` is the workspace this tab shows; every
+// workspace-scoped route and the event stream carry it as `?ws=`. Null until
+// the first snapshot names one, and with exactly one workspace the server
+// accepts it omitted, so a single-controller connector behaves as before.
+let currentWs = null;
+let workspaceList = [];
+function wsUrl(path) {
+  if (!currentWs) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}ws=${encodeURIComponent(currentWs)}`;
+}
+
 // Inspector UI — vanilla JS. Streams frames from /events (SSE).
 //   left col:  manifest (with Available Tools) on top + frames log below
 //   right col: detail pane — empty until the user clicks a tool or frame.
@@ -107,7 +119,7 @@ async function runRescanLocal() {
   elRescanLocalStatus.textContent = 'scanning…';
   elRescanLocalStatus.className = 'muted';
   try {
-    const resp = await fetch('/mcp/rescan-local', {
+    const resp = await fetch(wsUrl('/mcp/rescan-local'), {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
     });
@@ -151,7 +163,7 @@ elReconnect.addEventListener('click', async () => {
   elReconnect.disabled = true;
   elReconnect.textContent = RECONNECT_LABEL_PENDING;
   try {
-    await fetch('/reconnect', {
+    await fetch(wsUrl('/reconnect'), {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
     });
@@ -565,7 +577,7 @@ async function runOnce({ simple, readers, serverName, tool, runBtn, status, resu
   status.className = 'run-status pending';
   runBtn.disabled = true;
   try {
-    const resp = await fetch('/tool/call', {
+    const resp = await fetch(wsUrl('/tool/call'), {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
       body: JSON.stringify({ server: serverName, tool: tool.name, args }),
@@ -797,7 +809,7 @@ function buildMcpMessagesDetail(sel) {
 
   void (async () => {
     try {
-      const resp = await fetch(`/mcp/messages?mcp=${encodeURIComponent(sel.serverName)}`);
+      const resp = await fetch(wsUrl(`/mcp/messages?mcp=${encodeURIComponent(sel.serverName)}`));
       const body = await resp.json().catch(() => ({}));
       const messages = (body.ok && Array.isArray(body.messages)) ? body.messages : [];
       list.replaceChildren();
@@ -946,7 +958,7 @@ function buildMcpCredsView(name) {
   // Fetch envKeys async; populate form when ready.
   void (async () => {
     try {
-      const resp = await fetch(`/mcp/env-keys?mcp=${encodeURIComponent(name)}`);
+      const resp = await fetch(wsUrl(`/mcp/env-keys?mcp=${encodeURIComponent(name)}`));
       const body = await resp.json().catch(() => ({}));
       const keys = (body.ok && Array.isArray(body.envKeys)) ? body.envKeys : [];
       if (keys.length === 0) {
@@ -997,7 +1009,7 @@ function buildMcpCredsView(name) {
     statusEl.textContent = 'applying…';
     statusEl.className = 'mcp-creds-status pending';
     try {
-      const resp = await fetch('/mcp/session-creds-apply', {
+      const resp = await fetch(wsUrl('/mcp/session-creds-apply'), {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
         body: JSON.stringify({ mcp: name, env }),
@@ -1024,7 +1036,7 @@ function buildMcpCredsView(name) {
     statusEl.textContent = 'clearing…';
     statusEl.className = 'mcp-creds-status pending';
     try {
-      const resp = await fetch('/mcp/session-creds-clear', {
+      const resp = await fetch(wsUrl('/mcp/session-creds-clear'), {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
         body: JSON.stringify({ mcp: name }),
@@ -1417,7 +1429,7 @@ async function invokeMcpAction(path, mcp, status) {
   status.textContent = 'working…';
   status.className = 'mcp-action-status pending';
   try {
-    const resp = await fetch(path, {
+    const resp = await fetch(wsUrl(path), {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
       body: JSON.stringify({ mcp }),
@@ -1563,12 +1575,22 @@ function renderWebhooks(list) {
   }
 }
 
+let eventSource = null;
 function connectSse() {
-  const es = new EventSource('/events');
+  eventSource?.close();
+  const es = new EventSource(wsUrl('/events'));
+  eventSource = es;
   es.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     switch (ev.kind) {
-      case 'snapshot': applySnapshot(ev); break;
+      case 'snapshot':
+        // The snapshot names the workspace it describes; adopt it so every
+        // later request targets the same one.
+        if (ev.ws) currentWs = ev.ws;
+        if (ev.workspaces) renderWorkspacePicker(ev.workspaces);
+        applySnapshot(ev);
+        break;
+      case 'workspaces': renderWorkspacePicker(ev.workspaces); break;
       case 'state':
         setStatus(ev.state, ev.reconnect);
         setReconnectButtonState(ev.state);
@@ -1580,9 +1602,8 @@ function connectSse() {
         break;
       case 'tunnelConfigChanged':
         // Emitted by the connector after a successful register-ack (or a
-        // token-clear on unknown_registration_token) so the Convo Agent
-        // panel re-fetches and updates the REGISTRATION badge without a
-        // page reload.
+        // token-clear on unknown_registration_token) so the Tunnels panel
+        // re-fetches and updates the REGISTRATION badge without a reload.
         void fetchTunnelConfig();
         break;
       case 'manifest': renderManifest(ev.manifest); break;
@@ -1597,6 +1618,48 @@ function connectSse() {
   };
   es.onerror = () => { /* EventSource auto-retries */ };
 }
+
+// Workspace picker (§5.8). Hidden with one workspace — a single-controller
+// connector looks exactly as it did before Phase 6 — and shown with several,
+// one option per controller entry, labelled with its tunnel state. Switching
+// re-opens the event stream for that workspace; the first snapshot repaints
+// every per-workspace panel.
+const elWorkspacePicker = document.getElementById('workspace-picker');
+const elWorkspaceSelect = document.getElementById('workspace-select');
+function renderWorkspacePicker(list) {
+  workspaceList = list || [];
+  // The current workspace was removed: fall back to the first one left.
+  if (currentWs && workspaceList.length > 0 && !workspaceList.some((w) => w.id === currentWs)) {
+    currentWs = workspaceList[0].id;
+    connectSse();
+    return;
+  }
+  // The first workspace appeared after a zero-workspace boot: adopt it.
+  if (!currentWs && workspaceList.length > 0) {
+    currentWs = workspaceList[0].id;
+    connectSse();
+    return;
+  }
+  elWorkspacePicker.hidden = workspaceList.length < 2;
+  elWorkspaceSelect.replaceChildren();
+  for (const w of workspaceList) {
+    const opt = document.createElement('option');
+    opt.value = w.id;
+    // The operator's display name; else host:port, which tells two local
+    // controllers apart where a bare hostname ("127") would not.
+    const label = w.label || w.controllerUrl.replace(/^https?:\/\//, '').split('/')[0] || w.id.slice(0, 8);
+    opt.textContent = `${label} — ${w.state}`;
+    opt.selected = w.id === currentWs;
+    elWorkspaceSelect.appendChild(opt);
+  }
+}
+elWorkspaceSelect.addEventListener('change', () => {
+  currentWs = elWorkspaceSelect.value;
+  setSelection(null);
+  connectSse();
+  // The trusted issuer is per controller, so follow the workspace.
+  void fetchTrustedIssuer();
+});
 
 const LEFT_COL_KEY = 'inspector.leftColPx';
 const LEFT_COL_MIN = 280;
@@ -1770,18 +1833,17 @@ function buildTunnelCard(row) {
 
 async function fetchTunnelConfig() {
   try {
-    const resp = await fetch('/internal/tunnel/config');
+    // Every controller entry (one per workspace). The pre-Phase-6
+    // /internal/tunnel/config still answers for the first one; the list is
+    // what this panel renders now.
+    const resp = await fetch('/internal/tunnels');
     if (resp.status === 404) {
-      // This used to mean env mode: identity came from .env and these routes
-      // were never wired, so the panel rendered a legacy banner. env mode is
-      // gone and the routes are now always present, so a 404 means the route
-      // is genuinely missing — a stale build, or something in front of the
-      // inspector eating the path. Report it instead of presenting a removed
-      // configuration as if it were supported.
+      // A 404 means the route is genuinely missing — a stale build, or
+      // something in front of the inspector eating the path.
       tunnelState = { ...tunnelState, mode: 'error', rows: [], row: null };
       showTunnelView('empty');
       renderTunnelList([]);
-      setTunnelActionStatus('/internal/tunnel/config returned 404 — the connector may be serving a stale build', false);
+      setTunnelActionStatus('/internal/tunnels returned 404 — the connector may be serving a stale build', false);
       return;
     }
     const body = await resp.json().catch(() => ({}));
@@ -1792,21 +1854,19 @@ async function fetchTunnelConfig() {
       setTunnelActionStatus(body.error || `HTTP ${resp.status}`, false);
       return;
     }
-    if (!body.configured) {
+    const rows = body.rows || [];
+    if (rows.length === 0) {
       tunnelState = { ...tunnelState, mode: 'empty', rows: [], row: null };
       showTunnelView('empty');
       renderTunnelList([]);
       return;
     }
-    const rows = [body.row];
-    tunnelState = { ...tunnelState, mode: 'configured', rows, row: body.row };
+    tunnelState = { ...tunnelState, mode: 'configured', rows, row: rows[0] };
     renderTunnelList(rows);
     showTunnelView('configured');
-    // If the operator was already looking at this tunnel's detail, refresh
-    // it so the badge state / lastConnectedAt reflect the new fetch.
-    if (selection?.kind === 'tunnel' && selection.tunnelId === body.row.id) {
-      renderDetail();
-    }
+    // If the operator was already looking at a tunnel's detail, refresh it
+    // so the badge state / lastConnectedAt reflect the new fetch.
+    if (selection?.kind === 'tunnel') renderDetail();
   } catch (err) {
     tunnelState = { ...tunnelState, mode: 'error', rows: [], row: null };
     showTunnelView('empty');
@@ -1861,6 +1921,7 @@ function buildTunnelDetailPanel(sel) {
     <div class="tunnel-actions">
       <button type="button" data-role="edit">Edit</button>
       <button type="button" data-role="force">Force re-registration</button>
+      <button type="button" data-role="remove">Remove</button>
     </div>
     ${tunnelState.actionStatus ? `
       <div class="tunnel-action-status ${tunnelState.actionStatus.ok ? 'ok' : 'err'}">${escapeHtml(tunnelState.actionStatus.text)}</div>
@@ -1873,6 +1934,9 @@ function buildTunnelDetailPanel(sel) {
   view.querySelector('button[data-role="force"]').addEventListener('click', () => {
     void handleForceReregister(row);
   });
+  view.querySelector('button[data-role="remove"]').addEventListener('click', () => {
+    void handleRemoveTunnel(row);
+  });
 
   return view;
 }
@@ -1881,8 +1945,12 @@ function buildTunnelDetailPanel(sel) {
 // Optional `row` param: which tunnel is being edited. Defaults to
 // tunnelState.row (today's single-row shape) so the "Configure tunnel"
 // empty-state click keeps working without a callsite change.
-function openTunnelModal(mode /* 'configure' | 'edit' */, row) {
-  elTunnelModalTitle.textContent = mode === 'edit' ? 'Edit tunnel' : 'Configure tunnel';
+// The entry the open modal edits (null = adding a new controller). Phase 6:
+// 'add' always creates a new entry — a new workspace — even when others exist.
+let tunnelModalTarget = null;
+function openTunnelModal(mode /* 'configure' | 'edit' | 'add' */, row) {
+  tunnelModalTarget = mode === 'edit' ? (row ?? tunnelState.row) : null;
+  elTunnelModalTitle.textContent = mode === 'edit' ? 'Edit tunnel' : mode === 'add' ? 'Add controller' : 'Configure tunnel';
   elTunnelFormSubmit.textContent = mode === 'edit' ? 'Save & reconnect' : 'Save & connect';
   elTunnelFormError.hidden = true;
   elTunnelForm.reset();
@@ -1978,12 +2046,13 @@ elTunnelForm.querySelectorAll('input[name="authMode"]').forEach((r) => {
 // the Edit / Force re-registration buttons are per-tunnel and live inside
 // the right-pane detail — bound in buildTunnelDetailPanel above.
 elTunnelConfigureBtn?.addEventListener('click', () => openTunnelModal('configure'));
+document.getElementById('tunnel-add-btn')?.addEventListener('click', () => openTunnelModal('add'));
 
 // Optional `row` param preserves the eventual multi-tunnel shape — today's
 // backend endpoint targets the single configured row and ignores which one
 // the caller specified. Once the controller migrates to per-row endpoints
 // this handler will thread the id through.
-async function handleForceReregister(row) {  // eslint-disable-line no-unused-vars
+async function handleForceReregister(row) {
   if (!confirm(
     'Force re-registration will clear this connector\'s registration token and redial the tunnel.\n\n' +
     'IMPORTANT: if the controller-side MCP Tunnel row still exists (Settings → MCP Tunnel), the next register-ack will FAIL with "organisation_has_connector" — you\'ll need to delete the controller-side row first, then click Reconnect.\n\n' +
@@ -2000,6 +2069,7 @@ async function handleForceReregister(row) {  // eslint-disable-line no-unused-va
     const resp = await fetch('/internal/tunnel/force-reregister', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
+      body: JSON.stringify(row?.id ? { id: row.id } : {}),
     });
     const body = await resp.json().catch(() => ({}));
     if (resp.status >= 400 || body.ok === false) {
@@ -2008,6 +2078,34 @@ async function handleForceReregister(row) {  // eslint-disable-line no-unused-va
       setTunnelActionStatus('re-registration triggered', true);
       await fetchTunnelConfig();
     }
+  } catch (err) {
+    setTunnelActionStatus(String(err.message || err), false);
+  }
+}
+
+// Remove a controller entry: stops its workspace — every child it runs — and
+// deletes that workspace's storage directory (MCP state). Irreversible.
+async function handleRemoveTunnel(row) {
+  if (!confirm(
+    `Remove the tunnel to ${row.controllerUrl}?\n\n` +
+    'This closes the tunnel, stops every MCP child running for it, and DELETES its stored MCP state ' +
+    '(for example agentic-memory\'s memory for this controller). It cannot be undone.\n\nContinue?',
+  )) return;
+  setTunnelActionStatus('removing…', true);
+  try {
+    const resp = await fetch('/internal/tunnel/remove', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
+      body: JSON.stringify({ id: row.id }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status >= 400 || body.ok === false) {
+      setTunnelActionStatus(body.error || `HTTP ${resp.status}`, false);
+      return;
+    }
+    setSelection(null);
+    setTunnelActionStatus('tunnel removed', true);
+    await fetchTunnelConfig();
   } catch (err) {
     setTunnelActionStatus(String(err.message || err), false);
   }
@@ -2032,14 +2130,15 @@ elTunnelForm.addEventListener('submit', async (ev) => {
     ...(displayName ? { name: displayName } : {}),
   };
 
-  const editing = tunnelState.mode === 'configured' && tunnelState.row;
+  // Editing an existing entry, or adding (configure with none / Add controller).
+  const editing = tunnelModalTarget;
 
   if (authMode === 'static-bearer') {
     const token = String(fd.get('tunnelAuthToken') || '');
     // Edit mode + blank token + existing secret → skip so server keeps sealed value.
     // First-configure with a blank token is a validation error surfaced by the server.
     if (token) payload.tunnelAuthToken = token;
-    else if (!editing || !tunnelState.row?.hasTunnelAuthToken) {
+    else if (!editing || !editing.hasTunnelAuthToken) {
       elTunnelFormError.textContent = 'Tunnel auth token is required for the static-bearer posture.';
       elTunnelFormError.hidden = false;
       return;
@@ -2056,7 +2155,7 @@ elTunnelForm.addEventListener('submit', async (ev) => {
     payload.oauthClientId = clientId;
     payload.oauthTokenUrl = tokenUrl;
     if (clientSecret) payload.oauthClientSecret = clientSecret;
-    else if (!editing || !tunnelState.row?.hasOauthClientSecret) {
+    else if (!editing || !editing.hasOauthClientSecret) {
       elTunnelFormError.textContent = 'OAuth Client Secret is required.';
       elTunnelFormError.hidden = false;
       return;
@@ -2068,10 +2167,12 @@ elTunnelForm.addEventListener('submit', async (ev) => {
   elTunnelFormSubmit.textContent = editing ? 'Saving & reconnecting…' : 'Saving & connecting…';
 
   try {
-    const resp = await fetch('/internal/tunnel/creds', {
+    // Edit names its entry; a new controller is always an add (a new
+    // workspace), never an overwrite of the first entry.
+    const resp = await fetch(editing ? '/internal/tunnel/creds' : '/internal/tunnel/add', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-inspector-request': '1' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(editing ? { ...payload, id: editing.id } : payload),
     });
     const body = await resp.json().catch(() => ({}));
     if (resp.status >= 400 || body.ok === false) {
@@ -2181,7 +2282,8 @@ elApiClientForm?.addEventListener('submit', async (e) => {
   try {
     const name = new FormData(elApiClientForm).get('name');
     const resp = await fetch('/internal/network-access/clients', {
-      method: 'POST', headers: csrfHeaders, body: JSON.stringify({ name: name || undefined }),
+      // Phase 6: a client is bound to one controller — the workspace on screen.
+      method: 'POST', headers: csrfHeaders, body: JSON.stringify({ name: name || undefined, ...(currentWs ? { controllerId: currentWs } : {}) }),
     });
     const body = await resp.json().catch(() => ({}));
     if (!resp.ok || body.ok === false) throw new Error(body.error || `HTTP ${resp.status}`);
@@ -2332,7 +2434,11 @@ function renderTrustedIssuer(config) {
 
 async function fetchTrustedIssuer() {
   try {
-    const resp = await fetch('/internal/network-access/trusted-issuer');
+    // Phase 6: each controller has its own trusted issuer — show the one for
+    // the workspace on screen.
+    const resp = await fetch(currentWs
+      ? `/internal/network-access/trusted-issuer?controllerId=${encodeURIComponent(currentWs)}`
+      : '/internal/network-access/trusted-issuer');
     const body = await resp.json();
     if (body.ok) renderTrustedIssuer(body.config);
   } catch { /* leave prior state rendered — non-fatal */ }
@@ -2351,7 +2457,7 @@ elTrustedIssuerForm?.addEventListener('submit', async (e) => {
       audience: (fd.get('audience') || '').trim(),
     };
     const resp = await fetch('/internal/network-access/trusted-issuer', {
-      method: 'POST', headers: csrfHeaders, body: JSON.stringify(payload),
+      method: 'POST', headers: csrfHeaders, body: JSON.stringify(currentWs ? { ...payload, controllerId: currentWs } : payload),
     });
     const body = await resp.json().catch(() => ({}));
     if (!resp.ok || body.ok === false) throw new Error(body.error || `HTTP ${resp.status}`);
@@ -2370,7 +2476,7 @@ elTrustedIssuerClear?.addEventListener('click', async () => {
   elTrustedIssuerClear.disabled = true;
   try {
     const resp = await fetch('/internal/network-access/trusted-issuer/clear', {
-      method: 'POST', headers: csrfHeaders, body: '{}',
+      method: 'POST', headers: csrfHeaders, body: JSON.stringify(currentWs ? { controllerId: currentWs } : {}),
     });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     elTrustedIssuerForm?.reset();

@@ -251,6 +251,8 @@ describe("v1.3 boot flow — discovered frame shape", () => {
 
     approval.emitDiscovered({
       mcp: "crm",
+      author: "customer",
+      source: "dropin",
       envKeys: ["MOCK_CUSTOMERS_URL"],
       tools: [
         { name: "get_customer", description: "Look up by phone." },
@@ -262,7 +264,8 @@ describe("v1.3 boot flow — discovered frame shape", () => {
     const frame = sent[0] as McpDiscoveredFrame;
     expect(frame.type).toBe("mcp-discovered");
     expect(frame.author).toBe("customer");
-    expect(frame.source).toBe("local");
+    // Wire value since Phase 2c; the supervisor still says "local" internally.
+    expect(frame.source).toBe("dropin");
     expect(frame.tools).toHaveLength(2);
     // Schemas deliberately withheld — not in the descriptor type.
     const firstTool = frame.tools[0] as Record<string, unknown>;

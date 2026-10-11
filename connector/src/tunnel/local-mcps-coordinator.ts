@@ -13,18 +13,23 @@
 // rescan() re-runs discoverDropins({yamlNames}) and reconciles by diff
 // against the running supervisor entries:
 //   * added   → registerOne(spec, {source: "local"}) → startOne(name)
-//               + fan-out a single creds-request for that MCP
+//               + onMcpAdded. Under lazy spawn (startOnAdd: false) the
+//               start is skipped: onMcpAdded announces the folder from the
+//               DiscoveryCache and the child starts on its mcp-enable.
 //   * removed → unregister(name)
-//   * changed → replaceSpec(name, newSpec) (restart)
+//   * changed → present before and after, but its code fingerprint moved
+//               (only when `fingerprint` is supplied) → onMcpChanged. The ack
+//               still lists it under `unchanged` — the frame has no "changed"
+//               field, and the folder SET did not change.
 //
 // Manifest changes ride the existing manifest-delta path (the supervisor's
-// onRestart callback in boot/lifecycle.ts triggers refreshManifestAndPushDelta
+// onRestart callback in boot/workspace.ts triggers refreshManifestAndPushDelta
 // on every replaceSpec, and a supervisor.startOne wakes up the boot wiring's
 // existing manifest builder via the same callback chain). The dedicated
 // local-mcps-rescan-ack carries only the diff summary.
 //
 // LIFETIME — same shape as McpConfigCoordinator (read its LIFETIME comment
-// before changing this one). Constructed ONCE per connector process: the
+// before changing this one). Constructed ONCE per workspace (TunnelWorkspace): the
 // coordinator's only state is an in-flight debounce flag, which must NOT
 // reset on WS reconnect — a click against the inspector during a
 // controller-triggered rescan should still be deduped. Per-tunnel rebind
@@ -51,7 +56,20 @@ export interface LocalMcpsCoordinatorOpts {
   // creds-request for the freshly-spawned MCP. The connector already issues
   // creds-request for every MCP at boot; rescan-added MCPs missed that
   // window, so the coordinator wakes them up here. Optional.
-  onMcpAdded?: (name: string) => void | Promise<void>;
+  // Returns the new MCP's tool count when it knows one without a running
+  // child (lazy spawn: from the DiscoveryCache), for the ack.
+  onMcpAdded?: (name: string) => void | number | Promise<void | number>;
+  // false = register an added folder without starting it (lazy spawn, §5.3).
+  // Default true, the pre-Phase-6 behaviour.
+  startOnAdd?: boolean;
+  // Code fingerprint of a folder (DiscoveryCache's folderFingerprint). When
+  // supplied, a rescan detects a folder whose code changed and calls
+  // onMcpChanged with its fresh spec. `initial` seeds the baseline with the
+  // folders discovered at boot, so a change made before the first rescan is
+  // still seen.
+  fingerprint?: (dir: string) => string;
+  initial?: DropinSpec[];
+  onMcpChanged?: (spec: DropinSpec) => void | Promise<void>;
 }
 
 export interface LocalMcpsCoordinatorBind {
@@ -67,10 +85,13 @@ export class LocalMcpsCoordinator {
   // — the in-flight scan covers the new state too. Cheaper than a debounce
   // window.
   private rescanInFlight = false;
+  // name → code fingerprint as of the last scan that saw it.
+  private readonly fingerprints = new Map<string, string>();
 
   constructor(private readonly opts: LocalMcpsCoordinatorOpts) {
     this.send = opts.send;
     this.log = opts.log;
+    for (const spec of opts.initial ?? []) this.remember(spec);
   }
 
   // Per-tunnel rebind. Same contract as McpConfigCoordinator.bind: swap the
@@ -145,35 +166,48 @@ export class LocalMcpsCoordinator {
     // mark as unchanged. (A future enhancement could compare spec.env or
     // discovered tool-file mtimes; out of scope for L2's "operator clicked
     // refresh" flow.)
+    const changed: string[] = [];
     for (const spec of fresh) {
       if (this.opts.supervisor.hasEntry(spec.name)) {
         unchanged.push(spec.name);
+        if (this.codeChanged(spec)) {
+          try {
+            await this.opts.onMcpChanged?.(spec);
+            this.remember(spec);
+            changed.push(spec.name);
+          } catch (err) {
+            errors.push({ name: spec.name, error: (err as Error).message });
+          }
+        }
         continue;
       }
       try {
         this.opts.supervisor.registerOne(spec, { source: "local" });
-        await this.opts.supervisor.startOne(spec.name, "local-mcps-rescan");
-        // Fan out creds-request for the new MCP via the boot wiring's hook.
-        // The connector's existing creds-request flow runs at register-ack
-        // for every MCP; rescan-added entries miss that window, so we wake
-        // them up here.
-        await this.opts.onMcpAdded?.(spec.name);
-        // Tools count comes from the manifest builder via onApplied below.
-        // We don't have it yet at this point.
-        added.push({ name: spec.name, toolsCount: 0 });
+        if (this.opts.startOnAdd !== false) {
+          await this.opts.supervisor.startOne(spec.name, "local-mcps-rescan");
+        }
+        // Fan out creds-request (eager) or mcp-discovered (lazy) for the new
+        // MCP via the workspace's hook. Both normally run after register-ack;
+        // rescan-added entries miss that window, so we wake them up here.
+        const count = await this.opts.onMcpAdded?.(spec.name);
+        this.remember(spec);
+        // Eager: tools count comes from the manifest builder via onApplied
+        // below. Lazy: the hook answered from the DiscoveryCache.
+        added.push({ name: spec.name, toolsCount: typeof count === "number" ? count : 0 });
       } catch (err) {
         errors.push({ name: spec.name, error: (err as Error).message });
       }
     }
+    for (const name of removed) this.fingerprints.delete(name);
 
-    if (added.length > 0 || removed.length > 0) {
+    if (added.length > 0 || removed.length > 0 || changed.length > 0) {
       try {
         await this.opts.onApplied?.();
         // After onApplied refreshes the manifest, fill in the toolsCounts
         // we couldn't supply during the spawn loop.
         for (const item of added) {
           const status = this.opts.supervisor.statusList().find((s) => s.name === item.name);
-          if (status) item.toolsCount = status.toolsCount;
+          if (status && status.process === "running") item.toolsCount = status.toolsCount;
         }
       } catch (err) {
         this.log.error({ err: err as Error }, `local-mcps rescan onApplied hook failed`);
@@ -181,11 +215,25 @@ export class LocalMcpsCoordinator {
     }
 
     this.log.info(
-      { added: added.map((a) => a.name), removed, unchanged, errorCount: errors.length },
+      { added: added.map((a) => a.name), removed, unchanged, changed, errorCount: errors.length },
       `local-mcps rescan applied`,
     );
 
     return { type: "local-mcps-rescan-ack", added, removed, unchanged, errors };
+  }
+
+  private remember(spec: DropinSpec): void {
+    if (this.opts.fingerprint && spec.dir) this.fingerprints.set(spec.name, this.opts.fingerprint(spec.dir));
+  }
+
+  // A folder with no baseline is not "changed" — it gets one now, so the
+  // NEXT edit is seen. Only reachable for an entry the coordinator did not
+  // add and was not seeded with.
+  private codeChanged(spec: DropinSpec): boolean {
+    if (!this.opts.fingerprint || !spec.dir) return false;
+    const prior = this.fingerprints.get(spec.name);
+    if (prior === undefined) { this.remember(spec); return false; }
+    return prior !== this.opts.fingerprint(spec.dir);
   }
 }
 
