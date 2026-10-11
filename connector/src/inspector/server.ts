@@ -68,6 +68,9 @@ export interface WorkspaceSummary {
   id: string;
   controllerUrl: string;
   state: DisplayState;
+  // The operator's display name for the entry — what the picker shows. Two
+  // workspaces can share a connectorName or a hostname, never an entry.
+  label?: string;
   connectorName?: string;
 }
 
@@ -236,8 +239,18 @@ export class WorkspaceView {
       id: this.id,
       controllerUrl: this.current.controllerUrl,
       state: this.current.state,
+      ...(this.label ? { label: this.label } : {}),
       ...(this.current.header?.connectorName ? { connectorName: this.current.header.connectorName } : {}),
     };
+  }
+
+  private label: string | undefined;
+
+  // The entry's display name, for the workspace picker.
+  setLabel(label: string): void {
+    if (label === this.label) return;
+    this.label = label;
+    this.onSummaryChange();
   }
 
   // Read-only handle for the IPC routes below.
@@ -1095,12 +1108,18 @@ function handleSessionCredsRoute(
   inspector: WorkspaceView,
   path: string,
 ): boolean {
+  // Caught here (not at the dispatcher) because this helper answers "did the
+  // path match" synchronously; a rejection must still never escape.
+  const fail = (err: unknown) => {
+    log.error({ err: err as Error, path }, `inspector route failed`);
+    if (!res.writableEnded) { res.statusCode = 500; res.end('{"ok":false,"error":"internal error"}'); }
+  };
   if (path === "/mcp/session-creds-apply") {
-    void handleApplySessionCreds(req, res, inspector);
+    handleApplySessionCreds(req, res, inspector).catch(fail);
     return true;
   }
   if (path === "/mcp/session-creds-clear") {
-    void handleClearSessionCreds(req, res, inspector);
+    handleClearSessionCreds(req, res, inspector).catch(fail);
     return true;
   }
   return false;
@@ -1261,7 +1280,26 @@ const WORKSPACE_POST_ROUTES = new Set([
 ]);
 
 export function startInspector(port: number, inspector: Inspector, opts?: { networkAccessEnabled?: boolean }): Server {
+  // Every route promise is returned and caught HERE. A handler that throws or
+  // rejects must cost one request, never the process: with one workspace per
+  // tunnel (Phase 6) a crash takes every tenant's tunnel down with it. Found
+  // by the first two-workspace browser run — a single-controller-only store
+  // call threw inside a `void`ed handler and exited the connector.
   const server = createServer((req, res) => {
+    void Promise.resolve()
+      .then(() => dispatch(req, res))
+      .catch((err) => {
+        log.error({ err: err as Error, path: req.url, method: req.method }, `inspector route failed`);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader("content-type", "application/json");
+        }
+        if (!res.writableEnded) res.end(JSON.stringify({ ok: false, error: (err as Error)?.message ?? "internal error" }));
+      });
+  });
+
+  // Returns the route's promise (or undefined for a synchronous answer).
+  function dispatch(req: IncomingMessage, res: ServerResponse): unknown {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
 
@@ -1287,7 +1325,7 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     // Token-routed: the child's bearer names its workspace (§5.5), so these
     // take no `ws` parameter.
     if (path === "/internal/webhook/revoke" && req.method === "POST") {
-      void handleRevoke(req, res, inspector);
+      return handleRevoke(req, res, inspector);
       return;
     }
     if (path === "/internal/webhook/stream" && req.method === "GET") {
@@ -1297,7 +1335,7 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
       return;
     }
     if (path === "/internal/controller-api/call" && req.method === "POST") {
-      void handleControllerApiCall(req, res, inspector);
+      return handleControllerApiCall(req, res, inspector);
       return;
     }
     // Workspace-scoped operator routes (§5.8): `?ws=<entryId>`.
@@ -1308,16 +1346,16 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
       const view = viewFor(res, inspector, ws);
       if (!view) return;
       const mcp = url.searchParams.get("mcp") ?? "";
-      if (path === "/tool/call") { void handleToolCall(req, res, view); return; }
-      if (path === "/mcp/reload-creds") { void handleMcpAction(req, res, view, "reloadCreds"); return; }
-      if (path === "/mcp/restart") { void handleMcpAction(req, res, view, "restart"); return; }
-      if (path === "/mcp/messages/clear") { void handleClearMcpMessages(req, res, view); return; }
-      if (path === "/mcp/rescan-local") { void handleRescanLocal(req, res, view); return; }
+      if (path === "/tool/call") { return handleToolCall(req, res, view); return; }
+      if (path === "/mcp/reload-creds") { return handleMcpAction(req, res, view, "reloadCreds"); return; }
+      if (path === "/mcp/restart") { return handleMcpAction(req, res, view, "restart"); return; }
+      if (path === "/mcp/messages/clear") { return handleClearMcpMessages(req, res, view); return; }
+      if (path === "/mcp/rescan-local") { return handleRescanLocal(req, res, view); return; }
       // INSPECTOR-CREDS-VISIBILITY (W-S4): write-only routes for the
       // developer-pasted session creds layer. The routes NEVER read back
       // values — there is no GET sibling. See W-S9 L1 in the plan.
       if (handleSessionCredsRoute(req, res, view, path)) return;
-      if (path === "/mcp/env-keys") { void handleEnvKeys(req, res, view, mcp); return; }
+      if (path === "/mcp/env-keys") { return handleEnvKeys(req, res, view, mcp); return; }
       if (path === "/mcp/messages") {
         res.setHeader("content-type", "application/json");
         res.statusCode = 200;
@@ -1329,40 +1367,40 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     // Tunnel routes — only wired in DB mode (bootFromDb). Return 404 in env mode.
     if (path === "/internal/tunnel/config" && req.method === "GET") {
       if (inspector.tunnelRoutes) {
-        void inspector.tunnelRoutes.handleGetConfig(req, res);
+        return inspector.tunnelRoutes.handleGetConfig(req, res);
         return;
       }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/tunnels" && req.method === "GET") {
-      if (inspector.tunnelRoutes?.handleListTunnels) { void inspector.tunnelRoutes.handleListTunnels(req, res); return; }
+      if (inspector.tunnelRoutes?.handleListTunnels) { return inspector.tunnelRoutes.handleListTunnels(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/tunnel/add" && req.method === "POST") {
-      if (inspector.tunnelRoutes?.handleAddTunnel) { void inspector.tunnelRoutes.handleAddTunnel(req, res); return; }
+      if (inspector.tunnelRoutes?.handleAddTunnel) { return inspector.tunnelRoutes.handleAddTunnel(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/tunnel/remove" && req.method === "POST") {
-      if (inspector.tunnelRoutes?.handleRemoveTunnel) { void inspector.tunnelRoutes.handleRemoveTunnel(req, res); return; }
+      if (inspector.tunnelRoutes?.handleRemoveTunnel) { return inspector.tunnelRoutes.handleRemoveTunnel(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/tunnel/creds" && req.method === "POST") {
       if (inspector.tunnelRoutes) {
-        void inspector.tunnelRoutes.handlePostCreds(req, res);
+        return inspector.tunnelRoutes.handlePostCreds(req, res);
         return;
       }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/tunnel/force-reregister" && req.method === "POST") {
       if (inspector.tunnelRoutes) {
-        void inspector.tunnelRoutes.handleForceReregister(req, res);
+        return inspector.tunnelRoutes.handleForceReregister(req, res);
         return;
       }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/identity/regenerate" && req.method === "POST") {
       if (inspector.tunnelRoutes) {
-        void inspector.tunnelRoutes.handleRegenerateShimId(req, res);
+        return inspector.tunnelRoutes.handleRegenerateShimId(req, res);
         return;
       }
       res.statusCode = 404; res.end(); return;
@@ -1373,53 +1411,53 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     // api_clients table lives in the same always-present ConfigStore.
     // Loopback-only per the gate above — these are operator actions.
     if (path === "/internal/network-access/status" && req.method === "GET") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleStatus(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleStatus(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/clients" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleAddClient(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleAddClient(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/clients" && req.method === "GET") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleListClients(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleListClients(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/clients/revoke" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleRevokeClient(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleRevokeClient(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/clients/delete" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleDeleteClient(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleDeleteClient(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     // FEDERATED-JWT-MODE — trusted-issuer config, folded into the same
     // NetworkAccessRoutes factory (same deps, same loopback-only trust tier).
     if (path === "/internal/network-access/trusted-issuer" && req.method === "GET") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleGetTrustedIssuer(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleGetTrustedIssuer(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/trusted-issuer" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleSetTrustedIssuer(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleSetTrustedIssuer(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/internal/network-access/trusted-issuer/clear" && req.method === "POST") {
-      if (inspector.networkAccessRoutes) { void inspector.networkAccessRoutes.handleClearTrustedIssuer(req, res); return; }
+      if (inspector.networkAccessRoutes) { return inspector.networkAccessRoutes.handleClearTrustedIssuer(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/oauth/token" && req.method === "POST") {
-      if (inspector.oauthTokenHandler) { void inspector.oauthTokenHandler(req, res); return; }
+      if (inspector.oauthTokenHandler) { return inspector.oauthTokenHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/v1/outbound/calls" && req.method === "POST") {
-      if (inspector.outboundCallsHandler) { void inspector.outboundCallsHandler(req, res); return; }
+      if (inspector.outboundCallsHandler) { return inspector.outboundCallsHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/v1/memory/events" && req.method === "POST") {
-      if (inspector.memoryEventsHandler) { void inspector.memoryEventsHandler(req, res); return; }
+      if (inspector.memoryEventsHandler) { return inspector.memoryEventsHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
     if (path === "/v1/identity/list" && req.method === "POST") {
-      if (inspector.identityListHandler) { void inspector.identityListHandler(req, res); return; }
+      if (inspector.identityListHandler) { return inspector.identityListHandler(req, res); return; }
       res.statusCode = 404; res.end(); return;
     }
 
@@ -1427,7 +1465,7 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     if (path === "/app.js" || path === "/style.css") { void serveStatic(res, path.slice(1)); return; }
     res.statusCode = 404;
     res.end();
-  });
+  }
   server.requestTimeout = 0;
   server.headersTimeout = 0;
   server.keepAliveTimeout = 0;

@@ -45,6 +45,28 @@ async function readBody(req: IncomingMessage, res: ServerResponse): Promise<Reco
   }
 }
 
+// Phase 6 (§5.6): API clients and the trusted issuer are bound to a controller
+// entry. The entry is named by `controllerId` — a query parameter on GETs, a
+// body field on POSTs. Omitted, the store's single-controller shorthand
+// applies, and with several controllers that is answered as a 400 naming the
+// fix rather than a guess.
+function controllerIdFrom(source: URLSearchParams | Record<string, unknown>): string | undefined {
+  const v = source instanceof URLSearchParams ? source.get("controllerId") : source.controllerId;
+  return typeof v === "string" && v ? v : undefined;
+}
+
+// The store refuses to guess between several controllers, and refuses an id
+// it does not have. Both are the caller's mistake — 400, not 500.
+function isControllerChoiceError(err: unknown): boolean {
+  const m = (err as Error)?.message ?? "";
+  return /several controllers are configured|no controller with id|no controller configured/.test(m);
+}
+
+function sendChoiceError(res: ServerResponse, err: unknown): void {
+  res.statusCode = 400;
+  res.end(JSON.stringify({ ok: false, error: `${(err as Error).message} (pass controllerId)` }));
+}
+
 // GET /internal/network-access/status
 async function handleStatus(_req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
   setJsonHeaders(res);
@@ -64,7 +86,14 @@ async function handleAddClient(req: IncomingMessage, res: ServerResponse, deps: 
   const body = await readBody(req, res);
   if (!body) return;
   const name = typeof body.name === "string" && body.name ? body.name : undefined;
-  const { clientId, clientSecret } = await deps.configStore.mintApiClient(name);
+  let minted: { clientId: string; clientSecret: string };
+  try {
+    minted = await deps.configStore.mintApiClient(name, controllerIdFrom(body));
+  } catch (err) {
+    if (isControllerChoiceError(err)) { sendChoiceError(res, err); return; }
+    throw err;
+  }
+  const { clientId, clientSecret } = minted;
   const wasEnabled = (await deps.configStore.getNetworkAccessState()).enabled;
   if (!wasEnabled) await deps.configStore.setNetworkAccessEnabled(true);
   res.statusCode = 200;
@@ -89,6 +118,7 @@ async function handleListClients(_req: IncomingMessage, res: ServerResponse, dep
       name: c.name,
       createdAt: c.createdAt.toISOString(),
       revokedAt: c.revokedAt?.toISOString() ?? null,
+      controllerId: c.controllerId,
     })),
   }));
 }
@@ -140,9 +170,23 @@ async function handleDeleteClient(req: IncomingMessage, res: ServerResponse, dep
 // is entirely the customer's own IdP's responsibility.
 
 // GET /internal/network-access/trusted-issuer. No redaction — nothing secret.
-async function handleGetTrustedIssuer(_req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
+// With several controllers and no `controllerId`, answers with every entry's
+// config instead of refusing — a read can show all of them without guessing.
+async function handleGetTrustedIssuer(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
   setJsonHeaders(res);
-  const config = await deps.configStore.getTrustedIssuerConfig();
+  const controllerId = controllerIdFrom(new URL(req.url ?? "/", "http://localhost").searchParams);
+  if (!controllerId && (await deps.configStore.listControllers()).length > 1) {
+    res.statusCode = 200;
+    res.end(JSON.stringify({ ok: true, config: null, configs: await deps.configStore.listTrustedIssuers() }));
+    return;
+  }
+  let config;
+  try {
+    config = await deps.configStore.getTrustedIssuerConfig(controllerId);
+  } catch (err) {
+    if (isControllerChoiceError(err)) { sendChoiceError(res, err); return; }
+    throw err;
+  }
   res.statusCode = 200;
   res.end(JSON.stringify({ ok: true, config: config ?? null }));
 }
@@ -167,7 +211,18 @@ async function handleSetTrustedIssuer(req: IncomingMessage, res: ServerResponse,
     res.end(JSON.stringify({ ok: false, error: "issuer, jwksUrl, and audience are all required" }));
     return;
   }
-  await deps.configStore.setTrustedIssuerConfig({ issuer, jwksUrl, audience });
+  try {
+    await deps.configStore.setTrustedIssuerConfig({ issuer, jwksUrl, audience }, controllerIdFrom(body));
+  } catch (err) {
+    if (isControllerChoiceError(err)) { sendChoiceError(res, err); return; }
+    // The same iss + aud on two controllers is refused by the store.
+    if (/already trusted/.test((err as Error).message)) {
+      res.statusCode = 409;
+      res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
+      return;
+    }
+    throw err;
+  }
   const wasEnabled = (await deps.configStore.getNetworkAccessState()).enabled;
   if (!wasEnabled) await deps.configStore.setNetworkAccessEnabled(true);
   res.statusCode = 200;
@@ -186,7 +241,20 @@ async function handleSetTrustedIssuer(req: IncomingMessage, res: ServerResponse,
 async function handleClearTrustedIssuer(req: IncomingMessage, res: ServerResponse, deps: NetworkAccessRoutesDeps): Promise<void> {
   if (!guardCsrf(req, res)) return;
   setJsonHeaders(res);
-  await deps.configStore.clearTrustedIssuerConfig();
+  // An empty body is fine: the pre-Phase-6 clear sent none.
+  let controllerId: string | undefined;
+  try {
+    const body = await readJsonBody(req) as Record<string, unknown> | undefined;
+    controllerId = body && typeof body === "object" ? controllerIdFrom(body) : undefined;
+  } catch {
+    controllerId = undefined;
+  }
+  try {
+    await deps.configStore.clearTrustedIssuerConfig(controllerId);
+  } catch (err) {
+    if (isControllerChoiceError(err)) { sendChoiceError(res, err); return; }
+    throw err;
+  }
   res.statusCode = 200;
   res.end(JSON.stringify({ ok: true }));
 }

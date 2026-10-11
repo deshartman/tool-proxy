@@ -9,6 +9,12 @@
   <header id="app-header">
     <div class="header-meta">
       <h1>MCP Connector Inspector</h1>
+      <!-- Phase 6: one view per tunnel workspace. Hidden with a single
+           controller, so the header looks as it always did. -->
+      <div class="meta" id="workspace-picker" hidden>
+        <span class="muted">workspace:</span>
+        <select id="workspace-select" aria-label="Tunnel workspace"></select>
+      </div>
       <div class="meta">
         <span class="muted">controller:</span>
         <code id="controller-url">…</code>
@@ -60,15 +66,15 @@
             <button id="tunnel-configure-btn" type="button" class="tunnel-primary-btn">Configure tunnel</button>
           </div>
 
-          <!-- One .tunnel-card per configured tunnel row. Today the DB
-               constraint holds a single row (unique index on ((TRUE))), but
-               the list container is shaped for eventual N-tunnel support.
+          <!-- One .tunnel-card per controller entry (one workspace each).
                Compact display: Display Name (clickable, opens right-pane
                detail) + a small meta line. Full readout + Edit / Force
                re-registration buttons render in the right pane, mirroring
                MCP Server rows. -->
           <div id="tunnel-configured" class="tunnel-configured" hidden>
             <div id="tunnel-list"></div>
+            <!-- Phase 6: each controller entry is its own workspace. -->
+            <button id="tunnel-add-btn" type="button">Add controller</button>
           </div>
         </div>
       </section>

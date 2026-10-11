@@ -151,6 +151,7 @@ export class TunnelWorkspace {
     const { config, inspector } = shared;
 
     this.view = inspector?.addWorkspace(row.id, { controllerUrl: row.controllerUrl, state: "connecting" });
+    this.view?.setLabel(row.name);
 
     this.bundled = shared.bundled.map(cloneSpec);
     const dropins = shared.dropins.map(cloneSpec);
@@ -346,6 +347,7 @@ export class TunnelWorkspace {
     this.row = row;
     this.auth = resolveAuthFromRow(row);
     this.view?.setControllerUrl(row.controllerUrl);
+    this.view?.setLabel(row.name);
   }
 
   private async connect(reason: string): Promise<void> {

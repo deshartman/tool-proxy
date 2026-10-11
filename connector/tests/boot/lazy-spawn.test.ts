@@ -126,6 +126,11 @@ beforeAll(async () => {
     '',
   ].join("\n"));
   process.env.MCP_DROPIN_ALLOW_SYMLINK_ESCAPE = "1";
+  // Own child-port range. vitest runs files in parallel PROCESSES, and a
+  // PortAllocator is per process, so two files spawning from the default 7100
+  // can both take one port and one file's teardown kills the other's child.
+  // (Production is one process with one allocator; this is a test-only race.)
+  process.env.MCP_BASE_PORT = "17300";
 
   ctlA = await mockController();
   ctlB = await mockController();
@@ -170,6 +175,7 @@ afterAll(async () => {
   for (const ws of [wsA, wsB]) if (ws) removeWorkspaceStorage(ws.id);
   rmSync(dropinRoot, { recursive: true, force: true });
   delete process.env.MCP_DROPIN_ALLOW_SYMLINK_ESCAPE;
+  delete process.env.MCP_BASE_PORT;
   await fixture?.cleanup();
 }, 30000);
 
