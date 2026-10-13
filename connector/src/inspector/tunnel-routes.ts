@@ -253,7 +253,8 @@ async function handlePostCreds(
   const input: ControllerInput = {
     name: legacyName ?? defaultName,
     controllerUrl: normalizedUrl,
-    connectorName: legacyConnectorName ?? defaultName,
+    // Settled below, once the prior row is read.
+    connectorName: "",
     environment: legacyEnvironment,
     authMode,
   };
@@ -282,6 +283,13 @@ async function handlePostCreds(
     return;
   }
   const hadPriorRow = priorRow !== null;
+  // The modal sends no connectorName, so an edit must keep the stored one —
+  // re-deriving it renamed a registered connector, whose next register then
+  // hit name_taken. A new entry's default carries the shimId: the URL label
+  // alone is the same for every shim on one host ("127" for 127.0.0.1).
+  input.connectorName = legacyConnectorName
+    ?? priorRow?.connectorName
+    ?? `${defaultName}-${configStore.getShimId()}`;
   const canPreserveTunnelAuthToken = priorRow?.authMode === "static-bearer" && priorRow.tunnelAuthToken !== null;
   const canPreserveOauthClientSecret = priorRow?.authMode === "oauth2-cc" && priorRow.oauthClientSecret !== null;
 
