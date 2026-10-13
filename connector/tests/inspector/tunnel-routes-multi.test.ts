@@ -111,3 +111,25 @@ describe("tunnel list routes", () => {
     expect(cycleTunnel.mock.calls).toEqual([["shim-id-regenerated", idA], ["shim-id-regenerated", idB]]);
   });
 });
+
+// The Edit tunnel modal sends no connectorName. It used to be re-derived from
+// the URL on every save, so an edit silently renamed a working connector and
+// its next register hit name_taken. And the derived default was the URL's
+// first DNS label alone, so every shim on one controller host (127.0.0.1 →
+// "127") collided with every other.
+describe("connector name", () => {
+  it("an edit that omits connectorName keeps the stored one", async () => {
+    const { id } = await (await post("/internal/tunnel/add", { ...entry("a"), connectorName: "local-v2" })).json();
+    const res = await post("/internal/tunnel/creds", { ...entry("a"), id, tunnelAuthToken: undefined });
+    expect(res.status).toBe(200);
+    expect((await fixture.store.getControllerById(id))!.connectorName).toBe("local-v2");
+  });
+
+  it("the default is suffixed with the shimId, so two shims on one host don't collide", async () => {
+    const { id } = await (await post("/internal/tunnel/add", {
+      controllerUrl: "http://127.0.0.1:3001", authMode: "static-bearer", tunnelAuthToken: "ts_x",
+    })).json();
+    const shimId = fixture.store.getShimId();
+    expect((await fixture.store.getControllerById(id))!.connectorName).toBe(`127-${shimId}`);
+  });
+});
