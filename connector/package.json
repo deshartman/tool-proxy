@@ -1,5 +1,5 @@
 {
-  "name": "@mcp-shim/connector",
+  "name": "@gtmi/toolproxy-connector",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",

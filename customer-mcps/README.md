@@ -17,7 +17,7 @@ Where `hello.ts` default-exports a `Tool`:
 
 ```ts
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 const tool: Tool<{ who: string }, { greeting: string }> = {
   name: "hello",

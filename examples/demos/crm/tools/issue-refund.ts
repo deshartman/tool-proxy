@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 
 // In-memory ledger of refunds we've issued, keyed by orderId. The connector

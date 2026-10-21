@@ -874,7 +874,7 @@ export class McpSupervisor {
     if (dropin) {
       env.DROPIN_DIR = dir;
       env.DROPIN_NAME = spec.name;
-      // Make framework deps (zod, @mcp-shim/connector/sdk) resolvable from
+      // Make framework deps (zod, @gtmi/toolproxy-connector/sdk) resolvable from
       // a drop-in folder that sits OUTSIDE the connector's repo tree. See
       // computeDropinNodePath() above for the rationale.
       env.NODE_PATH = DROPIN_NODE_PATH;

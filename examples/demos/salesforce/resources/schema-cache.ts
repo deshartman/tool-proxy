@@ -1,4 +1,4 @@
-import type { Resource } from "@mcp-shim/connector/sdk";
+import type { Resource } from "@gtmi/toolproxy-connector/sdk";
 import { ResourceTemplate } from "@modelcontextprotocol/server";
 
 // Per-object describe() cache, populated by tools/describe-object.ts. Lets a

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 
 // Worked example for the v1.2 SDK Prompt surface — combines the `weather`
 // and `now` tools into one parameterised briefing template. Customer

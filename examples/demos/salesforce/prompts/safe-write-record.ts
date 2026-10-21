@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 
 // Same discover-before-you-act lesson as find-record-by-field.ts, applied to
 // writes: check exact field API names + required fields before create/update

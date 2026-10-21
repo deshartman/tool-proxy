@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 // Bucket C (demo-only, opaque body) per OUTPUT-SCHEMA.md. Schema exists
 // purely so the strict-mode validator passes; it isn't a useful projection

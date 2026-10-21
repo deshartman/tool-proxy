@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { envString, envOptional, envNumber } from "../../src/sdk/index.js";
 
 // MCP-AUDIT #21 — the SDK barrel must re-export the empty-string-safe env
-// readers, because `@mcp-shim/connector/sdk` is the ONLY module specifier a
+// readers, because `@gtmi/toolproxy-connector/sdk` is the ONLY module specifier a
 // drop-in MCP can import from. Without the re-export an author's sole option is
 // `process.env.FOO ?? default`, which treats "" as set: a blank line in a
 // dir/.env, or a controller-supplied key cleared to "", then flows an empty

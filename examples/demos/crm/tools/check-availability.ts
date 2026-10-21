@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { MOCK_URL, REQ_TIMEOUT_MS, exampleSlotISO } from "../lib/backend.js";
 
 // Validates a candidate slot. Returns whether the slot is free, plus nearby

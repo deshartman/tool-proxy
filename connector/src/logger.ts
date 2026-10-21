@@ -6,7 +6,7 @@
 //   bound on every line, replacing the hand-stamped `[connector]` /
 //   `[dispatcher]` / `[<mcp-name>]` prefixes that used to live in format
 //   strings.
-// - Re-exported from `@mcp-shim/connector/sdk` so customer-authored Type 1
+// - Re-exported from `@gtmi/toolproxy-connector/sdk` so customer-authored Type 1
 //   MCPs get the same logger by importing the SDK they already depend on.
 //
 // Output: stdout (Pino default). LOG_LEVEL controls verbosity (Pino

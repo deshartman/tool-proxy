@@ -11,7 +11,7 @@
 // OUTPUT-SCHEMA.md authoring rule #1. We re-wrap here so a single
 // .parse(...) call can validate the structuredContent shape.
 
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { z, type ZodRawShape } from "zod";
 
 export interface RegisteredHandler {

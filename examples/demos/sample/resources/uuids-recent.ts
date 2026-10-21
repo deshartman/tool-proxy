@@ -1,4 +1,4 @@
-import type { Resource } from "@mcp-shim/connector/sdk";
+import type { Resource } from "@gtmi/toolproxy-connector/sdk";
 
 // Worked example for the v1.2 SDK Resource surface. Surfaces the most-recent
 // 16 UUIDs the `uuid` tool minted as a single read-only resource at

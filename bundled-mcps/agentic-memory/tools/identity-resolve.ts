@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { AliasEntrySchema, ChannelSchema } from "../schemas.js";
 import { NormalizationError, normalizeChannelValue } from "../normalize.js";
 import { externalIdFor } from "../id.js";

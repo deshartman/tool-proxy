@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 
 // Refund-flow guidance: force the model to look up the order via get_recent
 // before firing issue_refund, and to confirm the amount aloud with the

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { sfFetch } from "../lib/client.js";
 import { salesforceError } from "../lib/errors.js";
 import { cacheSchema } from "../resources/schema-cache.js";

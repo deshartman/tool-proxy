@@ -1,4 +1,4 @@
-# @mcp-shim/connector
+# @gtmi/toolproxy-connector
 
 Customer-side connector per `MCP-TUNNEL.md` (held outside this repo).
 
@@ -103,7 +103,7 @@ Drop a folder under `customer-mcps/<name>/tools/` with one or more tool files. T
 ```ts
 // customer-mcps/my-mcp/tools/echo.ts
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 const echo: Tool = {
   name: "echo",

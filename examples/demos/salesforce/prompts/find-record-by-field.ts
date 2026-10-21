@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 
 // Encodes a lesson learned the hard way: a plain-English field hint ("phone
 // number") doesn't map to one obvious Salesforce field API name (Phone vs

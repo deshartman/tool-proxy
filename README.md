@@ -51,7 +51,7 @@ mkdir -p customer-mcps/hello/tools
 
 ```ts
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 const tool: Tool<{ name: string }, { greeting: string }> = {
   name: "greet",

@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createLogger } from "@mcp-shim/connector/sdk";
+import { createLogger } from "@gtmi/toolproxy-connector/sdk";
 import { toolError, type ToolErrorResult } from "./errors.js";
 import type { Channel } from "./normalize.js";
 

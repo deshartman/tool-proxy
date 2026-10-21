@@ -78,7 +78,7 @@ RUN find /var/lib/mcp-connector/customer-mcps -maxdepth 2 -name package.json \
 ```
 
 If none of your Type 1 folders declare third-party deps (framework deps
-like `zod` and `@mcp-shim/connector/sdk` resolve up to the base image's
+like `zod` and `@gtmi/toolproxy-connector/sdk` resolve up to the base image's
 workspace `node_modules`), this step is unnecessary.
 
 ## Build + push

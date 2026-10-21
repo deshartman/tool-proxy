@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { recordUuid } from "../resources/uuids-recent.js";
 
 // Bucket B (single-scalar) per OUTPUT-SCHEMA.md.

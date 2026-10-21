@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { recordLookup } from "../resources/recent-lookups.js";
 import { MOCK_URL, REQ_TIMEOUT_MS } from "../lib/backend.js";
 

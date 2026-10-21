@@ -1,4 +1,4 @@
-import type { Resource } from "@mcp-shim/connector/sdk";
+import type { Resource } from "@gtmi/toolproxy-connector/sdk";
 
 // In-process tracker of the last records touched by get_record /
 // create_record / update_record / delete_record. Exposes the most-recent 16

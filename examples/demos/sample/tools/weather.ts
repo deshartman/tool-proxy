@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 // Public, key-less Australian weather. Two-step now that we accept a city name:
 //   1. geocode city -> {lat, lon} (Open-Meteo geocoding, AU-filtered)

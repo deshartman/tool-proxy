@@ -218,7 +218,7 @@ the folder name becomes the MCP name, and the connector discovers it at boot.
 
 ```ts
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 const SEARCH_URL = process.env.SEARCH_URL ?? "http://localhost:8080/search";
 
