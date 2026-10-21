@@ -1,4 +1,4 @@
-# mcp-connector on a single EC2 instance, reached through EC2 Instance Connect
+# tool-proxy on a single EC2 instance, reached through EC2 Instance Connect
 # Endpoint (EICE).
 #
 # WHY THIS MODULE EXISTS, AND WHEN NOT TO USE IT
@@ -72,7 +72,7 @@ data "aws_ami" "al2023" {
 }
 
 locals {
-  name      = "mcp-connector-${var.connector_name}"
+  name      = "tool-proxy-${var.connector_name}"
   subnet_id = var.subnet_id != "" ? var.subnet_id : data.aws_subnets.default.ids[0]
 }
 
@@ -82,7 +82,7 @@ locals {
 # terminates the client side of the tunnel.
 resource "aws_security_group" "eice" {
   name        = "${local.name}-eice"
-  description = "EC2 Instance Connect Endpoint for the mcp-connector host"
+  description = "EC2 Instance Connect Endpoint for the tool-proxy host"
   vpc_id      = data.aws_vpc.default.id
 
   egress {
@@ -105,7 +105,7 @@ resource "aws_security_group" "eice" {
 # whatever the CIDR admits.
 resource "aws_security_group" "instance" {
   name        = "${local.name}-instance"
-  description = "mcp-connector host: egress only, plus SSH from the EIC endpoint"
+  description = "tool-proxy host: egress only, plus SSH from the EIC endpoint"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
@@ -176,20 +176,20 @@ resource "aws_instance" "connector" {
   tags = {
     Name = local.name
     # This is a shared account; make ownership legible to whoever finds it.
-    Purpose = "mcp-connector (customer-side MCP tunnel)"
+    Purpose = "tool-proxy (customer-side MCP tunnel)"
   }
 }
 
 locals {
   # Deliberately plain. Every failure mode here is "first boot did something
-  # invisible", so each step logs to /var/log/mcp-connector-boot.log and the
+  # invisible", so each step logs to /var/log/tool-proxy-boot.log and the
   # README tells the operator to read it. cloud-init's own output also lands in
   # /var/log/cloud-init-output.log.
   user_data = <<-BASH
     #!/bin/bash
     set -euxo pipefail
-    exec > >(tee -a /var/log/mcp-connector-boot.log) 2>&1
-    echo "[boot] mcp-connector provisioning starting at $(date -Is)"
+    exec > >(tee -a /var/log/tool-proxy-boot.log) 2>&1
+    echo "[boot] tool-proxy provisioning starting at $(date -Is)"
 
     dnf -y install docker git
     systemctl enable --now docker
@@ -203,8 +203,8 @@ locals {
     chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
     docker compose version
 
-    mkdir -p /opt/mcp-shim
-    chown 1000:1000 /opt/mcp-shim
+    mkdir -p /opt/tool-proxy
+    chown 1000:1000 /opt/tool-proxy
 
     # ── The dashboard hop ────────────────────────────────────────────────
     # The connector binds 127.0.0.1 inside the container and the compose file
@@ -250,16 +250,16 @@ locals {
     # The early exit sits AFTER the relay on purpose. The relay is needed however
     # the code arrives, and it resolves the container pid at call time, so
     # installing it before the container exists is fine — socat retries.
-    ${var.bootstrap_code ? "" : "echo '[boot] bootstrap_code=false: Docker + relay ready, awaiting an uploaded tree at /opt/mcp-shim'; exit 0"}
+    ${var.bootstrap_code ? "" : "echo '[boot] bootstrap_code=false: Docker + relay ready, awaiting an uploaded tree at /opt/tool-proxy'; exit 0"}
 
-    git clone "${var.repo_url}" /opt/mcp-shim-src
-    mv /opt/mcp-shim-src/* /opt/mcp-shim-src/.git /opt/mcp-shim/ 2>/dev/null || true
-    rmdir /opt/mcp-shim-src 2>/dev/null || true
-    cd /opt/mcp-shim
+    git clone "${var.repo_url}" /opt/tool-proxy-src
+    mv /opt/tool-proxy-src/* /opt/tool-proxy-src/.git /opt/tool-proxy/ 2>/dev/null || true
+    rmdir /opt/tool-proxy-src 2>/dev/null || true
+    cd /opt/tool-proxy
     git checkout "${var.repo_ref}"
     echo "[boot] checked out $(git rev-parse HEAD)"
 
-    cd /opt/mcp-shim/deploy/compose
+    cd /opt/tool-proxy/deploy/compose
 
     # The three files the compose stack needs and does not ship, per its README.
     mkdir -p secrets
@@ -270,7 +270,7 @@ locals {
       # uid 100 is the image's `mcp` user (Alpine `adduser -S`), NOT 1000. The
       # compose file mounts this read-only, so the entrypoint cannot chown it —
       # a mode-0400 file owned by anyone else crash-loops the connector on
-      # EACCES: permission denied, open '/etc/mcp-connector/connector.key'.
+      # EACCES: permission denied, open '/etc/tool-proxy/connector.key'.
       # Measured on a real EC2 host; Docker Desktop on macOS hides it.
       chown 100:101 secrets/connector.key
       chmod 400 secrets/connector.key
@@ -283,21 +283,21 @@ locals {
     # fresh clone does not contain (it is empty at ship time and therefore not
     # tracked). Docker would create it as a ROOT-OWNED directory, and the
     # scanner then cannot read it. Create it first, owned by the image's uid.
-    mkdir -p /opt/mcp-shim/customer-mcps
-    chown 100:101 /opt/mcp-shim/customer-mcps
+    mkdir -p /opt/tool-proxy/customer-mcps
+    chown 100:101 /opt/tool-proxy/customer-mcps
 
     # Build locally rather than pulling: there is no published connector image,
     # and pulling from ECR would need AWS credentials on a box that deliberately
     # has none.
     #
     # Tag to match what the compose file asks for. It resolves
-    # ghcr.io/twilio/mcp-connector:$MCP_VERSION, so a bare `mcp-connector:local`
+    # ghcr.io/twilio/tool-proxy:$MCP_VERSION, so a bare `tool-proxy:local`
     # tag would leave compose trying to PULL from ghcr — which issues no
     # anonymous token, so it fails with an auth error that reads as a network
     # problem. Tagging the full name makes the local image satisfy the
     # reference; Docker does not reach out for an image it already has.
-    docker build -f /opt/mcp-shim/connector/Dockerfile \
-      -t ghcr.io/twilio/mcp-connector:local /opt/mcp-shim
+    docker build -f /opt/tool-proxy/connector/Dockerfile \
+      -t ghcr.io/twilio/tool-proxy:local /opt/tool-proxy
     # -f IS REQUIRED: deploy/compose ships docker-compose.prod.yml and
     # .dev.yml but no docker-compose.yml, so a bare `docker compose up`
     # fails with "no configuration file provided: not found".

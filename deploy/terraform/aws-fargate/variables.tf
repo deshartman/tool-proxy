@@ -49,7 +49,7 @@ variable "assign_public_ip" {
 variable "image" {
   description = "OCI image reference for the connector."
   type        = string
-  default     = "ghcr.io/twilio/mcp-connector:latest"
+  default     = "ghcr.io/twilio/tool-proxy:latest"
 }
 
 variable "cluster_arn" {

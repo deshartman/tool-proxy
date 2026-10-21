@@ -26,7 +26,7 @@ import { resolve as resolvePath, join } from "node:path";
 //      in Postgres; since DB-TO-FILE it loses the sealed bearer and registration
 //      token on every task restart, and the re-register then collides on the
 //      sticky `name_taken`, so unattended recovery is impossible.
-//   5. A `config` volume mounted at /etc/mcp-connector — the exact path the
+//   5. A `config` volume mounted at /etc/tool-proxy — the exact path the
 //      entrypoint must WRITE the decoded master key to.
 
 const REPO_ROOT = resolvePath(new URL("../../../", import.meta.url).pathname);
@@ -159,11 +159,11 @@ describe("terraform aws-fargate — the state volume is the connector's identity
     expect(mainCode).toMatch(/depends_on\s*=\s*\[aws_efs_mount_target\.state\]/);
   });
 
-  it("mounts nothing at /etc/mcp-connector", () => {
+  it("mounts nothing at /etc/tool-proxy", () => {
     // The entrypoint WRITES the decoded master key there. A read-only or
     // shadowing mount breaks boot; the module used to mount an ephemeral
     // `config` volume over exactly that path.
-    expect(mainCode).not.toContain('containerPath = "/etc/mcp-connector"');
+    expect(mainCode).not.toContain('containerPath = "/etc/tool-proxy"');
     expect(mainCode).not.toMatch(/name\s*=\s*"config"/);
   });
 

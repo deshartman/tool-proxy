@@ -10,7 +10,7 @@
 #   - Type 2 (3rd-party) MCPs arrive via controller push per
 #     docs/MCP-PROTOCOL.md v1.1; they have no on-disk presence.
 #
-# Customer drop-ins land at /var/lib/mcp-connector/customer-mcps/ via the
+# Customer drop-ins land at /var/lib/tool-proxy/customer-mcps/ via the
 # derived-image or volume-mount delivery paths — never inside the image the
 # connector ships from Twilio.
 
@@ -36,7 +36,7 @@ COPY protocol protocol
 COPY connector connector
 
 # Note: prior versions copied .env.example + connector.yaml.example here
-# for the `mcp-connector init` scaffolder. Both templates were retired in
+# for the `tool-proxy init` scaffolder. Both templates were retired in
 # the customer-repo carve-out (zero-config dev bootstrap replaces them),
 # so the COPY line was removed. See scripts/start-connector.sh.
 
@@ -82,8 +82,8 @@ WORKDIR /app
 RUN apk add --no-cache su-exec \
  && addgroup -S mcp \
  && adduser -S -G mcp -h /app mcp \
- && mkdir -p /etc/mcp-connector /var/lib/mcp-connector/customer-mcps \
- && chown -R mcp:mcp /app /etc/mcp-connector /var/lib/mcp-connector
+ && mkdir -p /etc/tool-proxy /var/lib/tool-proxy/customer-mcps \
+ && chown -R mcp:mcp /app /etc/tool-proxy /var/lib/tool-proxy
 # DO NOT set USER mcp — entrypoint needs root for chown, drops via su-exec
 #
 # NOTE on ownership (MCP-AUDIT #3): the chown above runs BEFORE the COPY lines
@@ -96,7 +96,7 @@ RUN apk add --no-cache su-exec \
 #
 # The corollary is that nothing may write inside /app at runtime. The one thing
 # that tried to — the agentic-memory mock's state file, which resolved relative
-# to its own module — now writes under /var/lib/mcp-connector instead (see the
+# to its own module — now writes under /var/lib/tool-proxy instead (see the
 # AGENTIC_MEMORY_STATE_PATH ENV below). Anything else needing persistence
 # belongs on that volume too, not next to the code.
 
@@ -123,30 +123,30 @@ COPY --from=node-build /repo/package.json                          ./package.jso
 # per-entry .env merging. Type 2 (3rd-party) MCPs come from the controller UI
 # per docs/MCP-PROTOCOL.md v1.1 — no on-disk presence. Customers extending the
 # image with their own MCPs drop folders under
-# /var/lib/mcp-connector/customer-mcps/ instead.
+# /var/lib/tool-proxy/customer-mcps/ instead.
 COPY --from=node-build /repo/bundled-mcps ./bundled-mcps
 
 # Runtime entrypoint — decodes $CONNECTOR_KEY_B64 → $CONNECTOR_KEY_FILE on
 # platforms whose secret store is env-only (Fly.io, ACA, etc.); no-op when
 # the env is unset (docker-compose et al. that mount the file directly).
 # See CODE-DEPLOY design record §"D2 — Master key delivery".
-COPY connector/entrypoint.sh /usr/local/bin/mcp-connector-entrypoint.sh
-RUN chmod +x /usr/local/bin/mcp-connector-entrypoint.sh
+COPY connector/entrypoint.sh /usr/local/bin/tool-proxy-entrypoint.sh
+RUN chmod +x /usr/local/bin/tool-proxy-entrypoint.sh
 
 WORKDIR /app/connector
 
 # Default config location — mount the customer's yaml at this path. dir:
 # entries inside the yaml are resolved relative to the yaml's directory,
-# so a yaml at /etc/mcp-connector/config.yaml referencing
+# so a yaml at /etc/tool-proxy/config.yaml referencing
 # dir: /app/bundled-mcps/agentic-memory works.
-ENV CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
+ENV CONNECTOR_CONFIG=/etc/tool-proxy/config.yaml
 # Default master-key location — matches the path the entrypoint script
 # writes to when $CONNECTOR_KEY_B64 is set (Fly.io / ACA / any secret-as-env
 # platform). Override at deploy time if the operator mounts a key file
 # somewhere else. Symmetric with CONNECTOR_CONFIG above; without this ENV
 # the connector's env-loader fails with "CONNECTOR_KEY_FILE is required"
 # even though the entrypoint just wrote the key to the default path.
-ENV CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key
+ENV CONNECTOR_KEY_FILE=/etc/tool-proxy/connector.key
 # Bundled MCPs dir. The runtime image copies bundled-mcps/ to /app/bundled-mcps
 # at build time, and the connector's scanner (discoverBundled) reads this path
 # to auto-register Twilio-shipped MCPs. Override at deploy time only when
@@ -156,11 +156,11 @@ ENV MCP_BUNDLED_DIR=/app/bundled-mcps
 # relative to its own module — /app/bundled-mcps/agentic-memory/.state.json —
 # which is root-owned per the ownership note above, so every mutating tool in the
 # bundle failed EACCES in the image while working fine in dev where the developer
-# owns the tree. /var/lib/mcp-connector IS created and chowned to mcp above, and
+# owns the tree. /var/lib/tool-proxy IS created and chowned to mcp above, and
 # is the volume mount point in every deploy target, so state survives a restart.
 # state.ts creates the parent dir on first write and chmods the file to 0600.
-ENV AGENTIC_MEMORY_STATE_PATH=/var/lib/mcp-connector/agentic-memory/.state.json
+ENV AGENTIC_MEMORY_STATE_PATH=/var/lib/tool-proxy/agentic-memory/.state.json
 
 EXPOSE 9090
-ENTRYPOINT ["/usr/local/bin/mcp-connector-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/tool-proxy-entrypoint.sh"]
 CMD ["start"]

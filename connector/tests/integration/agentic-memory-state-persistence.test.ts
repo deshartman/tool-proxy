@@ -14,7 +14,7 @@ import { join, dirname, resolve } from "node:path";
 // in production and passed in dev, where the developer owns the tree. saveState
 // had no error handling and all ten call sites used bare store.commit().
 //
-// The fix relocates the file to /var/lib/mcp-connector (writable, chowned, and
+// The fix relocates the file to /var/lib/tool-proxy (writable, chowned, and
 // the volume mount point in every deploy target) rather than making /app
 // writable. Root-owned code is the STRONGER posture: children run as the same
 // uid as the connector, so a writable /app would let a compromised child rewrite
@@ -67,7 +67,7 @@ afterEach(() => {
 
 describe("MCP-AUDIT #3 — saveState writes to a path it may have to create", () => {
   it("creates a missing parent directory on first write", () => {
-    // Mirrors production: /var/lib/mcp-connector exists, the agentic-memory/
+    // Mirrors production: /var/lib/tool-proxy exists, the agentic-memory/
     // leaf does not until we make it.
     const statePath = join(tmp, "agentic-memory", ".state.json");
     expect(existsSync(dirname(statePath))).toBe(false);
@@ -164,7 +164,7 @@ describe("MCP-AUDIT #3 — trip-wires", () => {
 
   it("the Dockerfile points state at the writable volume and does NOT chown the code tree", () => {
     const dockerfile = readFileSync(join(ROOT, "connector/Dockerfile"), "utf8");
-    expect(dockerfile).toMatch(/ENV AGENTIC_MEMORY_STATE_PATH=\/var\/lib\/mcp-connector\//);
+    expect(dockerfile).toMatch(/ENV AGENTIC_MEMORY_STATE_PATH=\/var\/lib\/tool-proxy\//);
     // Root-owned code is deliberate — see the Dockerfile's ownership note.
     const copyLines = dockerfile.split("\n").filter((l) => l.startsWith("COPY --from=node-build"));
     expect(copyLines.length).toBeGreaterThan(0);

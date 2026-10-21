@@ -10,14 +10,14 @@ import { envString } from "./env.js";
 
 const log = createLogger("connector");
 
-const USAGE = `usage: mcp-connector <command> [options]
+const USAGE = `usage: tool-proxy <command> [options]
 
 commands:
   start                   run the connector (default). Auto-registers with the controller on first connect.
   discover                connect to MCP servers and print tools/list
   doctor                  run preflight checks against the deployment env
   deploy init             generate cloud deployment manifests (fargate/aca/compose/fly).
-                          Kubernetes: use the Helm chart at deploy/helm/mcp-connector/.
+                          Kubernetes: use the Helm chart at deploy/helm/tool-proxy/.
                           Does NOT touch the cloud — writes files for the operator to apply.
   deploy apply            actually deploy to the cloud (fly today; other targets forthcoming).
   version                 print the connector version
@@ -56,11 +56,11 @@ async function dispatch(): Promise<void> {
       const subrest = rest.slice(1);
       if (!subverb || subverb === "-h" || subverb === "--help") {
         console.log(
-          `usage: mcp-connector deploy <subcommand> [options]\n\n` +
+          `usage: tool-proxy deploy <subcommand> [options]\n\n` +
           `subcommands:\n` +
           `  init    generate cloud deployment manifests (does NOT touch the cloud)\n` +
           `  apply   actually deploy to the cloud using config from a prior init\n\n` +
-          `Run \`mcp-connector deploy init --help\` or \`deploy apply --help\` for flags.`,
+          `Run \`tool-proxy deploy init --help\` or \`deploy apply --help\` for flags.`,
         );
         process.exit(subverb ? 0 : 2);
       }

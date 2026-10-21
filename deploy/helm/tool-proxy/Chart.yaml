@@ -1,13 +1,13 @@
 apiVersion: v2
-name: mcp-connector
+name: tool-proxy
 description: Twilio MCP connector — customer-side WSS tunnel + local MCP dispatcher.
 type: application
 # Chart version tracks the connector app version 1:1 for v1. Bump both
 # together on release.
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/twilio/mcp-shim
+home: https://github.com/deshartman/tool-proxy
 sources:
-  - https://github.com/twilio/mcp-shim
+  - https://github.com/deshartman/tool-proxy
 maintainers:
   - name: Twilio

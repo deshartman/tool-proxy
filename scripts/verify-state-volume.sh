@@ -3,7 +3,7 @@
 #
 # Why this exists as a live check rather than a unit test: the failure it catches
 # is a property of the RUNTIME filesystem, not of any code path. A volume mounted
-# at /var/lib/mcp-connector shadows the image directory, discarding the
+# at /var/lib/tool-proxy shadows the image directory, discarding the
 # Dockerfile's mkdir + chown — Fly mounts it root:root 0755, and a K8s PVC or raw
 # EFS mount behaves the same. The connector then runs as `mcp` and cannot create
 # anything there. connector/entrypoint.sh re-provisions before dropping
@@ -20,13 +20,13 @@
 #      EACCES. Without this, check 2 passing proves nothing — it would also pass
 #      if the container were running everything as root.
 #
-# Usage:  ./scripts/verify-state-volume.sh [app-name]     (default twilio-tool-sdk)
+# Usage:  ./scripts/verify-state-volume.sh [app-name]     (default tool-proxy)
 # Exit:   0 all checks pass, 1 any check fails.
 
 set -uo pipefail
 
-APP="${1:-twilio-tool-sdk}"
-VOL="/var/lib/mcp-connector"
+APP="${1:-tool-proxy}"
+VOL="/var/lib/tool-proxy"
 fail=0
 
 say() { printf '%s\n' "$*"; }

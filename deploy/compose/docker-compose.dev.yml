@@ -16,7 +16,7 @@
 services:
   postgres:
     image: postgres:16
-    container_name: mcp-shim-postgres
+    container_name: tool-proxy-postgres
     environment:
       POSTGRES_DB: mcp_connector
       POSTGRES_USER: mcp

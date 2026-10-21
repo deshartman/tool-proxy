@@ -1,4 +1,4 @@
-# Production docker-compose for the mcp-connector — single-VM shape.
+# Production docker-compose for the tool-proxy — single-VM shape.
 #
 # One container. The connector's config store is a sealed JSON file on the
 # `state` volume — there is no
@@ -11,7 +11,7 @@
 #      uid. A mode-0400 file owned by you is unreadable by it, and because this
 #      mount is read-only the entrypoint's chown cannot fix it — the connector
 #      then crash-loops on
-#      `EACCES: permission denied, open '/etc/mcp-connector/connector.key'`.
+#      `EACCES: permission denied, open '/etc/tool-proxy/connector.key'`.
 #      Measured on a fresh Linux host; Docker Desktop on macOS hides it by
 #      faking file ownership inside its VM.
 #
@@ -31,7 +31,7 @@
 #   docker compose -f deploy/compose/docker-compose.prod.yml \
 #     exec connector node dist/index.js doctor
 #
-# `node dist/index.js`, not `mcp-connector`: the image's WORKDIR is
+# `node dist/index.js`, not `tool-proxy`: the image's WORKDIR is
 # /app/connector and the workspace bin link at /app/node_modules/.bin is not
 # on PATH, so the bare name fails with "not found".
 #
@@ -44,7 +44,7 @@
 
 services:
   connector:
-    image: ghcr.io/twilio/mcp-connector:${MCP_VERSION:-latest}
+    image: ghcr.io/twilio/tool-proxy:${MCP_VERSION:-latest}
     env_file:
       # Optional: not required to exist so `docker compose config` can lint
       # this file in CI without a live env. In prod the operator populates
@@ -55,8 +55,8 @@ services:
       # The only required env var. Everything else — controller URL,
       # connector name, auth posture — is entered in the inspector's
       # Configure Tunnel modal and sealed into the state volume.
-      CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
-      CONNECTOR_CONFIG: /etc/mcp-connector/config.yaml
+      CONNECTOR_KEY_FILE: /etc/tool-proxy/connector.key
+      CONNECTOR_CONFIG: /etc/tool-proxy/config.yaml
       INSPECTOR_PORT: "9090"
     # NO `ports:` MAPPING, deliberately — and this is the one that surprises
     # people, so it is spelled out. The connector binds 127.0.0.1:9090 INSIDE
@@ -90,9 +90,9 @@ services:
       # with its ownership intact, so the `mcp` uid can write here without
       # the entrypoint chown the cloud targets need (CLAUDE.md, "A mounted
       # volume shadows the image directory").
-      - state:/var/lib/mcp-connector
+      - state:/var/lib/tool-proxy
       # config — read-only. Ships alongside the compose file.
-      - ./connector.yaml:/etc/mcp-connector/config.yaml:ro
+      - ./connector.yaml:/etc/tool-proxy/config.yaml:ro
       # master key — read-only. Seals the credentials in config.json above, so
       # a volume snapshot without this file yields nothing.
       #
@@ -100,12 +100,12 @@ services:
       # the entrypoint cannot chown it, so the host-side mode is the whole
       # story: `chmod 400` owned by your own uid crash-loops the connector on
       # EACCES. See the key-minting note in the header.
-      - ./secrets/connector.key:/etc/mcp-connector/connector.key:ro
+      - ./secrets/connector.key:/etc/tool-proxy/connector.key:ro
       # customer drop-in MCPs — read-only. Auto-discovered at boot.
       # Path is relative to this compose file (deploy/compose/) — up two to
       # repo-root customer-mcps/. The scanner ignores this mount if the
       # directory is absent.
-      - ../../customer-mcps:/var/lib/mcp-connector/customer-mcps:ro
+      - ../../customer-mcps:/var/lib/tool-proxy/customer-mcps:ro
     restart: unless-stopped
 
 volumes:

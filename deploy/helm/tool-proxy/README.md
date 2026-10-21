@@ -1,13 +1,13 @@
-# mcp-connector Helm chart
+# tool-proxy Helm chart
 
-Deploys a single-replica mcp-connector to a Kubernetes cluster.
+Deploys a single-replica tool-proxy to a Kubernetes cluster.
 
 ## Install
 
 One secret, one flag. Everything else is configured after the pod is running.
 
 ```bash
-helm install my-connector ./deploy/helm/mcp-connector \
+helm install my-connector ./deploy/helm/tool-proxy \
   --set image.tag=0.1.0 \
   --set secrets.connectorKeyB64="$(head -c 32 /dev/urandom | base64)"
 ```
@@ -107,7 +107,7 @@ root — see `DEFAULT_STATE_DIR` in `connector/src/config-store/store-file.ts`.
 - Mount a `connector.yaml`. The yaml is optional; the only shape that still
   requires an entry is a hand-written Type 1 MCP (its own `server.ts`).
 - Mount customer MCPs. Use a derived image or add a volume for
-  `/var/lib/mcp-connector/customer-mcps` — see
+  `/var/lib/tool-proxy/customer-mcps` — see
   [`deploy/DERIVED-IMAGE.md`](../../DERIVED-IMAGE.md) and
   [`deploy/VOLUME-MOUNT.md`](../../VOLUME-MOUNT.md).
 - Set a `securityContext`. The entrypoint needs root briefly to chown the

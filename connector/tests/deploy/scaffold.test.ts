@@ -15,11 +15,11 @@ import { vi } from "vitest";
 
 const VARS: ScaffoldVars = {
   name: "prod-us-east-1",
-  // Matches the fly default (`mcp-connector-<name>`). Fly-mock tests
+  // Matches the fly default (`tool-proxy-<name>`). Fly-mock tests
   // override with `{ ...VARS, appName: "mock-customers-prod-us-east-1" }`.
   // Non-Fly targets ignore this field — their templates use {{NAME}}.
-  appName: "mcp-connector-prod-us-east-1",
-  image: "ghcr.io/twilio/mcp-connector:0.2.0",
+  appName: "tool-proxy-prod-us-east-1",
+  image: "ghcr.io/twilio/tool-proxy:0.2.0",
 };
 
 describe("render — variable substitution", () => {
@@ -61,17 +61,17 @@ describe("render — variable substitution", () => {
     const state = def.volumes.find((v) => v.name === "state");
     expect(state?.efsVolumeConfiguration).toBeDefined();
 
-    // Nothing may mount over /etc/mcp-connector: the entrypoint writes the
+    // Nothing may mount over /etc/tool-proxy: the entrypoint writes the
     // decoded master key there.
-    expect(container.mountPoints.map((m) => m.containerPath)).toEqual(["/var/lib/mcp-connector"]);
+    expect(container.mountPoints.map((m) => m.containerPath)).toEqual(["/var/lib/tool-proxy"]);
 
     // Loopback probe from inside the container — the only shape the inspector's
     // gate admits.
     expect(container.healthCheck).toBeDefined();
 
     // Substitution still has to work; assert it where it is load-bearing.
-    expect(task!.content).toContain("mcp-connector-prod-us-east-1");
-    expect(task!.content).toContain("ghcr.io/twilio/mcp-connector:0.2.0");
+    expect(task!.content).toContain("tool-proxy-prod-us-east-1");
+    expect(task!.content).toContain("ghcr.io/twilio/tool-proxy:0.2.0");
   });
 
   // Stage A. Before this, every emitted manifest probed the inspector's "/" —
@@ -134,7 +134,7 @@ describe("render — variable substitution", () => {
     const { files } = render("fargate", VARS);
     const secrets = files.find((f) => f.path === "secrets-hint.sh")!;
     const efs = files.find((f) => f.path === "efs-hint.sh")!;
-    expect(secrets.content).toContain("mcp-connector/prod-us-east-1/connector-key-b64");
+    expect(secrets.content).toContain("tool-proxy/prod-us-east-1/connector-key-b64");
     expect(secrets.content).not.toContain("tunnel-auth-token");
     // The EFS hint is the one that explains why an ephemeral volume is fatal.
     expect(efs.content).toContain("create-access-point");
@@ -142,10 +142,10 @@ describe("render — variable substitution", () => {
   });
 
   it("no longer offers the gke target", () => {
-    // The raw manifests duplicated deploy/helm/mcp-connector and duplicated it
+    // The raw manifests duplicated deploy/helm/tool-proxy and duplicated it
     // badly: no master-key Secret (so the pod could not boot), no resource
     // limits, a placeholder mcp_servers entry pointing at a service that never
-    // existed, and a read-only ConfigMap mounted at /etc/mcp-connector — the
+    // existed, and a read-only ConfigMap mounted at /etc/tool-proxy — the
     // exact path the entrypoint must WRITE the decoded key to. Kubernetes has
     // one path now; `helm template` covers anyone who cannot install releases.
     expect(() => render("gke" as never, VARS)).toThrow();
@@ -157,9 +157,9 @@ describe("render — variable substitution", () => {
     const bicep = files[0].content;
     // Bicep resolves `${connectorName}` at deployment time; scaffold's
     // {{NAME}} substitution must not touch that syntax.
-    expect(bicep).toContain("mcp-connector-${connectorName}");
+    expect(bicep).toContain("tool-proxy-${connectorName}");
     expect(bicep).toContain("'prod-us-east-1'");
-    expect(bicep).toContain("'ghcr.io/twilio/mcp-connector:0.2.0'");
+    expect(bicep).toContain("'ghcr.io/twilio/tool-proxy:0.2.0'");
     expect(bicep).toContain("minReplicas: 1"); // single connector — no HPA
   });
 
@@ -180,7 +180,7 @@ describe("render — variable substitution", () => {
     expect(config).not.toMatch(/^\s*ports:/m);
     expect(config).not.toMatch(/9090:9090/);
     expect(config).not.toContain("INSPECTOR_BIND_ADDR");
-    expect(compose.content).toContain("mcp-connector"); // image is the connector
+    expect(compose.content).toContain("tool-proxy"); // image is the connector
   });
 
   it("emits a readme appendix telling the customer what to do next", () => {
@@ -193,7 +193,7 @@ describe("render — variable substitution", () => {
   it("emits fly.toml with substituted app name + image and NO public service", () => {
     const { files } = render("fly", VARS);
     // Fly target emits ONE file: fly.toml. The deploy step is a separate
-    // CLI verb (`mcp-connector deploy apply --target fly`), which reads
+    // CLI verb (`tool-proxy deploy apply --target fly`), which reads
     // this fly.toml and spawns fly commands directly. Historical: earlier
     // iterations emitted `fly-deploy.sh` + `fly-secrets-hint.sh` alongside,
     // but that produced a confusing three-artifact surface — the customer
@@ -202,8 +202,8 @@ describe("render — variable substitution", () => {
     expect(files.map((f) => f.path)).toEqual(["fly.toml"]);
 
     const toml = files.find((f) => f.path === "fly.toml")!;
-    expect(toml.content).toContain(`app = "mcp-connector-prod-us-east-1"`);
-    expect(toml.content).toContain(`image = "ghcr.io/twilio/mcp-connector:0.2.0"`);
+    expect(toml.content).toContain(`app = "tool-proxy-prod-us-east-1"`);
+    expect(toml.content).toContain(`image = "ghcr.io/twilio/tool-proxy:0.2.0"`);
 
     // Load-bearing invariants — outbound-only, no scale-to-zero, no public IP.
     // If any of these regress as ACTIVE toml (not a comment mention),
@@ -236,9 +236,9 @@ describe("render — variable substitution", () => {
 
     // Post-merge tweak: connector needs a yaml at CONNECTOR_CONFIG or
     // boot fails. Fly's [[files]] block delivers deploy/fly/connector.yaml
-    // to /etc/mcp-connector/config.yaml at Machine boot.
+    // to /etc/tool-proxy/config.yaml at Machine boot.
     expect(toml.content).toMatch(/^\[\[files\]\]/m);
-    expect(toml.content).toContain(`guest_path = "/etc/mcp-connector/config.yaml"`);
+    expect(toml.content).toContain(`guest_path = "/etc/tool-proxy/config.yaml"`);
     expect(toml.content).toContain(`local_path = "deploy/fly/connector.yaml"`);
 
     // MCP_DROPIN_DIR must NOT be set, and this assertion was inverted
@@ -250,7 +250,7 @@ describe("render — variable substitution", () => {
     // disabling customer drop-in discovery AND the "Refresh local MCPs"
     // rescan on every Fly deployment. Nothing broke visibly because the
     // demos still arrived via the bundled path. Unset means the default
-    // (/var/lib/mcp-connector/customer-mcps/) applies, which is inside the
+    // (/var/lib/tool-proxy/customer-mcps/) applies, which is inside the
     // [[mounts]] volume. Matched at line-start so the file may still
     // explain itself in a comment.
     expect(toml.content).not.toMatch(/^\s*MCP_DROPIN_DIR\s*=/m);
@@ -271,20 +271,20 @@ describe("render — variable substitution", () => {
 
     // Volume mount for state — belt-and-braces per D3.
     expect(toml.content).toContain(`source = "state"`);
-    expect(toml.content).toContain(`destination = "/var/lib/mcp-connector"`);
+    expect(toml.content).toContain(`destination = "/var/lib/tool-proxy"`);
   });
 
   it("honors --app-name override for a custom Fly app name (no prefix)", () => {
-    // Simulate `deploy init --target fly --name des-fly-test --app-name twilio-tool-sdk`
+    // Simulate `deploy init --target fly --name des-fly-test --app-name tool-proxy`
     // — the app-name is the standalone Fly identity, connector name stays separate.
-    const { files } = render("fly", { ...VARS, name: "des-fly-test", appName: "twilio-tool-sdk" });
+    const { files } = render("fly", { ...VARS, name: "des-fly-test", appName: "tool-proxy" });
     const toml = files.find((f) => f.path === "fly.toml")!;
-    expect(toml.content).toContain(`app = "twilio-tool-sdk"`);
+    expect(toml.content).toContain(`app = "tool-proxy"`);
     // The prefix must NOT sneak back in when appName is a bare name.
-    expect(toml.content).not.toContain(`app = "mcp-connector-`);
+    expect(toml.content).not.toContain(`app = "tool-proxy-`);
     // Comments about the app also reference the custom name (not the connector
     // name). `fly ips list -a <app>` is the witness for that substitution.
-    expect(toml.content).toContain("fly ips list -a twilio-tool-sdk");
+    expect(toml.content).toContain("fly ips list -a tool-proxy");
     // The witness used to be `fly proxy 9090:9090 -a <app>`, which the header
     // gave as the way to reach the inspector. That instruction stopped working
     // when the request gate landed (fly proxy arrives from the Machine's fdaa:
@@ -345,7 +345,7 @@ describe("scaffoldTo — file writes", () => {
       // requireEnv() demands, and the image reference.
       const compose = readFileSync(join(outDir, "docker-compose.yml"), "utf8");
       expect(compose).toContain("CONNECTOR_KEY_FILE:");
-      expect(compose).toContain("ghcr.io/twilio/mcp-connector:0.2.0");
+      expect(compose).toContain("ghcr.io/twilio/tool-proxy:0.2.0");
       // No unsubstituted placeholders survived.
       expect(compose).not.toMatch(/\{\{[A-Z_]+\}\}/);
       const env = readFileSync(join(outDir, ".env.example"), "utf8");
@@ -405,7 +405,7 @@ describe("scaffoldTo — file writes", () => {
     try {
       const result = await scaffoldTo("fly", VARS, outDir);
       // Fly emits exactly one file. The deploy is a separate CLI verb
-      // (`mcp-connector deploy apply --target fly`), not a script emitted
+      // (`tool-proxy deploy apply --target fly`), not a script emitted
       // alongside fly.toml.
       expect(result.written).toHaveLength(1);
       const toml = readFileSync(join(outDir, "fly.toml"), "utf8");
@@ -439,7 +439,7 @@ describe("scaffoldTo — file writes", () => {
 // Postgres when `env` mode was removed — the token now lives in the sealed
 // `controllers` row and is cleared via ConfigStore.clearRegistrationToken.
 // Left in place it invited two wrong conclusions: that the connector needs a
-// writable file on the state volume, and that /var/lib/mcp-connector must be
+// writable file on the state volume, and that /var/lib/tool-proxy must be
 // mounted for the tunnel identity to survive a restart. Neither is true.
 describe("render — no dead CONNECTOR_STATE_PATH in any target", () => {
   const TARGETS = ["fargate", "aca", "compose", "fly", "fly-mock"] as const;

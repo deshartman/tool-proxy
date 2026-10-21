@@ -5,8 +5,8 @@ The connector's dial-out-only shape maps cleanly onto Fly Machines: single Firec
 If you want to skip the walkthrough and copy-paste, the CLI renders both apps' manifests for you:
 
 ```bash
-mcp-connector deploy init --target fly --name <customer> --yes
-mcp-connector deploy init --target fly-mock --name <customer> --yes  # only for the demo mock backend
+tool-proxy deploy init --target fly --name <customer> --yes
+tool-proxy deploy init --target fly-mock --name <customer> --yes  # only for the demo mock backend
 ```
 
 ## Deployment shape
@@ -15,7 +15,7 @@ Two Fly apps in the same Fly organization:
 
 ```
 ┌──────────────────────────────┐          ┌──────────────────────────────┐
-│ mcp-connector-<CUSTOMER>     │          │ mock-customers-<CUSTOMER>    │
+│ tool-proxy-<CUSTOMER>     │          │ mock-customers-<CUSTOMER>    │
 │  - dial-out WSS → controller │          │  - HTTP :7400                │
 │  - sealed config.json on its │  ← ─ ─ ─ │  - its OWN Fly Postgres      │
 │    state volume (no database)│          │    (`crm` db, empty)         │
@@ -63,11 +63,11 @@ Two cleaner destinations, neither built yet: restore an authenticated admin sess
 ## Verify state persistence after a deploy
 
 ```bash
-./scripts/verify-state-volume.sh            # defaults to twilio-tool-sdk
+./scripts/verify-state-volume.sh            # defaults to tool-proxy
 ./scripts/verify-state-volume.sh <app>
 ```
 
-A volume mounted at `/var/lib/mcp-connector` shadows the image directory, discarding the Dockerfile's `mkdir` + `chown` — Fly mounts it `root:root 0755`. `connector/entrypoint.sh` re-provisions the directories before dropping privileges; this script proves it worked on the box you actually deployed, by running `saveState`'s exact sequence as the real `mcp` uid.
+A volume mounted at `/var/lib/tool-proxy` shadows the image directory, discarding the Dockerfile's `mkdir` + `chown` — Fly mounts it `root:root 0755`. `connector/entrypoint.sh` re-provisions the directories before dropping privileges; this script proves it worked on the box you actually deployed, by running `saveState`'s exact sequence as the real `mcp` uid.
 
 Worth running after any deploy that touches the entrypoint, the Dockerfile, or the `[[mounts]]` block, because **the failure it catches is lazy**: `saveState` runs on the first memory write, not at boot, so a broken deploy reports healthy and fails later under real traffic. The script includes a control write against the still-root-owned volume root — without it, a pass would also be produced by a container accidentally running everything as root.
 
@@ -112,14 +112,14 @@ Two commands. That's it.
 #    root with `-c deploy/fly/fly.toml` so the build context (CWD) is
 #    the full repo — Dockerfile paths in the fly.toml resolve to
 #    connector/Dockerfile as expected.
-mcp-connector deploy init --target fly --name acme-prod --yes
+tool-proxy deploy init --target fly --name acme-prod --yes
 # Result: ./deploy/fly/fly.toml.
 
 # 2. Deploy — creates the Fly app + master key + state volume,
 #    then runs `fly deploy -c deploy/fly/fly.toml`. Idempotent — safe to
 #    re-run if any step is interrupted. Foreground so you see build
 #    progress live.
-mcp-connector deploy apply --target fly
+tool-proxy deploy apply --target fly
 ```
 
 Under the hood `deploy apply` runs the four Fly operations you'd otherwise type by hand: `fly apps create`, `fly secrets set CONNECTOR_KEY_B64`, `fly volumes create state`, and finally `fly deploy`. See [`connector/src/deploy/apply.ts`](../../connector/src/deploy/apply.ts) for the exact sequence.
@@ -134,11 +134,11 @@ Requires the repo secret `FLY_API_TOKEN`:
 
 ```bash
 flyctl tokens create deploy \
-  --app twilio-tool-sdk \
+  --app tool-proxy \
   --expiry 8760h \
   --name github-actions \
   | gh secret set FLY_API_TOKEN \
-      --repo twilio-demos/conversation-agent-tool-sdk
+      --repo deshartman/tool-proxy
 ```
 
 `.github/workflows/pr-checks.yml` runs typecheck + vitest on every PR into `main`. Deploy is NOT gated on PR checks — direct pushes to `main` deploy immediately. Twilio-demos org policy requires SHA-pinned action refs, self-hosted `depot-ubuntu-24.04` runners (no GitHub-hosted runners on internal repos), and blocks `superfly/flyctl-actions` (the deploy workflow curl-installs flyctl instead). Doc-only pushes are skipped via `paths-ignore`.
@@ -153,11 +153,11 @@ For the demo, the mock is a **private** Fly app in the same Fly organization —
 
 ```bash
 # 1. Render the mock's manifests.
-mcp-connector deploy init --target fly-mock --name acme-prod \
+tool-proxy deploy init --target fly-mock --name acme-prod \
   --out ./examples/mock-backend --yes
 
 # 2. Create the Fly app (no deploy yet). Must be in the same Fly org as
-#    mcp-connector-acme-prod — cross-org apps can't reach each other's
+#    tool-proxy-acme-prod — cross-org apps can't reach each other's
 #    .internal DNS.
 cd ./examples/mock-backend && fly launch --no-deploy --copy-config
 
@@ -237,7 +237,7 @@ Save. The inspector pill transitions `closed` → `connecting` → **`open`** (g
 ## Verify
 
 ```bash
-fly ssh console -a mcp-connector-acme-prod -C "sh -c 'cd /app/connector && node dist/index.js doctor'"
+fly ssh console -a tool-proxy-acme-prod -C "sh -c 'cd /app/connector && node dist/index.js doctor'"
 ```
 
 Exit 0 = all green. In the inspector, the MCP Server panel should show every MCP from your `connector.yaml` with "Ready" verdicts, and (if you deployed the mock) the crm drop-in's `get_customer` tool should return the demo Alice.
@@ -248,7 +248,7 @@ Exit 0 = all green. In the inspector, the MCP Server panel should show every MCP
 
 **Master key** — rare (only if leaked). `ConfigStore.open()` compares a fingerprint and refuses to start against a store sealed with a different key, so you cannot just swap the secret. But you do **not** have to destroy the volume: re-seal instead, which preserves the connector's identity.
 
-What the key protects, and therefore all you have to move: the sealed values in `state/config.json` — the tunnel bearer, the OAuth client secret if that is the posture, the registration token, and any machine-API client secrets. It also **derives the `/oauth/token` JWT signing key** (`HMAC-SHA256(key, "mcp-connector:jwt-signing-key:v1")`), so rotating invalidates already-issued machine-API tokens. Nothing else depends on it.
+What the key protects, and therefore all you have to move: the sealed values in `state/config.json` — the tunnel bearer, the OAuth client secret if that is the posture, the registration token, and any machine-API client secrets. It also **derives the `/oauth/token` JWT signing key** (`HMAC-SHA256(key, "tool-proxy:jwt-signing-key:v1")`), so rotating invalidates already-issued machine-API tokens. Nothing else depends on it.
 
 Re-seal, in one session on the Machine — read under the old key, write under the new:
 

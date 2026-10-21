@@ -152,7 +152,7 @@ fi
 
 # Drop-in MCP dir: in dev we point at customer-mcps/ so tools/*.ts folders
 # get auto-discovered by the connector (W-A1/A2 of MCP-LOADING). Production
-# images use the customer-mount path /var/lib/mcp-connector/customer-mcps/.
+# images use the customer-mount path /var/lib/tool-proxy/customer-mcps/.
 # Don't clobber a user-supplied value.
 # MCP-AUDIT #31: the drop-in scanner refuses a folder that resolves outside
 # MCP_DROPIN_DIR, so a symlink committed into a read-only production mount can't
@@ -187,7 +187,7 @@ fi
 # from before this change.
 #
 # The default MUST be set here. The connector's own default is the production
-# path /var/lib/mcp-connector, which an unprivileged dev user cannot create —
+# path /var/lib/tool-proxy, which an unprivileged dev user cannot create —
 # that is a `mkdir EACCES` at boot, not a fallback.
 #
 # MCP_BASE_PORT spacing (100 per port) keeps drop-in child ports from

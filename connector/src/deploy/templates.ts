@@ -11,12 +11,12 @@
 // supplies. See deploy/**/*.md for the reasoning.
 
 // `gke` was removed. It rendered raw Kubernetes manifests that duplicated
-// deploy/helm/mcp-connector, and duplicated it badly: no master-key Secret at
+// deploy/helm/tool-proxy, and duplicated it badly: no master-key Secret at
 // all (so the pod could not boot), no resource requests or limits (so it was
 // scheduled anywhere and OOM-killed under the 493 MB floor), a placeholder
 // `mcp_servers` entry pointing at a service that never existed, and — the one
 // that needed a redesign rather than a patch — a read-only ConfigMap mounted at
-// /etc/mcp-connector, which is exactly where entrypoint.sh must WRITE the key
+// /etc/tool-proxy, which is exactly where entrypoint.sh must WRITE the key
 // it decodes from CONNECTOR_KEY_B64.
 //
 // Kubernetes has one path now: the Helm chart. `helm template` produces raw
@@ -32,7 +32,7 @@ export interface ScaffoldVars {
   // name an attached Postgres at `{{APP_NAME}}-db`; the connector needs no
   // database now, so `deploy apply` creates no such app — the fly-mock target
   // provisions its own.) Defaults are computed by scaffold.ts based
-  // on target — `mcp-connector-<name>` for fly, `mock-customers-<name>` for
+  // on target — `tool-proxy-<name>` for fly, `mock-customers-<name>` for
   // fly-mock. Non-Fly targets ignore this field (their prefixes are baked
   // into the template — ECS task family, K8s namespace, etc.).
   appName: string;
@@ -85,7 +85,7 @@ interface Template {
 // ---------- fargate ----------
 
 const FARGATE_TASK_DEF = `{
-  "family": "mcp-connector-{{NAME}}",
+  "family": "tool-proxy-{{NAME}}",
   "requiresCompatibilities": ["FARGATE"],
   "networkMode": "awsvpc",
   "cpu": "512",
@@ -96,8 +96,8 @@ const FARGATE_TASK_DEF = `{
       "image": "{{IMAGE}}",
       "essential": true,
       "environment": [
-        { "name": "CONNECTOR_CONFIG",    "value": "/etc/mcp-connector/config.yaml" },
-        { "name": "CONNECTOR_KEY_FILE",  "value": "/etc/mcp-connector/connector.key" },
+        { "name": "CONNECTOR_CONFIG",    "value": "/etc/tool-proxy/config.yaml" },
+        { "name": "CONNECTOR_KEY_FILE",  "value": "/etc/tool-proxy/connector.key" },
         { "name": "INSPECTOR_PORT",      "value": "9090" },
         { "name": "HEALTH_PORT",         "value": "9100" }
       ],
@@ -105,7 +105,7 @@ const FARGATE_TASK_DEF = `{
         { "name": "CONNECTOR_KEY_B64", "valueFrom": "REPLACE_WITH_SECRETS_MANAGER_ARN" }
       ],
       "mountPoints": [
-        { "containerPath": "/var/lib/mcp-connector", "sourceVolume": "state" }
+        { "containerPath": "/var/lib/tool-proxy", "sourceVolume": "state" }
       ],
       "healthCheck": {
         "command": ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/readyz >/dev/null 2>&1 || exit 1"],
@@ -117,7 +117,7 @@ const FARGATE_TASK_DEF = `{
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
-          "awslogs-group": "/ecs/mcp-connector-{{NAME}}",
+          "awslogs-group": "/ecs/tool-proxy-{{NAME}}",
           "awslogs-region": "REPLACE_WITH_REGION",
           "awslogs-stream-prefix": "connector"
         }
@@ -150,7 +150,7 @@ const FARGATE_SECRETS_HINT = `# Secrets Manager stub — populate before applyin
 # ticket, a chat, or a terminal you do not control.
 #
 # aws secretsmanager create-secret \\
-#   --name mcp-connector/{{NAME}}/connector-key-b64 \\
+#   --name tool-proxy/{{NAME}}/connector-key-b64 \\
 #   --secret-string "$(head -c 32 /dev/urandom | base64)"
 #
 # Then paste the returned ARN into task-definition.json under
@@ -172,7 +172,7 @@ const FARGATE_SECRETS_HINT = `# Secrets Manager stub — populate before applyin
 
 const FARGATE_EFS_HINT = `# EFS stub — the state volume MUST be persistent.
 #
-# This is not a durability nicety. /var/lib/mcp-connector/state/config.json holds
+# This is not a durability nicety. /var/lib/tool-proxy/state/config.json holds
 # the sealed tunnel bearer and the registration token the controller issued. On a
 # bare Fargate volume ("host": {}) that file is created fresh on every task
 # start, so:
@@ -186,7 +186,7 @@ const FARGATE_EFS_HINT = `# EFS stub — the state volume MUST be persistent.
 # aws efs create-file-system \\
 #   --encrypted \\
 #   --performance-mode generalPurpose \\
-#   --tags Key=Name,Value=mcp-connector-{{NAME}}-state
+#   --tags Key=Name,Value=tool-proxy-{{NAME}}-state
 #
 # # The access point pins the POSIX identity, which is what makes the mount
 # # writable by the container's non-root user. The image runs as mcp:mcp
@@ -194,7 +194,7 @@ const FARGATE_EFS_HINT = `# EFS stub — the state volume MUST be persistent.
 # aws efs create-access-point \\
 #   --file-system-id <FS-ID> \\
 #   --posix-user Uid=1000,Gid=1000 \\
-#   --root-directory 'Path=/mcp-connector-{{NAME}},CreationInfo={OwnerUid=1000,OwnerGid=1000,Permissions=0755}'
+#   --root-directory 'Path=/tool-proxy-{{NAME}},CreationInfo={OwnerUid=1000,OwnerGid=1000,Permissions=0755}'
 #
 # Paste both IDs into task-definition.json under volumes[0].efsVolumeConfiguration.
 #
@@ -227,10 +227,10 @@ param connectorName string = '{{NAME}}'
 // ephemeral storage: state/config.json holds the sealed tunnel bearer and the
 // registration token, so losing it on a revision restart means re-running
 // Configure Tunnel AND clearing a sticky name_taken row on the controller.
-param stateStorageName string = 'mcp-connector-state'
+param stateStorageName string = 'tool-proxy-state'
 
 resource app 'Microsoft.App/containerApps@2023-05-01' = {
-  name: 'mcp-connector-\${connectorName}'
+  name: 'tool-proxy-\${connectorName}'
   location: location
   identity: { type: 'SystemAssigned' }
   properties: {
@@ -251,12 +251,12 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
           name: 'connector'
           image: imageRef
           env: [
-            { name: 'CONNECTOR_CONFIG',   value: '/etc/mcp-connector/config.yaml' }
+            { name: 'CONNECTOR_CONFIG',   value: '/etc/tool-proxy/config.yaml' }
             // The one variable requireEnv() demands. The entrypoint decodes
             // CONNECTOR_KEY_B64 into this path at 0400 and unsets it before
             // dropping privileges, so nothing mounts a key file — and nothing
-            // may mount over /etc/mcp-connector either, or the write fails.
-            { name: 'CONNECTOR_KEY_FILE', value: '/etc/mcp-connector/connector.key' }
+            // may mount over /etc/tool-proxy either, or the write fails.
+            { name: 'CONNECTOR_KEY_FILE', value: '/etc/tool-proxy/connector.key' }
             { name: 'INSPECTOR_PORT',     value: '9090' }
             // Orchestrator probes on their own server, bound 0.0.0.0 with two
             // GET-only routes. The inspector cannot be probed — it binds
@@ -293,7 +293,7 @@ resource app 'Microsoft.App/containerApps@2023-05-01' = {
             }
           ]
           volumeMounts: [
-            { volumeName: 'state', mountPath: '/var/lib/mcp-connector' }
+            { volumeName: 'state', mountPath: '/var/lib/tool-proxy' }
           ]
         }
       ]
@@ -337,16 +337,16 @@ services:
       # The only required env var. Controller URL, connector name and auth
       # posture are entered in the inspector's Configure Tunnel modal and
       # sealed into the state volume — there are no env vars for them.
-      CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
-      CONNECTOR_CONFIG: /etc/mcp-connector/config.yaml
+      CONNECTOR_KEY_FILE: /etc/tool-proxy/connector.key
+      CONNECTOR_CONFIG: /etc/tool-proxy/config.yaml
       INSPECTOR_PORT: "9090"
     volumes:
       # Holds state/config.json — the sealed tunnel bearer and registration
       # token. This volume IS the connector's identity; destroy it and the
       # operator re-runs Configure Tunnel.
-      - state:/var/lib/mcp-connector
-      - ./connector.yaml:/etc/mcp-connector/config.yaml:ro
-      - ./secrets/connector.key:/etc/mcp-connector/connector.key:ro
+      - state:/var/lib/tool-proxy
+      - ./connector.yaml:/etc/tool-proxy/config.yaml:ro
+      - ./secrets/connector.key:/etc/tool-proxy/connector.key:ro
     # NO ports: mapping. The connector binds 127.0.0.1:9090 INSIDE the
     # container's namespace, so publishing the port forwards to an interface
     # nothing listens on and the host gets connection refused. Widening
@@ -367,7 +367,7 @@ const COMPOSE_ENV = `# Copy to .env before \`docker compose up\`. Nothing here i
 #
 # There are no credentials to paste. The connector needs exactly one secret,
 # the 32-byte master key, and it arrives as the read-only file mount at
-# /etc/mcp-connector/connector.key declared in docker-compose.yml.
+# /etc/tool-proxy/connector.key declared in docker-compose.yml.
 #
 # TUNNEL_AUTH_TOKEN and the OAUTH_* trio used to live here. Both postures are
 # now configured in the inspector's Configure Tunnel modal and sealed at rest;
@@ -386,8 +386,8 @@ const COMPOSE_ENV = `# Copy to .env before \`docker compose up\`. Nothing here i
 // entrypoint decodes it to CONNECTOR_KEY_FILE. See
 // CODE-DEPLOY design record for the design record.
 
-const FLY_TOML = `# mcp-connector — Fly.io deployment
-# Generated by \`mcp-connector deploy init --target fly\`.
+const FLY_TOML = `# tool-proxy — Fly.io deployment
+# Generated by \`tool-proxy deploy init --target fly\`.
 #
 # Load-bearing invariants (see CODE-DEPLOY design record):
 #   - No [[services]] or [http_service] — connector is outbound-only.
@@ -411,8 +411,8 @@ primary_region = "iad"
   # \`dockerfile\` line) once your registry publishes the image.
 
 [env]
-  CONNECTOR_KEY_FILE = "/etc/mcp-connector/connector.key"
-  CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
+  CONNECTOR_KEY_FILE = "/etc/tool-proxy/connector.key"
+  CONNECTOR_CONFIG = "/etc/tool-proxy/config.yaml"
   INSPECTOR_PORT = "9090"
   # Bind on all IPv6 interfaces so the machine API is reachable over Fly's
   # private mesh (the controller calls /oauth/token and the /v1/* routes at
@@ -438,14 +438,14 @@ primary_region = "iad"
   # redundant — and the old /app/mcp/local tree no longer exists, so setting
   # it silently disabled customer drop-in discovery and the "Refresh local
   # MCPs" rescan. Leaving it unset uses the default
-  # (/var/lib/mcp-connector/customer-mcps/), which is inside the [[mounts]]
+  # (/var/lib/tool-proxy/customer-mcps/), which is inside the [[mounts]]
   # volume below — where customer-authored MCPs actually belong.
-  # CONNECTOR_KEY_B64 is set by \`mcp-connector deploy apply --target fly\`.
+  # CONNECTOR_KEY_B64 is set by \`tool-proxy deploy apply --target fly\`.
   # It is the only secret; the entrypoint decodes it to CONNECTOR_KEY_FILE.
 
 [[mounts]]
   source = "state"
-  destination = "/var/lib/mcp-connector"
+  destination = "/var/lib/tool-proxy"
 
 # Deliver the yaml config INTO the Machine at boot. Fly's [[files]] block
 # is the only mechanism that writes a local file to the Machine's
@@ -455,7 +455,7 @@ primary_region = "iad"
 # create it before \`fly deploy\` with at least an empty \`mcp_servers: []\`
 # and a \`policy:\` block.
 [[files]]
-  guest_path = "/etc/mcp-connector/config.yaml"
+  guest_path = "/etc/tool-proxy/config.yaml"
   local_path = "deploy/fly/connector.yaml"
 
 [[vm]]
@@ -476,7 +476,7 @@ primary_region = "iad"
 // CODE-DEPLOY design record §D5.
 
 const FLY_MOCK_TOML = `# mock-customers — Fly.io deployment (demo only)
-# Generated by \`mcp-connector deploy init --target fly-mock\`.
+# Generated by \`tool-proxy deploy init --target fly-mock\`.
 #
 # Simulates an enterprise CRM backend. Reachable ONLY from the connector
 # app in the same Fly org, via Fly's \`.internal\` private DNS. Not reachable
@@ -594,7 +594,7 @@ fails the call. The reasoning therefore lives here.
   does not help: the memory is absent, not late. 256 CPU units is the cheapest
   valid pairing that clears the floor, but a quarter vCPU for five node
   processes is too thin.
-- **No mount at \`/etc/mcp-connector\`.** The entrypoint decodes
+- **No mount at \`/etc/tool-proxy\`.** The entrypoint decodes
   \`CONNECTOR_KEY_B64\` and *writes* the key there, so a read-only or shadowing
   mount at that path breaks boot. An earlier version of this template mounted an
   ephemeral \`config\` volume over it.
@@ -644,10 +644,10 @@ Tunnel again, and the re-register collides on \`name_taken\` — which is sticky
 so auto-reconnect is suppressed and a human must click Reconnect. Unattended
 restart is impossible without this.
 
-    az storage share-rm create --storage-account <sa> --name mcp-connector-state --quota 1
+    az storage share-rm create --storage-account <sa> --name tool-proxy-state --quota 1
     az containerapp env storage set --name <env> --resource-group <rg> \\
-      --storage-name mcp-connector-state --azure-file-account-name <sa> \\
-      --azure-file-account-key <key> --azure-file-share-name mcp-connector-state \\
+      --storage-name tool-proxy-state --azure-file-account-name <sa> \\
+      --azure-file-account-key <key> --azure-file-share-name tool-proxy-state \\
       --access-mode ReadWrite
 
 **3. A Key Vault secret holding the base64 master key**, readable by the app's
@@ -674,7 +674,7 @@ Finally:
 container and so presents as a genuine loopback caller — every dashboard route
 refuses anything else:
 
-    az containerapp exec --name mcp-connector-{{NAME}} --resource-group <rg> \\
+    az containerapp exec --name tool-proxy-{{NAME}} --resource-group <rg> \\
       --command "node dist/index.js doctor"
 
 **Do not add an ingress.** \`ingress: null\` is load-bearing: the connector opens
@@ -706,7 +706,7 @@ Verify:
 
     docker compose exec connector node dist/index.js doctor
 
-\`node dist/index.js\`, not \`mcp-connector\` — the image's WORKDIR is
+\`node dist/index.js\`, not \`tool-proxy\` — the image's WORKDIR is
 /app/connector and the workspace bin link at /app/node_modules/.bin is not on
 PATH, so the bare name fails with "not found".
 
@@ -735,7 +735,7 @@ deploy/fly/README.md for the reasoning).
 
 **Deploy:**
 
-    mcp-connector deploy apply --target fly
+    tool-proxy deploy apply --target fly
 
 That's it. Four idempotent steps: creates the Fly app, mints and sets the
 master key, creates the state volume, runs \`fly deploy\`. Safe to re-run if a

@@ -1,4 +1,4 @@
-// `mcp-connector deploy init --target <t>` — emits cloud-specific
+// `tool-proxy deploy init --target <t>` — emits cloud-specific
 // deployment manifests with the customer's CONNECTOR_NAME and
 // CONTROLLER_URL substituted in. Replaces the copy-paste-and-edit cycle
 // from deploy/**/*.md with one command.
@@ -35,18 +35,18 @@ const TARGETS: ScaffoldTarget[] = ["fargate", "aca", "compose", "fly", "fly-mock
 const RETIRED_TARGETS: Record<string, string> = {
   gke: `Kubernetes is served by the Helm chart, which does the same job correctly:
 
-    helm install my-connector ./deploy/helm/mcp-connector \\
+    helm install my-connector ./deploy/helm/tool-proxy \\
       --set image.tag=<version> \\
       --set secrets.connectorKeyB64="$(head -c 32 /dev/urandom | base64)"
 
 If your policy forbids installing Helm releases, render raw manifests from the
 same chart instead of hand-maintaining a second copy:
 
-    helm template my-connector ./deploy/helm/mcp-connector \\
+    helm template my-connector ./deploy/helm/tool-proxy \\
       --set image.tag=<version> --set secrets.connectorKeyB64=<base64> \\
       | kubectl apply -f -
 
-See deploy/helm/mcp-connector/README.md.`,
+See deploy/helm/tool-proxy/README.md.`,
 };
 const DEFAULT_OUT: Record<ScaffoldTarget, string> = {
   fargate: "./deploy/aws-fargate",
@@ -101,7 +101,7 @@ export async function scaffoldTo(
 }
 
 // CLI entry.
-const USAGE = `usage: mcp-connector deploy init --target <t> [flags]
+const USAGE = `usage: tool-proxy deploy init --target <t> [flags]
 
 Generates cloud-specific deployment manifests for the connector, with your name
 and image reference substituted in. Does NOT touch the cloud — writes files
@@ -112,7 +112,7 @@ The manifests carry ONE secret: a 32-byte master key. Controller URL, connector
 name and auth posture are entered in the inspector's Configure Tunnel modal once
 the container is running, so nothing here asks for them.
 
-Kubernetes has no target here — use the Helm chart at deploy/helm/mcp-connector/.
+Kubernetes has no target here — use the Helm chart at deploy/helm/tool-proxy/.
 
 Targets:
   fargate    AWS Fargate task definition + Secrets Manager and EFS hints
@@ -129,10 +129,10 @@ Flags:
                         will type into Configure Tunnel, so an operator
                         debugging at 3am does not have to map one to the other
   --app-name <a>        Fly-only: the Fly.io app name. Defaults to
-                        "mcp-connector-<name>" (fly) or "mock-customers-<name>"
+                        "tool-proxy-<name>" (fly) or "mock-customers-<name>"
                         (fly-mock). Set this if you want a custom, non-prefixed
-                        name — e.g. "twilio-tool-sdk". Ignored for non-Fly targets.
-  --image <ref>         OCI image ref (default ghcr.io/twilio/mcp-connector:latest)
+                        name — e.g. "tool-proxy". Ignored for non-Fly targets.
+  --image <ref>         OCI image ref (default ghcr.io/twilio/tool-proxy:latest)
   --controller-url <u>  IGNORED (accepted for compatibility; warns)
   --auth <a>            IGNORED (accepted for compatibility; warns)
   --out <dir>           output directory (default ./deploy/<target>)
@@ -218,14 +218,14 @@ export async function runDeployInit(argv: string[]): Promise<number> {
     }
 
     // Fly app name: `--app-name` wins; otherwise default from target
-    // convention (`mcp-connector-<name>` / `mock-customers-<name>`).
+    // convention (`tool-proxy-<name>` / `mock-customers-<name>`).
     // Non-Fly targets ignore this field but it's harmless to compute.
     const appName = values["app-name"] ?? defaultAppName(target, name);
 
     const vars: ScaffoldVars = {
       name,
       appName,
-      image: values.image ?? "ghcr.io/twilio/mcp-connector:latest",
+      image: values.image ?? "ghcr.io/twilio/tool-proxy:latest",
     };
 
     const outDir = resolvePath(values.out ?? DEFAULT_OUT[target]);
@@ -263,7 +263,7 @@ async function resolveField(
 // bare `name` — they don't reference {{APP_NAME}} in their templates so the
 // value is unused, but returning `name` keeps ScaffoldVars uniformly populated.
 function defaultAppName(target: ScaffoldTarget, name: string): string {
-  if (target === "fly") return `mcp-connector-${name}`;
+  if (target === "fly") return `tool-proxy-${name}`;
   if (target === "fly-mock") return `mock-customers-${name}`;
   return name;
 }

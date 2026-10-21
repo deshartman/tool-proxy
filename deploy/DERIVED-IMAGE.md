@@ -15,21 +15,21 @@ build-and-push cycle — use [VOLUME-MOUNT.md](./VOLUME-MOUNT.md) for that.
 
 ## How it works
 
-The base image `twilio/mcp-connector:<tag>` bakes the connector, `tsx`, and
+The base image `twilio/tool-proxy:<tag>` bakes the connector, `tsx`, and
 the Twilio-authored `bundled-mcps/` tree into a runtime layer.
 Your derived image copies your Type 1 MCPs into the well-known drop-in
 path — the same path the volume-mount path bind-mounts into — and the
 connector's drop-in scanner picks them up at boot with **zero connector
 changes**.
 
-Mount point: `/var/lib/mcp-connector/customer-mcps/` (the `PROD_DEFAULT`
+Mount point: `/var/lib/tool-proxy/customer-mcps/` (the `PROD_DEFAULT`
 in [`src/dropin.ts`](../connector/src/dropin.ts)). Folder name
 = MCP name.
 
 ## Prerequisites
 
 - Docker or a compatible builder (Buildah, Podman, kaniko, etc.).
-- Access to pull `twilio/mcp-connector:<tag>` from your registry.
+- Access to pull `twilio/tool-proxy:<tag>` from your registry.
 - Somewhere to push the derived image (your registry).
 
 ## The Dockerfile
@@ -37,12 +37,12 @@ in [`src/dropin.ts`](../connector/src/dropin.ts)). Folder name
 Minimum viable derived image:
 
 ```dockerfile
-FROM twilio/mcp-connector:1.0
+FROM twilio/tool-proxy:1.0
 
 # Drop your Type 1 MCPs into the well-known path. Each subdirectory
 # becomes an MCP; the folder name is the server name announced on the
 # manifest.
-COPY ./my-mcps/ /var/lib/mcp-connector/customer-mcps/
+COPY ./my-mcps/ /var/lib/tool-proxy/customer-mcps/
 ```
 
 That's it — the base image's `ENTRYPOINT` and `CMD` are inherited, so
@@ -58,10 +58,10 @@ shipping its own `server.ts`). Customer creds should still come from the
 controller, not build-time env.
 
 ```dockerfile
-COPY ./connector.yaml /etc/mcp-connector/config.yaml
+COPY ./connector.yaml /etc/tool-proxy/config.yaml
 ```
 
-Set `CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml` at runtime, or rely
+Set `CONNECTOR_CONFIG=/etc/tool-proxy/config.yaml` at runtime, or rely
 on the default resolution from CWD.
 
 ### Optional: install third-party Node deps per MCP
@@ -72,7 +72,7 @@ If any of your Type 1 MCPs declare `dependencies` in their `package.json`
 won't do it for you at boot in a derived image:
 
 ```dockerfile
-RUN find /var/lib/mcp-connector/customer-mcps -maxdepth 2 -name package.json \
+RUN find /var/lib/tool-proxy/customer-mcps -maxdepth 2 -name package.json \
     -execdir sh -c 'test "$(node -e "console.log(Object.keys(require(\"./package.json\").dependencies||{}).length)")" != "0" \
       && npm install --omit=dev --no-package-lock' \;
 ```
@@ -86,7 +86,7 @@ workspace `node_modules`), this step is unnecessary.
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t your-registry/mcp-connector:1.0-with-my-mcps \
+  -t your-registry/tool-proxy:1.0-with-my-mcps \
   --push .
 ```
 
@@ -96,7 +96,7 @@ single-arch, drop the `--platform` flag.
 ## Deploy
 
 Retarget your existing manifests to your derived image tag — nothing else
-changes. All four `mcp-connector deploy init --target` outputs
+changes. All four `tool-proxy deploy init --target` outputs
 (`fargate` / `aca` / `compose` / `fly`) accept a customer-owned
 image tag; there's no branching in the connector's runtime behavior.
 
@@ -104,7 +104,7 @@ Examples:
 
 - **Kubernetes** — `spec.template.spec.containers[0].image` in your
   Deployment or the Helm chart's `image.repository` / `image.tag`.
-- **Fly.io** — `image = "your-registry/mcp-connector:1.0-with-my-mcps"` in
+- **Fly.io** — `image = "your-registry/tool-proxy:1.0-with-my-mcps"` in
   `fly.toml`.
 - **AWS Fargate** — `containerDefinitions[0].image` in your task def, or
   the Terraform module's `image` variable.
@@ -146,7 +146,7 @@ delivery path.
 
 ```
 test/deploy/derived-image/            # gitignored
-├── Dockerfile                        # FROM mcp-connector:local-npm-pivot + COPY
+├── Dockerfile                        # FROM tool-proxy:local-npm-pivot + COPY
 ├── connector.yaml                    # tunnel: block + empty mcp_servers + policy
 ├── fly.toml                          # env-mode, no [[services]], volume at /data
 └── hello-derived/                    # this is the customer's MCP folder
@@ -157,20 +157,20 @@ test/deploy/derived-image/            # gitignored
 ### Dockerfile
 
 ```dockerfile
-FROM mcp-connector:local-npm-pivot
-COPY ./hello-derived/ /var/lib/mcp-connector/customer-mcps/hello-derived/
+FROM tool-proxy:local-npm-pivot
+COPY ./hello-derived/ /var/lib/tool-proxy/customer-mcps/hello-derived/
 ```
 
 ### fly.toml (relevant excerpts)
 
 ```toml
-app = "mcp-shim-derived-test"
+app = "tool-proxy-derived-test"
 primary_region = "iad"
 
 [env]
-  CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
+  CONNECTOR_CONFIG = "/etc/tool-proxy/config.yaml"
   # Volume mounted at /data (see the masking pitfall below) so it doesn't
-  # hide the drop-in path baked in at /var/lib/mcp-connector/customer-mcps/.
+  # hide the drop-in path baked in at /var/lib/tool-proxy/customer-mcps/.
   INSPECTOR_PORT = "9090"
   INSPECTOR_BIND_ADDR = "::"
 
@@ -179,7 +179,7 @@ primary_region = "iad"
   destination = "/data"
 
 [[files]]
-  guest_path = "/etc/mcp-connector/config.yaml"
+  guest_path = "/etc/tool-proxy/config.yaml"
   local_path = "connector.yaml"
 
 [[vm]]
@@ -192,7 +192,7 @@ primary_region = "iad"
 ```
 
 > **Fly volume masking pitfall.** If you mount a Fly volume at
-> `/var/lib/mcp-connector` (the connector image's default state dir), the
+> `/var/lib/tool-proxy` (the connector image's default state dir), the
 > mount masks any subdirectories the derived image COPYed into that path
 > — the drop-in scanner will find zero MCPs. Two fixes: (1) mount the
 > volume at a sibling path like `/data`, as shown above; or (2) override
@@ -209,23 +209,23 @@ primary_region = "iad"
 
 ```bash
 # 1. Build the base image (from this repo's root)
-IMAGE=mcp-connector:local-npm-pivot PLATFORMS=linux/amd64 ./scripts/build-image.sh
+IMAGE=tool-proxy:local-npm-pivot PLATFORMS=linux/amd64 ./scripts/build-image.sh
 
 # 2. Build the derived image
 cd test/deploy/derived-image
-docker build --platform linux/amd64 -t mcp-shim-derived:test .
+docker build --platform linux/amd64 -t tool-proxy-derived:test .
 
 # 3. Create Fly app + secrets + state volume
-fly apps create mcp-shim-derived-test --org personal
+fly apps create tool-proxy-derived-test --org personal
 fly secrets set \
   CONTROLLER_URL="$CONTROLLER_URL" \
-  CONNECTOR_NAME=mcp-shim-derived-test \
+  CONNECTOR_NAME=tool-proxy-derived-test \
   TUNNEL_AUTH_TOKEN="$TUNNEL_AUTH_TOKEN" \
-  -a mcp-shim-derived-test
-fly volumes create state --size 1 --region iad -a mcp-shim-derived-test -y
+  -a tool-proxy-derived-test
+fly volumes create state --size 1 --region iad -a tool-proxy-derived-test -y
 
 # 4. Deploy the pre-built local image (bypasses Fly's remote builder)
-fly deploy --local-only --image mcp-shim-derived:test -a mcp-shim-derived-test
+fly deploy --local-only --image tool-proxy-derived:test -a tool-proxy-derived-test
 ```
 
 ### Verify
@@ -233,11 +233,11 @@ fly deploy --local-only --image mcp-shim-derived:test -a mcp-shim-derived-test
 ```bash
 # Inspector — `fly proxy` alone 403s (loopback-only dashboard); the wrapper
 # supplies the missing hop and cleans up on Ctrl-C.
-./scripts/fly-inspector.sh mcp-shim-derived-test
+./scripts/fly-inspector.sh tool-proxy-derived-test
 # open the URL it prints → hello-derived visible under MCP Server
 
 # Boot logs — grep the sequence
-fly logs -a mcp-shim-derived-test --no-tail | grep -E \
+fly logs -a tool-proxy-derived-test --no-tail | grep -E \
   'name.*hello-derived|tunnel connected|register-ack|mcp-discovered'
 ```
 
@@ -258,7 +258,7 @@ Approval lane. Click Approve; call `hello-derived.hello`; receive
 ### Cleanup
 
 ```bash
-fly apps destroy mcp-shim-derived-test -y
+fly apps destroy tool-proxy-derived-test -y
 ```
 
 The volume goes with the app.

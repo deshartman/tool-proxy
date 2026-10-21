@@ -3,21 +3,21 @@
 Run the connector as a one-replica Deployment on GKE.
 
 > **Use the chart at
-> [`deploy/helm/mcp-connector/`](../../deploy/helm/mcp-connector/README.md).**
+> [`deploy/helm/tool-proxy/`](../../deploy/helm/tool-proxy/README.md).**
 > It is the only supported Kubernetes path and installs with two `--set` flags.
 >
-> `mcp-connector deploy init --target gke` **no longer exists.** It rendered raw
+> `tool-proxy deploy init --target gke` **no longer exists.** It rendered raw
 > manifests that duplicated the chart and duplicated it badly: no master-key
 > Secret at all (so the pod could not boot), no resource requests or limits (so
 > it was scheduled anywhere and OOM-killed under the 493 MB floor), a
 > placeholder `mcp_servers` entry pointing at a service that never existed, and
-> a read-only ConfigMap mounted at `/etc/mcp-connector` — which is exactly where
+> a read-only ConfigMap mounted at `/etc/tool-proxy` — which is exactly where
 > `entrypoint.sh` must WRITE the key it decodes from `CONNECTOR_KEY_B64`.
 >
 > If your policy forbids installing Helm releases, render raw manifests from the
 > same chart rather than hand-maintaining a second copy:
 >
->     helm template my-connector ./deploy/helm/mcp-connector \
+>     helm template my-connector ./deploy/helm/tool-proxy \
 >       --set image.tag=<version> --set secrets.connectorKeyB64=<base64> \
 >       | kubectl apply -f -
 >
@@ -53,7 +53,7 @@ inbound — see [README](./README.md)).
 ```yaml
 apiVersion: v1
 kind: Secret
-metadata: { name: mcp-connector-token }
+metadata: { name: tool-proxy-token }
 type: Opaque
 stringData:
   # ONE of the two postures, matching the controller's Tunnel Security row.
@@ -67,7 +67,7 @@ stringData:
 ---
 apiVersion: v1
 kind: ConfigMap
-metadata: { name: mcp-connector-config }
+metadata: { name: tool-proxy-config }
 data:
   config.yaml: |
     # ── legacy, ignored ──
@@ -90,18 +90,18 @@ data:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: mcp-connector }
+metadata: { name: tool-proxy }
 spec:
   replicas: 1
-  selector: { matchLabels: { app: mcp-connector } }
+  selector: { matchLabels: { app: tool-proxy } }
   template:
-    metadata: { labels: { app: mcp-connector } }
+    metadata: { labels: { app: tool-proxy } }
     spec:
       containers:
         - name: connector
-          image: us-docker.pkg.dev/<project>/mcp/mcp-connector:0.1.0
+          image: us-docker.pkg.dev/<project>/mcp/tool-proxy:0.1.0
           envFrom:
-            - secretRef: { name: mcp-connector-token }
+            - secretRef: { name: tool-proxy-token }
           env:
             - { name: CONTROLLER_URL, value: "https://controller.example.com" }
             # CONNECTOR_NAME must match the Name on the controller's Tunnel
@@ -111,7 +111,7 @@ spec:
             - { name: CONNECTOR_NAME, value: "prod-customer" }
             # For an OAuth 2.0 row, also add:
             # - { name: OAUTH_TOKEN_URL, value: "https://controller.example.com/oauth2/token" }
-            - { name: CONNECTOR_CONFIG, value: "/etc/mcp-connector/config.yaml" }
+            - { name: CONNECTOR_CONFIG, value: "/etc/tool-proxy/config.yaml" }
             # Where the connector persists registrationToken across pod
             # restarts. Without a stable, writable path here, every pod
             # restart re-mints and the controller's dup-name guard 409s.
@@ -122,19 +122,19 @@ spec:
             - { name: INSPECTOR_PORT,   value: "9090" }
           volumeMounts:
             # config.yaml is read-only — sourced from a ConfigMap.
-            - { name: config, mountPath: /etc/mcp-connector, readOnly: true }
+            - { name: config, mountPath: /etc/tool-proxy, readOnly: true }
             # .connector-state.json must be writable AND survive pod restarts
             # — back it with a PVC. ReadWriteOnce is sufficient (replicas: 1).
-            - { name: state, mountPath: /var/lib/mcp-connector }
+            - { name: state, mountPath: /var/lib/tool-proxy }
       volumes:
         - name: config
-          configMap: { name: mcp-connector-config }
+          configMap: { name: tool-proxy-config }
         - name: state
-          persistentVolumeClaim: { claimName: mcp-connector-state }
+          persistentVolumeClaim: { claimName: tool-proxy-state }
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
-metadata: { name: mcp-connector-state }
+metadata: { name: tool-proxy-state }
 spec:
   accessModes: ["ReadWriteOnce"]
   resources: { requests: { storage: 64Mi } }
@@ -149,7 +149,7 @@ driver](https://cloud.google.com/secret-manager/docs/secret-manager-managed-csi-
 
 To view the UI:
 ```bash
-kubectl port-forward deploy/mcp-connector 9090:9090
+kubectl port-forward deploy/tool-proxy 9090:9090
 # open http://localhost:9090/
 ```
 

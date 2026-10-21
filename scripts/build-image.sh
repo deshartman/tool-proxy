@@ -6,12 +6,12 @@
 #   ./scripts/build-image.sh
 #
 # Multi-arch build that pushes to a registry:
-#   IMAGE=your-registry/mcp-connector:0.1.0 PUSH=1 ./scripts/build-image.sh
+#   IMAGE=your-registry/tool-proxy:0.1.0 PUSH=1 ./scripts/build-image.sh
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="${IMAGE:-mcp-connector:dev}"
+IMAGE="${IMAGE:-tool-proxy:dev}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 PUSH="${PUSH:-}"
 

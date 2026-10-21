@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "bin": {
-    "mcp-connector": "dist/index.js"
+    "tool-proxy": "dist/index.js"
   },
   "exports": {
     ".": "./dist/index.js",

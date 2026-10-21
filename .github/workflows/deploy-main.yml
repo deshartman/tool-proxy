@@ -1,6 +1,6 @@
 name: Deploy to Fly.io
 
-# Push-to-deploy for the mcp-connector Fly app (`twilio-tool-sdk`).
+# Push-to-deploy for the tool-proxy Fly app (`tool-proxy`).
 #
 # Fires on:
 #   - `push` to `main` (PR merge or direct push both trigger it)
@@ -13,18 +13,18 @@ name: Deploy to Fly.io
 #   - Repo secret `FLY_API_TOKEN` set to a Fly deploy token scoped to the app.
 #     Generate:
 #       flyctl tokens create deploy \
-#         --app twilio-tool-sdk \
+#         --app tool-proxy \
 #         --expiry 8760h \
 #         --name github-actions \
 #         | gh secret set FLY_API_TOKEN \
-#             --repo twilio-demos/conversation-agent-tool-sdk
+#             --repo deshartman/tool-proxy
 #     Token expires after 1 year — rotate by rerunning the same command.
 #   - `deploy/fly/fly.toml` exists in the repo (checked in — generated once via
-#     `mcp-connector deploy init --target fly`).
+#     `tool-proxy deploy init --target fly`).
 #   - App + Postgres already exist on Fly (bootstrapped via a local
 #     `./scripts/deploy/fly-deploy.sh` run). CI does the ongoing redeploy path
 #     only; it does not re-bootstrap Postgres, volumes, or secrets. Those are
-#     idempotent inside `mcp-connector deploy apply --target fly`, so a CI run
+#     idempotent inside `tool-proxy deploy apply --target fly`, so a CI run
 #     against a fresh app would work — but the first run is deliberately a
 #     human-in-the-loop step per OPERATOR-RUNBOOK.md.
 
@@ -82,7 +82,7 @@ jobs:
         run: npm ci
 
       # We build here (not inside fly-deploy.sh) so that the shell script sees
-      # a fresh dist/ and short-circuits its own build. `mcp-connector deploy
+      # a fresh dist/ and short-circuits its own build. `tool-proxy deploy
       # apply --target fly` needs connector/dist/index.js to spawn its five
       # idempotent Fly ops (see scripts/deploy/fly-deploy.sh header comment).
       - name: Build connector

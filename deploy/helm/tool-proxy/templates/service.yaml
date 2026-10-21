@@ -15,13 +15,13 @@ Ingress/Gateway of your own if you need traffic from outside the cluster.
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "mcp-connector.fullname" . }}-inspector
+  name: {{ include "tool-proxy.fullname" . }}-inspector
   labels:
-    {{- include "mcp-connector.labels" . | nindent 4 }}
+    {{- include "tool-proxy.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.networkAccess.serviceType }}
   selector:
-    {{- include "mcp-connector.selectorLabels" . | nindent 4 }}
+    {{- include "tool-proxy.selectorLabels" . | nindent 4 }}
   ports:
     - name: inspector
       port: 9090
