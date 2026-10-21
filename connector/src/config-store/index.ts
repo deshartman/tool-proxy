@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { MasterKey } from "./master-key.js";
-import { mintShimId } from "../identity/shim-id.js";
+import { mintProxyId } from "../identity/proxy-id.js";
 import { seal, open } from "./seal.js";
 import {
   ensureStateDir,
@@ -114,14 +114,19 @@ export class ConfigStore {
       );
     }
     let dirty = false;
-    if (doc.shimId === undefined) {
-      // Back-fill a store written before shimId existed. Done here, before the
+    if (doc.proxyId === undefined) {
+      // Back-fill a store with neither key. Done here, before the
       // constructor, rather than through mutate(): no other writer can hold
       // this store yet, and the id must exist before anything reads it.
-      // Written once; never re-minted for a store that already has one.
-      doc.shimId = mintShimId();
-      dirty = true;
+      // Written once; never re-minted for a store that already has one (a
+      // legacy `shimId` was already carried into proxyId by readDoc).
+      doc.proxyId = mintProxyId();
     }
+    // Dual-write: keep the legacy key equal to proxyId for one release, and
+    // persist a shimId -> proxyId migration the first time it is seen.
+    if (doc.shimId !== doc.proxyId) doc.shimId = doc.proxyId;
+    const raw = JSON.parse(readFileSync(path, "utf8")) as { proxyId?: unknown; shimId?: unknown };
+    if (raw.proxyId !== doc.proxyId || raw.shimId !== doc.shimId) dirty = true;
     // A pre-Phase-6 store had at most one controller, so binding its legacy
     // trusted issuer and API clients to that controller is exact, not a guess.
     if (doc.controllers[0] && adoptLegacyBindings(doc, doc.controllers[0])) dirty = true;
@@ -129,22 +134,23 @@ export class ConfigStore {
     return new ConfigStore(path, masterKey);
   }
 
-  /** This shim's identity. Always present after open(). */
-  getShimId(): string {
-    const id = this.read().shimId;
-    if (!id) throw new Error("config store has no shimId — open() must back-fill it");
+  /** This proxy's identity. Always present after open(). */
+  getProxyId(): string {
+    const id = this.read().proxyId;
+    if (!id) throw new Error("config store has no proxyId — open() must back-fill it");
     return id;
   }
 
   /**
-   * Mint a new identity, for a cloned volume (two shims sharing one id). The
-   * operator's deliberate act: every procedure ref to this shim's tools breaks
+   * Mint a new identity, for a cloned volume (two proxies sharing one id). The
+   * operator's deliberate act: every procedure ref to this proxy's tools breaks
    * until the platform re-points them, so this is never called automatically.
    */
-  regenerateShimId(): Promise<string> {
+  regenerateProxyId(): Promise<string> {
     return this.mutate((doc) => {
-      doc.shimId = mintShimId();
-      return doc.shimId;
+      doc.proxyId = mintProxyId();
+      doc.shimId = doc.proxyId; // legacy key, dual-written for one release
+      return doc.proxyId;
     });
   }
 
@@ -197,7 +203,7 @@ export class ConfigStore {
   }
 
   // ─── Controllers ────────────────────────────────────────────────────────
-  // One entry per controller this shim dials (MULTI-PLATFORM-MCP Phase 6).
+  // One entry per controller this proxy dials (MULTI-PLATFORM-MCP Phase 6).
   // Each is one TunnelWorkspace, identified by the entry's `id`, which is
   // stable across credential rotation.
 

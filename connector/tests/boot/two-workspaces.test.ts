@@ -155,11 +155,11 @@ afterAll(async () => {
 }, 30000);
 
 describe("two workspaces in one process", () => {
-  it("each registers on its own tunnel with the one shimId", () => {
+  it("each registers on its own tunnel with the one proxyId", () => {
     const regA = ctlA.frames.find((f) => f.type === "register")!;
     const regB = ctlB.frames.find((f) => f.type === "register")!;
-    expect(regA.shimId).toBe(store.getShimId());
-    expect(regB.shimId).toBe(store.getShimId());
+    expect(regA.shimId).toBe(store.getProxyId());
+    expect(regB.shimId).toBe(store.getProxyId());
     expect(regA.name).toBe("a");
     expect(regB.name).toBe("b");
   });
@@ -192,11 +192,11 @@ describe("two workspaces in one process", () => {
   });
 
   it("a tools/call on A runs on A's child, under A's qualified name", async () => {
-    const shim = store.getShimId();
-    const reply = await rpc(ctlA, "tools/call", { name: `${shim}.sample.uuid`, arguments: {} });
+    const proxy = store.getProxyId();
+    const reply = await rpc(ctlA, "tools/call", { name: `${proxy}.sample.uuid`, arguments: {} });
     expect(reply.error).toBeUndefined();
     // B never approved it: the same call on B is refused as not found.
-    const refused = await rpc(ctlB, "tools/call", { name: `${shim}.sample.uuid`, arguments: {} });
+    const refused = await rpc(ctlB, "tools/call", { name: `${proxy}.sample.uuid`, arguments: {} });
     expect((refused.error as { data?: { kind?: string } })?.data?.kind).toBe("tool_not_found");
   });
 

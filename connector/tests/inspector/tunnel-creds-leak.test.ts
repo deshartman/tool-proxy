@@ -87,7 +87,7 @@ describe("tunnel routes — leak channels", () => {
     it("NEVER echoes tunnelAuthToken cleartext (static-bearer row)", async () => {
       const SECRET = freshMagic("bearer");
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(
           makeRow({ tunnelAuthToken: SECRET, registrationToken: "reg-token-xyz" }),
         ),
@@ -112,7 +112,7 @@ describe("tunnel routes — leak channels", () => {
     it("NEVER echoes oauthClientSecret cleartext (oauth2-cc row)", async () => {
       const SECRET = freshMagic("oauth");
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(
           makeRow({
             authMode: "oauth2-cc",
@@ -142,7 +142,7 @@ describe("tunnel routes — leak channels", () => {
     it("NEVER echoes registrationToken cleartext", async () => {
       const REG = freshMagic("regtok");
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(
           makeRow({ tunnelAuthToken: "some-token", registrationToken: REG }),
         ),
@@ -172,7 +172,7 @@ describe("tunnel routes — leak channels", () => {
       // message containing decrypted-row content, the sentinel-grep
       // here would fail and we'd know to sanitize before responding.
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockRejectedValue(
           new Error("connection to Postgres timed out"),
         ),
@@ -202,7 +202,7 @@ describe("tunnel routes — leak channels", () => {
       const SECRET = freshMagic("bearer-post");
       const newRow = makeRow({ tunnelAuthToken: SECRET });
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
         upsertController: vi.fn().mockResolvedValue(newRow),
         deleteController: vi.fn(),
@@ -239,7 +239,7 @@ describe("tunnel routes — leak channels", () => {
         oauthTokenUrl: "https://a.example.com/token",
       });
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
         upsertController: vi.fn().mockResolvedValue(newRow),
         deleteController: vi.fn(),
@@ -273,7 +273,7 @@ describe("tunnel routes — leak channels", () => {
       const SECRET = freshMagic("bearer-fail");
       const newRow = makeRow({ tunnelAuthToken: SECRET });
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
         upsertController: vi.fn().mockResolvedValue(newRow),
         deleteController: vi.fn().mockResolvedValue(true),
@@ -334,7 +334,7 @@ describe("tunnel routes — leak channels", () => {
       const REG = freshMagic("regtok-force");
       const clearRegistrationToken = vi.fn().mockResolvedValue(undefined);
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(
           makeRow({ tunnelAuthToken: "some-token", registrationToken: REG }),
         ),

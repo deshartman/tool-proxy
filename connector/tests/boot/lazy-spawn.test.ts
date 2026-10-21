@@ -217,7 +217,7 @@ describe("lazy spawn (§5.3)", () => {
     expect(running(wsA)).toBe("running");
     expect(running(wsB)).toBe("stopped");
 
-    const reply = await rpc(ctlA, "tools/call", { name: `${fixture.store.getShimId()}.sample.uuid`, arguments: {} });
+    const reply = await rpc(ctlA, "tools/call", { name: `${fixture.store.getProxyId()}.sample.uuid`, arguments: {} });
     expect(reply.error).toBeUndefined();
     // The freshly started child gets its creds-request, as a boot-time child would.
     expect(ctlA.frames.filter((f) => f.type === "creds-request" && f.mcp === "sample").length).toBeGreaterThan(0);

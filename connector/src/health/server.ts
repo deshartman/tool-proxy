@@ -58,7 +58,7 @@ export interface WorkspaceHealth {
  *
  * `tunnelOpen` is "at least one workspace is configured", NOT "every tunnel is
  * open", deliberately. Under D5 one tenant's controller outage must not take
- * the shim out of rotation for the others, so no single tunnel may gate the
+ * the proxy out of rotation for the others, so no single tunnel may gate the
  * process — a workspace whose tunnel is down still serves nothing to the
  * orchestrator that a restart would fix. The one tunnel-shaped rule left is
  * zero workspaces: that stays 503 `tunnel_not_open`, which preserves "a fresh

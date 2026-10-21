@@ -1,12 +1,14 @@
 // TypeScript types DERIVED from the Zod schemas, so types and runtime
 // validation can never disagree. Import these; don't redeclare.
 //
-// Two majors: `V1` (frozen 1.x wire) and `V2` (the 2.0 deltas). The unprefixed
+// Three majors: `V1` (frozen 1.x wire), `V2` (the 2.0 deltas) and `V3` (the
+// 3.0 proxyId rename). The unprefixed
 // names are aliases for the CURRENT major — the one PROTOCOL_VERSION speaks.
 
 import type { z } from "zod";
 import type * as S1 from "./schemas-v1.js";
 import type * as S2 from "./schemas-v2.js";
+import type * as S3 from "./schemas-v3.js";
 
 type Infer<T extends z.ZodType> = z.infer<T>;
 
@@ -38,7 +40,21 @@ export namespace V2 {
   export type ControllerFrame = Infer<typeof S2.ControllerFrameSchema>;
 }
 
-// Shapes identical in both majors.
+export namespace V3 {
+  export type ToolDescriptor = Infer<typeof S3.ToolDescriptorSchema>;
+  export type ServerDescriptor = Infer<typeof S3.ServerDescriptorSchema>;
+  export type ToolManifest = Infer<typeof S3.ToolManifestSchema>;
+  export type ManifestDelta = Infer<typeof S3.ManifestDeltaSchema>;
+  export type ServerAdded = Infer<typeof S3.ServerAddedSchema>;
+  export type McpConfigEntry = Infer<typeof S3.McpConfigEntrySchema>;
+  export type RegisterFrame = Infer<typeof S3.RegisterFrameSchema>;
+  export type RegisterAckFrame = Infer<typeof S3.RegisterAckFrameSchema>;
+  export type McpDiscoveredFrame = Infer<typeof S3.McpDiscoveredFrameSchema>;
+  export type ConnectorFrame = Infer<typeof S3.ConnectorFrameSchema>;
+  export type ControllerFrame = Infer<typeof S3.ControllerFrameSchema>;
+}
+
+// Shapes identical in every major.
 export type PromptArgumentDescriptor = Infer<typeof S1.PromptArgumentDescriptorSchema>;
 export type PromptDescriptor = Infer<typeof S1.PromptDescriptorSchema>;
 export type ResourceDescriptor = Infer<typeof S1.ResourceDescriptorSchema>;

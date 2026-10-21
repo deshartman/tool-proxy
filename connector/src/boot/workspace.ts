@@ -56,12 +56,12 @@ import { ensureMcpStateDir } from "./workspace-storage.js";
 // The highest tunnel-protocol major this connector will SPEAK. A session's
 // major is min(this, the controller's advertised max), decided at register-ack.
 //
-// 2 since the 2.x cutover (MULTI-PLATFORM-MCP Phase 2b step 4), made after the
+// 3 since the Tool Proxy rename (RENAME-TOOL-PROXY §4.1); was 2 since the 2.x cutover (MULTI-PLATFORM-MCP Phase 2b step 4), made after the
 // live 1.x ⇄ 2.x matrix passed, including a mixed fleet of both on one org. A
 // 1.x controller still negotiates this down to 1. Deliberately a code constant,
 // not an env var: switching what every connector sends on the wire is a
 // release decision reviewed in a commit, not a knob an operator flips.
-export const SPEAK_MAJOR: 1 | 2 = 2;
+export const SPEAK_MAJOR: 1 | 2 | 3 = 3;
 // What `register.tunnelProtocol` carries. One value for the frame and the
 // rejection message, so the two can never name different versions.
 export const OUR_TUNNEL_PROTOCOL = SPEAK_MAJOR >= 2 ? LATEST_PROTOCOL_VERSION : PROTOCOL_VERSION;
@@ -115,7 +115,7 @@ export class TunnelWorkspace {
   private readonly bundled: DropinSpec[];
   private readonly dropinSpecsByName: Map<string, DropinSpec>;
   // Phase 2c (D3): every MCP this connector runs itself is GATED — shipped
-  // available but inactive, enabled per shim by the controller operator.
+  // available but inactive, enabled per proxy by the controller operator.
   // Bundled, customer drop-in and yaml alike; only controller-pushed (Type 2)
   // MCPs stay outside, because pushing one is already the operator's consent.
   // This map is the one answer to "is it gated, and how is it described on
@@ -135,7 +135,7 @@ export class TunnelWorkspace {
   private stopped = false;
   // Children this workspace has been ASKED to run (§5.3 lazy spawn). Readiness
   // counts only these: a gated MCP nobody enabled is not "still starting", it
-  // is not wanted, and gating readiness on it would hold the shim unready
+  // is not wanted, and gating readiness on it would hold the proxy unready
   // forever. Also the set mcp-enable consults to start a child exactly once.
   private readonly wanted = new Set<string>();
   // The current tunnel's creds coordinator, for a child started by mcp-enable.
@@ -446,9 +446,9 @@ export class TunnelWorkspace {
 
     const tokenRef = { current: currentToken };
     const rowId = row.id;
-    // One shimId per process, carried by every workspace's register (D13: the
-    // platform sees N ordinary tunnels and never learns they share a shim).
-    const shimId = store.getShimId();
+    // One proxyId per process, carried by every workspace's register (D13: the
+    // platform sees N ordinary tunnels and never learns they share a proxy).
+    const proxyId = store.getProxyId();
 
     const baseRouter = createFrameRouter({
       webhooks: this.webhooks,
@@ -475,9 +475,9 @@ export class TunnelWorkspace {
         // when BOTH are 2 does the session switch to qualified names; a 1.x
         // controller (or a ceiling of 1) keeps the bare form. Decided once,
         // here, because the register frame had to be sent before we knew.
-        pendingTunnel.wireNaming = negotiateNaming(SPEAK_MAJOR, peer, shimId);
+        pendingTunnel.wireNaming = negotiateNaming(SPEAK_MAJOR, peer, proxyId);
         if (pendingTunnel.wireNaming.major >= 2) {
-          this.log.info({ shimId, theirs: range }, `tunnel protocol 2.x negotiated — tool names are qualified`);
+          this.log.info({ proxyId, theirs: range }, `tunnel protocol ${pendingTunnel.wireNaming.major}.x negotiated — tool names are qualified`);
         }
       },
       inspector: view,
@@ -514,11 +514,15 @@ export class TunnelWorkspace {
       type: "register",
       manifest: this.manifest!,
       name: row.connectorName,
-      // Advertise what we can SPEAK. shimId goes out only when we speak 2.x;
+      // Advertise what we can SPEAK. the id goes out only when we speak 2.x;
       // 1.0.1 controllers tolerate it, but a 1.0.0 controller's strict parse
       // would not, so a 1.x-only connector never sends it.
       tunnelProtocol: OUR_TUNNEL_PROTOCOL,
-      ...(SPEAK_MAJOR >= 2 ? { shimId } : {}),
+      // The register goes out BEFORE register-ack, so we cannot yet know whether
+      // the controller speaks 3.x (`proxyId`) or only 2.x (`shimId`). Send both:
+      // each major's parser strips the field it does not know. Drop `shimId`
+      // once no 2.x controller remains (RENAME-TOOL-PROXY §4.1).
+      ...(SPEAK_MAJOR >= 2 ? { proxyId, shimId: proxyId } : {}),
       ...(currentToken ? { registrationToken: currentToken } : {}),
     });
     this.log.info(`register frame sent`);

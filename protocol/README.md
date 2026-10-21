@@ -42,7 +42,7 @@ if (result.ok) {
 the paths of the offending fields, never field values. Frames carry credentials
 and tool arguments, so values must not end up in logs.
 
-## Tool names (protocol 2.x)
+## Tool names (protocol 2.x, frozen)
 
 In 2.x every tool is named `<shimId>.<server>.<tool>`. Server and tool names
 travel **bare** inside descriptors; both sides compose and parse the qualified
@@ -61,6 +61,29 @@ The parse is **two-step**: the first `.` ends the shimId, the next `.` ends the
 server, and the tool keeps any further dots. That is unambiguous only because
 shimIds and server names never contain a dot, and the 2.x schemas enforce that
 wherever a server name appears.
+
+## Tool names (protocol 3.x)
+
+3.x renames the identity `shimId` to `proxyId` (the product is now Tool Proxy).
+The id rule is unchanged: 8 lowercase Crockford base32 characters. Every tool is
+named `<proxyId>.<server>.<tool>`, with the same two-step parse:
+
+```ts
+import { qualifyProxyToolName, parseQualifiedProxyToolName } from "@gtmi/toolproxy-protocol";
+
+qualifyProxyToolName("k3f9x2qa", "crm", "get_customer"); // "k3f9x2qa.crm.get_customer"
+parseQualifiedProxyToolName("k3f9x2qa.crm.get.customer");
+// → { proxyId: "k3f9x2qa", server: "crm", tool: "get.customer" }
+```
+
+The 3.x `register` frame carries `proxyId` and `tunnelProtocol: "3.0"`; it is the
+only schema that differs from 2.x (`v3` re-exports the rest unchanged). The 1.x
+and 2.x schemas, including `shimId`, `SHIM_ID_RE`, `isShimId`, `shimIdSchema`,
+`qualifyToolName` and `parseQualifiedToolName`, are frozen and still exported:
+a 3.x speaker negotiates down with `negotiateVersion(ours, peerMax)` and sends
+the exact 2.x wire to a controller that advertises 2.x, and 1.x to one that
+advertises nothing. A qualified name looks the same in 2.x and 3.x; the
+negotiated major, not the string, says which id field it refers to.
 
 ## Versioning
 

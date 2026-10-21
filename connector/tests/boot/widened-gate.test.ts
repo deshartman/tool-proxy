@@ -130,7 +130,7 @@ describe("mcp-discovered fan-out — every gated server, with its own values", (
     expect(byMcp.sample).toMatchObject({ author: "twilio", source: "bundled", kind: "example" });
     expect(byMcp.crm).toMatchObject({ author: "customer", source: "dropin" });
     expect(byMcp.legacy).toMatchObject({ author: "customer", source: "yaml" });
-    // Never the pre-2c literal: the platform keys "this shim is gated" off it.
+    // Never the pre-2c literal: the platform keys "this connector is gated" off it.
     expect(frames.some((f) => (f.source as string) === "local")).toBe(false);
   });
 });

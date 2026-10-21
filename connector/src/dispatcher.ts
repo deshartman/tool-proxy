@@ -39,7 +39,7 @@ export interface DispatcherDeps {
   // directly would still reach it.
   isServerEnabled?: (name: string) => boolean;
   // How tool/prompt names look on the wire for THIS session — bare
-  // `<server>.<name>` under 1.x, `<shimId>.<server>.<name>` under 2.x. Chosen
+  // `<server>.<name>` under 1.x, `<proxyId>.<server>.<name>` under 2.x. Chosen
   // once per tunnel from the negotiated major (tunnel/naming.ts). Absent →
   // bare, i.e. today's behaviour.
   naming?: WireNaming;
@@ -153,9 +153,9 @@ export class Dispatcher {
   }
 
   // Resolve a wire name to (server, name), or reply with the error and return
-  // undefined. A FOREIGN shimId — a well-formed 2.x name addressed to another
-  // shim — gets the same reply an unknown server gets, so a controller learns
-  // nothing about which shims exist; it is logged so a misroute is visible.
+  // undefined. A FOREIGN proxyId — a well-formed 2.x name addressed to another
+  // proxy — gets the same reply an unknown server gets, so a controller learns
+  // nothing about which proxies exist; it is logged so a misroute is visible.
   private resolveName(
     id: JsonRpcId,
     wireName: string,
@@ -164,8 +164,8 @@ export class Dispatcher {
   ): { server: string; name: string } | undefined {
     const parsed = this.naming.parse(wireName);
     if (parsed.ok) return { server: parsed.server, name: parsed.name };
-    if (parsed.reason === "foreign-shim") {
-      this.log(`${what} ${wireName} is addressed to shim ${parsed.shimId}, not this shim — refused`);
+    if (parsed.reason === "foreign-proxy") {
+      this.log(`${what} ${wireName} is addressed to proxy ${parsed.proxyId}, not this proxy — refused`);
       this.replyKind(id, notFoundKind, `no local MCP server for '${wireName}'`);
       return undefined;
     }

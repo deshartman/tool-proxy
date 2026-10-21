@@ -104,18 +104,18 @@ describe("tunnel list routes", () => {
     expect((await fixture.store.getControllerById(idB))!.registrationToken).toBeNull();
   });
 
-  it("regenerating the shimId redials EVERY workspace", async () => {
+  it("regenerating the proxyId redials EVERY workspace", async () => {
     const { id: idA } = await (await post("/internal/tunnel/add", entry("a"))).json();
     const { id: idB } = await (await post("/internal/tunnel/add", entry("b"))).json();
     expect((await post("/internal/identity/regenerate", {})).status).toBe(200);
-    expect(cycleTunnel.mock.calls).toEqual([["shim-id-regenerated", idA], ["shim-id-regenerated", idB]]);
+    expect(cycleTunnel.mock.calls).toEqual([["proxy-id-regenerated", idA], ["proxy-id-regenerated", idB]]);
   });
 });
 
 // The Edit tunnel modal sends no connectorName. It used to be re-derived from
 // the URL on every save, so an edit silently renamed a working connector and
 // its next register hit name_taken. And the derived default was the URL's
-// first DNS label alone, so every shim on one controller host (127.0.0.1 →
+// first DNS label alone, so every proxy on one controller host (127.0.0.1 →
 // "127") collided with every other.
 describe("connector name", () => {
   it("an edit that omits connectorName keeps the stored one", async () => {
@@ -125,11 +125,11 @@ describe("connector name", () => {
     expect((await fixture.store.getControllerById(id))!.connectorName).toBe("local-v2");
   });
 
-  it("the default is suffixed with the shimId, so two shims on one host don't collide", async () => {
+  it("the default is suffixed with the proxyId, so two proxies on one host don't collide", async () => {
     const { id } = await (await post("/internal/tunnel/add", {
       controllerUrl: "http://127.0.0.1:3001", authMode: "static-bearer", tunnelAuthToken: "ts_x",
     })).json();
-    const shimId = fixture.store.getShimId();
-    expect((await fixture.store.getControllerById(id))!.connectorName).toBe(`127-${shimId}`);
+    const proxyId = fixture.store.getProxyId();
+    expect((await fixture.store.getControllerById(id))!.connectorName).toBe(`127-${proxyId}`);
   });
 });
