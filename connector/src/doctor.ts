@@ -1,4 +1,4 @@
-// `mcp-connector doctor` — preflight checks. One command answers "is this
+// `tool-proxy doctor` — preflight checks. One command answers "is this
 // environment configured correctly?" for both dev-before-first-boot and
 // prod-after-image-pull. No side effects: does NOT dial the controller with
 // the real bearer, does NOT spawn MCPs, does NOT mint anything.
@@ -269,7 +269,7 @@ async function checkMcpTree(env: NodeJS.ProcessEnv, cwd: string): Promise<CheckR
   const candidates = [
     envOptional("MCP_DROPIN_DIR", env) ?? resolvePath(cwd, "customer-mcps"),
     envOptional("MCP_BUNDLED_DIR", env) ?? resolvePath(cwd, "bundled-mcps"),
-    "/var/lib/mcp-connector/customer-mcps",
+    "/var/lib/tool-proxy/customer-mcps",
   ].filter((path, index, all) => all.indexOf(path) === index);
   const readable: string[] = [];
   for (const path of candidates) {
@@ -285,7 +285,7 @@ async function checkMcpTree(env: NodeJS.ProcessEnv, cwd: string): Promise<CheckR
       name: "mcp-tree",
       status: "warn",
       message: "no MCP drop-in directory found",
-      remediation: "customer MCPs live under ./customer-mcps/ (dev) or /var/lib/mcp-connector/customer-mcps/ (prod)",
+      remediation: "customer MCPs live under ./customer-mcps/ (dev) or /var/lib/tool-proxy/customer-mcps/ (prod)",
     };
   }
   return { name: "mcp-tree", status: "ok", message: readable.join(", ") };
@@ -422,7 +422,7 @@ async function probePort(port: number, host = "127.0.0.1"): Promise<boolean> {
 
 // ---- CLI wrapper ----
 
-const USAGE = `usage: mcp-connector doctor [--json] [--skip-network]
+const USAGE = `usage: tool-proxy doctor [--json] [--skip-network]
 
 Runs preflight checks against your .env, connector.yaml, and configured mode
 (env or db). Exit code: 0 all-ok, 1 any fail, 2 any warn no fail.

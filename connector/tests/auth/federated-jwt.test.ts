@@ -26,7 +26,7 @@ function signRs256(claims: Record<string, unknown>, privateKey: KeyObject, kid: 
 
 function validClaims(overrides: Record<string, unknown> = {}) {
   const now = Math.floor(Date.now() / 1000);
-  return { sub: "machine-caller", iss: "https://idp.example.com", aud: "mcp-connector", iat: now, exp: now + 3600, ...overrides };
+  return { sub: "machine-caller", iss: "https://idp.example.com", aud: "tool-proxy", iat: now, exp: now + 3600, ...overrides };
 }
 
 describe("Federated JWT verification (RS256 via JWKS)", () => {
@@ -55,7 +55,7 @@ describe("Federated JWT verification (RS256 via JWKS)", () => {
     const port = (server.address() as { port: number }).port;
     jwksUrl = `http://127.0.0.1:${port}/.well-known/jwks.json`;
 
-    config = { issuer: "https://idp.example.com", jwksUrl, audience: "mcp-connector" };
+    config = { issuer: "https://idp.example.com", jwksUrl, audience: "tool-proxy" };
 
   });
 

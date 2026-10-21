@@ -1,4 +1,4 @@
-# mcp-shim-connector
+# Tool Proxy
 
 A customer-side **MCP connector**: dials out to a controller URL over WSS,
 advertises locally-installed MCP servers as a `ToolManifest`, and dispatches
@@ -11,7 +11,7 @@ The controller is **outside this repo**. This repo is the customer side only.
 
 ## Choose your delivery path
 
-Consume the connector as an OCI image (`ghcr.io/twilio/mcp-connector:<tag>`)
+Consume the connector as an OCI image (`ghcr.io/twilio/tool-proxy:<tag>`)
 and drop your own Type 1 MCPs into a well-known path inside the container.
 Two supported patterns land at the same path, use the same discovery code,
 and reach the same running connector — pick by ergonomics:
@@ -26,7 +26,7 @@ and reach the same running connector — pick by ergonomics:
 | K8s friendliness   | Simple                                            | ConfigMap / PVC native                    |
 
 Walkthroughs:
-- [**Derived image**](deploy/DERIVED-IMAGE.md) — `FROM twilio/mcp-connector:<tag>` + `COPY ./my-mcps/ /var/lib/mcp-connector/customer-mcps/`, build, push, retarget your manifests.
+- [**Derived image**](deploy/DERIVED-IMAGE.md) — `FROM twilio/tool-proxy:<tag>` + `COPY ./my-mcps/ /var/lib/tool-proxy/customer-mcps/`, build, push, retarget your manifests.
 - [**Volume mount**](deploy/VOLUME-MOUNT.md) — bind-mount a host directory / K8s PVC / Fly volume / AWS EFS / Azure Files at the same path.
 
 There is no "customer runs `npm install` on their own Node server" path — the
@@ -38,8 +38,8 @@ connector is a daemon, not a library.
 |--------------------------------------------|------------------------------------------------------------------------------------------------------------|
 | `/app/connector/`                          | Compiled connector runtime (Node)                                                                          |
 | `/app/bundled-mcps/agentic-memory/`        | Type 1 Node bundle — mock memory + identity provider                                                       |
-| `/var/lib/mcp-connector/customer-mcps/`    | Runtime drop-zone for customer-authored Type 1 MCPs (via derived-image `COPY` or volume mount)             |
-| `/etc/mcp-connector/connector.key`         | libsodium master key (mounted from your platform's secret store)                                           |
+| `/var/lib/tool-proxy/customer-mcps/`    | Runtime drop-zone for customer-authored Type 1 MCPs (via derived-image `COPY` or volume mount)             |
+| `/etc/tool-proxy/connector.key`         | libsodium master key (mounted from your platform's secret store)                                           |
 
 ## Your first drop-in — one folder, one file
 
@@ -77,15 +77,15 @@ resource authoring follow the same default-export shape.
 Three shapes, in order of increasing surface area:
 
 1. **Single VM / docker compose.** See [`deploy/compose/README.md`](deploy/compose/README.md).
-2. **CLI-driven deploy.** Two commands: `mcp-connector deploy init --target
+2. **CLI-driven deploy.** Two commands: `tool-proxy deploy init --target
    {fargate|aca|compose|fly}` emits manifests with your image reference
-   `CONTROLLER_URL` substituted in; then `mcp-connector deploy apply --target
+   `CONTROLLER_URL` substituted in; then `tool-proxy deploy apply --target
    <t>` actually applies to the cloud. `apply` is implemented for `--target
    fly` today (spawns Fly's CLI directly with idempotency guards); other
    targets return "not yet implemented" — apply their emitted manifests
    manually with `aws` / `kubectl` / `az` / `docker compose`.
 3. **IaC modules.** [`deploy/terraform/aws-fargate/`](deploy/terraform/aws-fargate/README.md)
-   and [`deploy/helm/mcp-connector/`](deploy/helm/mcp-connector/README.md) for
+   and [`deploy/helm/tool-proxy/`](deploy/helm/tool-proxy/README.md) for
    teams whose infrastructure is already declared in Terraform / Helm.
 
 Per-cloud walkthroughs: [Fly.io](deploy/fly/README.md), [AWS Fargate](deploy/terraform/README.md), [Azure Container Apps](deploy/aca/README.md), [GCP GKE](deploy/helm/README.md).
@@ -171,7 +171,7 @@ Two patterns, and only two. Which one you want depends on who runs the process.
 | Who runs it | The connector spawns it | You already run it |
 | Language | Node/TypeScript | Any |
 | You provide | A folder of `tools/*.ts` | A URL or command, plus an auth shape |
-| Registered by | Dropping the folder in `/var/lib/mcp-connector/customer-mcps/` | The controller UI |
+| Registered by | Dropping the folder in `/var/lib/tool-proxy/customer-mcps/` | The controller UI |
 | Transport | HTTP child on a localhost port the connector assigns | streamable-http, SSE, or stdio |
 | Credentials | Controller pushes them; declare key *names* via `envKeys` | Request headers, or env for stdio |
 | Operator approval | **Required** — tools stay off the manifest until approved | Not needed; adding it in the UI *is* the approval |
@@ -222,7 +222,7 @@ Deployment:
 
 ```bash
 ./scripts/build-image.sh                                # local single-arch
-IMAGE=registry/mcp-connector:0.1.0 PUSH=1 ./scripts/build-image.sh   # multi-arch + push
+IMAGE=registry/tool-proxy:0.1.0 PUSH=1 ./scripts/build-image.sh   # multi-arch + push
 ```
 
 Multi-arch defaults are `linux/amd64,linux/arm64` (Graviton + ARM Macs).

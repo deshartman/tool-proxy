@@ -8,9 +8,9 @@ CRM Insert panel.
 
 **Not** an MCP, **not** loaded by the connector as a drop-in, **not**
 in `connector.yaml`. Runs as its own private-only Fly app
-(`twilio-tool-sdk-mock` in production, sibling to `-db`)
+(`tool-proxy-mock` in production, sibling to `-db`)
 and is reached by the CRM drop-in at `${MOCK_CUSTOMERS_URL}` (typically
-`http://twilio-tool-sdk-mock.internal:7400`).
+`http://tool-proxy-mock.internal:7400`).
 
 ## What changed from the demo shape
 
@@ -25,7 +25,7 @@ in favour of a real Postgres store per the `MOCK-BACKEND-DB` plan:
   the only env the service reads at boot (plus optional `PORT` /
   `LOG_LEVEL`).
 - All customer + interaction + appointment state persists across mock
-  restarts — the `crm` database on `twilio-tool-sdk-db` is the source
+  restarts — the `crm` database on `tool-proxy-db` is the source
   of truth.
 
 Business logic (working-hours model, `checkAvailability`,
@@ -152,14 +152,14 @@ Zero-config from a fresh clone:
 ```
 
 The script auto-starts the dev Postgres container
-(`mcp-shim-postgres` via `deploy/compose/docker-compose.dev.yml`),
+(`tool-proxy-postgres` via `deploy/compose/docker-compose.dev.yml`),
 idempotently creates the `crm` database, defaults `MOCK_POSTGRES_URL`
 to the container's DSN, and boots the service on port `7400`. Sources
 `examples/mock-backend/.env` if present (wins over auto-provisioning).
 Migrations run on first boot.
 
 Manual override — point at a different Postgres (e.g. fly-proxy the
-production one via `fly proxy 5432:5432 -a twilio-tool-sdk-db`):
+production one via `fly proxy 5432:5432 -a tool-proxy-db`):
 
 ```bash
 export MOCK_POSTGRES_URL="postgres://postgres:<pw>@localhost:5432/crm"
@@ -172,7 +172,7 @@ only fires against the auto-provisioned dev container.
 
 ## Production (Fly.io)
 
-Deployed as `twilio-tool-sdk-mock`. The manifests are **generated, not checked in** —
-run `mcp-connector deploy init --target fly-mock`, which emits them in-tree alongside
+Deployed as `tool-proxy-mock`. The manifests are **generated, not checked in** —
+run `tool-proxy deploy init --target fly-mock`, which emits them in-tree alongside
 the mock source it packages. See [`../../deploy/fly/README.md`](../../deploy/fly/README.md)
 for the Fly operator runbook.

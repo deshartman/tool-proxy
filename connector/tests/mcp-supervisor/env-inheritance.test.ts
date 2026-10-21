@@ -131,7 +131,7 @@ describe("MCP-AUDIT #2 — SCOPE: deliberate layers may still set these keys", (
   });
 
   it("honours a controller-pushed value (highest layer)", () => {
-    process.env.CONNECTOR_KEY_FILE = "/etc/mcp-connector/connector.key";
+    process.env.CONNECTOR_KEY_FILE = "/etc/tool-proxy/connector.key";
     const privates = buildSupervisor();
     const entry = entryFor(privates, { name: "controller-fed" }) as {
       controllerEnv: Record<string, string>;

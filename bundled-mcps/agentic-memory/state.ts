@@ -126,7 +126,7 @@ export function loadState(path: string): AgenticMemoryState {
 // MCP-AUDIT #3 + #30. Two things beyond the original tmp+rename:
 //
 //   * The parent directory is created on demand. In production the path is
-//     /var/lib/mcp-connector/agentic-memory/.state.json (set via the Dockerfile
+//     /var/lib/tool-proxy/agentic-memory/.state.json (set via the Dockerfile
 //     ENV) and that leaf dir does not exist until we make it. It must NOT live
 //     inside /app — that tree is root-owned on purpose, so writing there failed
 //     EACCES in the image while passing in dev.

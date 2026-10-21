@@ -3,7 +3,7 @@ import { loadConfig } from "./config.js";
 import { connectServer } from "./servers/connect.js";
 import { envOptional } from "./env.js";
 
-// `mcp-connector discover` — non-interactive: connects to every MCP server in
+// `tool-proxy discover` — non-interactive: connects to every MCP server in
 // the YAML, calls tools/list on each, prints the result, then exits. Useful
 // for "what would I expose?" without booting the tunnel.
 export async function runDiscover(args: string[]): Promise<void> {
@@ -16,7 +16,7 @@ export async function runDiscover(args: string[]): Promise<void> {
     allowPositionals: false,
   });
   if (values.help) {
-    console.log(`usage: mcp-connector discover [--config <path>]
+    console.log(`usage: tool-proxy discover [--config <path>]
 
 Reads the connector YAML, connects to each mcp_servers[] entry, calls
 tools/list, and prints the discovered tools per server.`);

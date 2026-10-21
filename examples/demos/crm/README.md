@@ -99,7 +99,7 @@ MOCK_CUSTOMERS_URL=http://localhost:7400 ./scripts/start-connector.sh
 Use the built-in scaffold to emit a private-only Fly app for the mock:
 
 ```bash
-mcp-connector deploy init --target fly-mock --name acme-mock
+tool-proxy deploy init --target fly-mock --name acme-mock
 fly deploy --app acme-mock --config examples/mock-backend/fly.toml
 ```
 

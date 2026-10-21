@@ -11,7 +11,7 @@ describe("ConfigStore — trusted issuer config", () => {
   let fixture: StoreFixture;
   let store: ConfigStore | undefined;
 
-  const sample = { issuer: "https://idp.example.com", jwksUrl: "https://idp.example.com/.well-known/jwks.json", audience: "mcp-connector" };
+  const sample = { issuer: "https://idp.example.com", jwksUrl: "https://idp.example.com/.well-known/jwks.json", audience: "tool-proxy" };
 
   beforeEach(async () => {
     fixture = await openTempStore();

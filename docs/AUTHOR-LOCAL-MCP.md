@@ -1,6 +1,6 @@
 # Author a local MCP
 
-> Drop a folder under `${MCP_DROPIN_DIR}/<name>/` — `customer-mcps/<name>/` in dev, `/var/lib/mcp-connector/customer-mcps/<name>/` in production — with one or more tool files (and optionally prompts and resources). That's it. The connector picks it up at boot — or at runtime via the **Refresh local MCPs** button.
+> Drop a folder under `${MCP_DROPIN_DIR}/<name>/` — `customer-mcps/<name>/` in dev, `/var/lib/tool-proxy/customer-mcps/<name>/` in production — with one or more tool files (and optionally prompts and resources). That's it. The connector picks it up at boot — or at runtime via the **Refresh local MCPs** button.
 >
 > No `server.ts`, no `package.json`, no `.env`, no `connector.yaml` edit.
 >

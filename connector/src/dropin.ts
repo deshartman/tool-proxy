@@ -8,9 +8,9 @@
 //     wins so a migration from hand-written Type 1 to drop-in is incremental)
 //
 // MCP_DROPIN_DIR resolution:
-//   * Production (OCI image): /var/lib/mcp-connector/customer-mcps/
+//   * Production (OCI image): /var/lib/tool-proxy/customer-mcps/
 //     Customers land Type 1 MCPs at this path via one of two supported
-//     patterns: derived image (`FROM twilio/mcp-connector` + `COPY`) or
+//     patterns: derived image (`FROM twilio/tool-proxy` + `COPY`) or
 //     volume mount (K8s ConfigMap / PVC, Fly volume, AWS EFS, Azure
 //     Files, docker-compose bind mount). See deploy/DERIVED-IMAGE.md
 //     and deploy/VOLUME-MOUNT.md.
@@ -96,7 +96,7 @@ function symlinkEscapeAllowed(): boolean {
 // the dispatcher's split.
 const MCP_NAME_RE = SERVER_NAME_RE;
 
-const DROPIN_PROD_DEFAULT = "/var/lib/mcp-connector/customer-mcps";
+const DROPIN_PROD_DEFAULT = "/var/lib/tool-proxy/customer-mcps";
 const BUNDLED_PROD_DEFAULT = "/app/bundled-mcps";
 
 export function resolveDropinDir(opts: DropinDiscoveryOpts): string | undefined {
