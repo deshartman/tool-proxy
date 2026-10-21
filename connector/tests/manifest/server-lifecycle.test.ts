@@ -37,14 +37,8 @@ describe("withServerLifecycle", () => {
   const prev = m([]);
   const next = m([srv("sample", "twilio")]);
 
-  it("leaves a 1.x delta EXACTLY as diffManifest produced it", () => {
-    const base = diffManifest(prev, next);
-    expect(withServerLifecycle(base, prev, next, 1)).toEqual(base);
-    expect("addedServers" in withServerLifecycle(base, prev, next, 1)).toBe(false);
-  });
-
-  it("attaches the added server — with its author — on a 2.x session", () => {
-    const delta = withServerLifecycle(diffManifest(prev, next), prev, next, 2);
+  it("attaches the added server — with its author — ", () => {
+    const delta = withServerLifecycle(diffManifest(prev, next), prev, next);
     expect(delta.addedServers).toEqual([{ name: "sample", transport: "http", author: "twilio" }]);
     // The fix for the 2c bug: the receiver no longer infers the author.
     expect(delta.addedServers?.[0].author).toBe("twilio");
@@ -53,7 +47,7 @@ describe("withServerLifecycle", () => {
   it("omits empty lifecycle arrays, so a 2.x delta with no server change looks like 1.x", () => {
     const same = m([srv("crm", "customer", [tool("a")])]);
     const changed = m([srv("crm", "customer", [tool("a"), tool("b")])]);
-    const delta = withServerLifecycle(diffManifest(same, changed), same, changed, 2);
+    const delta = withServerLifecycle(diffManifest(same, changed), same, changed);
     expect("addedServers" in delta).toBe(false);
     expect("removedServers" in delta).toBe(false);
   });
@@ -66,12 +60,12 @@ describe("isEmptyDelta and server lifecycle", () => {
     const next = m([srv("pending-creds", "customer", [])]);
     const base = diffManifest(prev, next);
     expect(isEmptyDelta(base)).toBe(true); // 1.x: genuinely nothing to send
-    expect(isEmptyDelta(withServerLifecycle(base, prev, next, 2))).toBe(false); // 2.x: send it
+    expect(isEmptyDelta(withServerLifecycle(base, prev, next))).toBe(false); // 2.x: send it
   });
 
   it("a toolless server vanishing is likewise sent under 2.x", () => {
     const prev = m([srv("gone", "customer", [])]);
-    const delta = withServerLifecycle(diffManifest(prev, m([])), prev, m([]), 2);
+    const delta = withServerLifecycle(diffManifest(prev, m([])), prev, m([]));
     expect(delta.removedServers).toEqual(["gone"]);
     expect(isEmptyDelta(delta)).toBe(false);
   });

@@ -138,10 +138,8 @@ export interface RegisterFrame {
   // "<major>.<minor>" — @gtmi/toolproxy-protocol's PROTOCOL_VERSION. Absent
   // from connectors that predate it; a controller reads that as 1.x.
   tunnelProtocol?: string;
-  // 3.x identity. `shimId` is the frozen 2.x spelling of the same value; both
-  // are sent because register precedes the negotiation (see workspace.ts).
+  // This proxy's identity (3.x).
   proxyId?: string;
-  shimId?: string;
 }
 
 // Some controllers send register-ack back on the first register frame. This

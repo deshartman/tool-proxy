@@ -80,10 +80,11 @@ The 3.x `register` frame carries `proxyId` and `tunnelProtocol: "3.0"`; it is th
 only schema that differs from 2.x (`v3` re-exports the rest unchanged). The 1.x
 and 2.x schemas, including `shimId`, `SHIM_ID_RE`, `isShimId`, `shimIdSchema`,
 `qualifyToolName` and `parseQualifiedToolName`, are frozen and still exported:
-a 3.x speaker negotiates down with `negotiateVersion(ours, peerMax)` and sends
-the exact 2.x wire to a controller that advertises 2.x, and 1.x to one that
-advertises nothing. A qualified name looks the same in 2.x and 3.x; the
-negotiated major, not the string, says which id field it refers to.
+they exist so a controller can still parse an older proxy's frames. The Tool
+Proxy itself speaks 3.x only and does not negotiate down; a controller that
+wants to refuse older proxies answers their `register` with
+`unsupported_tunnel_protocol`. A qualified name looks the same in 2.x and 3.x;
+the register's `tunnelProtocol`, not the string, says which id field it uses.
 
 ## Versioning
 
@@ -101,10 +102,10 @@ controller echoes its supported range as
 This keeps additive changes deployable without upgrading both sides at once,
 while still catching drift between peers that claim the same version.
 
-**Majors are negotiated, not hard-cut.** This package carries the schemas for
-majors 1 and 2, and `parseFrame` uses the peer's major (from
+**Majors are chosen by the peer.** This package carries the schemas for
+majors 1, 2 and 3, and `parseFrame` uses the peer's major (from
 `register.tunnelProtocol`; absent means 1.0). A controller on this package can
-therefore serve 1.x and 2.x connectors at once. `isSupportedPeer(peer)` says
+therefore serve several majors at once, or refuse the ones it does not want. `isSupportedPeer(peer)` says
 whether a peer's major is one the package can parse.
 
 `PROTOCOL_VERSION` is what a connector built on this package speaks by default,

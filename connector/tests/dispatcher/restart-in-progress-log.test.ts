@@ -1,3 +1,4 @@
+import { qualifiedNaming } from "@connector/tunnel/naming.js";
 import { describe, it, expect } from "vitest";
 
 import { Dispatcher } from "@connector/dispatcher.js";
@@ -5,6 +6,8 @@ import type { McpServerConnection } from "@connector/servers/index.js";
 import type { ConnectorConfig } from "@connector/config.js";
 import type { TunnelClient } from "@connector/tunnel/client.js";
 import type { TunnelFrame } from "@connector/tunnel/frames.js";
+
+const PROXY = "cra85py8";
 
 // Pins the mcp_disconnected log-hint added post-CODE-HYGINE (finding #2).
 // When a tools/call awaits a reply and its target MCP is removed from the
@@ -80,6 +83,7 @@ async function driveDispatchAndCaptureLog(opts: {
     tunnel: tunnel as unknown as TunnelClient,
     log: (line) => logLines.push(line),
     isRestarting: opts.isRestarting,
+    naming: qualifiedNaming(PROXY),
   }).attach();
 
   const rpcFrame: TunnelFrame = {
@@ -88,7 +92,7 @@ async function driveDispatchAndCaptureLog(opts: {
       jsonrpc: "2.0",
       id: "req1",
       method: "tools/call",
-      params: { name: "flaky.echo", arguments: {} },
+      params: { name: `${PROXY}.flaky.echo`, arguments: {} },
     },
   } as TunnelFrame;
   tunnel.onframe?.(rpcFrame);

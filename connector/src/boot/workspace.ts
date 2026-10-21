@@ -22,7 +22,7 @@
 
 import { authorOf, type ConnectorConfig, type McpServerSpec } from "../config.js";
 import { PROTOCOL_VERSION, LATEST_PROTOCOL_VERSION, FRAME_SCHEMA_MISMATCH_CLOSE, parseVersion, isSupportedPeer } from "@gtmi/toolproxy-protocol";
-import { negotiateNaming } from "../tunnel/naming.js";
+import { qualifiedNaming } from "../tunnel/naming.js";
 import type { McpServerConnection } from "../servers/index.js";
 import { wrapWithMessageTap } from "../servers/message-tap.js";
 import { redactTapPayload } from "../policy/redact.js";
@@ -53,18 +53,11 @@ import { announceDiscoveredDropins as announceDropinsLoop, describeGated, type G
 import type { ConfigStore, ControllerRow } from "../config-store/index.js";
 import { ensureMcpStateDir } from "./workspace-storage.js";
 
-// The highest tunnel-protocol major this connector will SPEAK. A session's
-// major is min(this, the controller's advertised max), decided at register-ack.
-//
-// 3 since the Tool Proxy rename (RENAME-TOOL-PROXY §4.1); was 2 since the 2.x cutover (MULTI-PLATFORM-MCP Phase 2b step 4), made after the
-// live 1.x ⇄ 2.x matrix passed, including a mixed fleet of both on one org. A
-// 1.x controller still negotiates this down to 1. Deliberately a code constant,
-// not an env var: switching what every connector sends on the wire is a
-// release decision reviewed in a commit, not a knob an operator flips.
-export const SPEAK_MAJOR: 1 | 2 | 3 = 3;
-// What `register.tunnelProtocol` carries. One value for the frame and the
-// rejection message, so the two can never name different versions.
-export const OUR_TUNNEL_PROTOCOL = SPEAK_MAJOR >= 2 ? LATEST_PROTOCOL_VERSION : PROTOCOL_VERSION;
+// What `register.tunnelProtocol` carries. This proxy speaks protocol 3.x only
+// (RENAME-TOOL-PROXY hard cut): a controller that cannot speak it refuses the
+// register frame and the proxy stops reconnecting. One value for the frame and
+// the rejection message, so the two can never name different versions.
+export const OUR_TUNNEL_PROTOCOL = LATEST_PROTOCOL_VERSION;
 
 /** Process-level services every workspace reads. Nothing here is per-tunnel. */
 export interface WorkspaceShared {
@@ -370,6 +363,7 @@ export class TunnelWorkspace {
     this.view?.setState("connecting");
     this.log.info({ reason, url: dialUrl }, `tunnel dialing`);
     const pendingTunnel = new TunnelClient(dialUrl, auth.authToken, row.connectorName, auth.authProvider);
+    pendingTunnel.wireNaming = qualifiedNaming(store.getProxyId());
     pendingTunnel.onerror = (error) => this.log.error({ err: error }, `tunnel error`);
     // Log-only validation against @gtmi/toolproxy-protocol (Phase 1). The
     // frame is still handled; this just makes schema drift visible. Paths
@@ -471,14 +465,6 @@ export class TunnelWorkspace {
         if (peer && !isSupportedPeer(peer)) {
           this.log.warn({ ours: PROTOCOL_VERSION, theirs: range }, `controller tunnel-protocol range is outside every major this connector can parse`);
         }
-        // Phase 2b — the session's major is min(our ceiling, their max). Only
-        // when BOTH are 2 does the session switch to qualified names; a 1.x
-        // controller (or a ceiling of 1) keeps the bare form. Decided once,
-        // here, because the register frame had to be sent before we knew.
-        pendingTunnel.wireNaming = negotiateNaming(SPEAK_MAJOR, peer, proxyId);
-        if (pendingTunnel.wireNaming.major >= 2) {
-          this.log.info({ proxyId, theirs: range }, `tunnel protocol ${pendingTunnel.wireNaming.major}.x negotiated — tool names are qualified`);
-        }
       },
       inspector: view,
       reconnect: this.reconnectCtl,
@@ -514,15 +500,9 @@ export class TunnelWorkspace {
       type: "register",
       manifest: this.manifest!,
       name: row.connectorName,
-      // Advertise what we can SPEAK. the id goes out only when we speak 2.x;
-      // 1.0.1 controllers tolerate it, but a 1.0.0 controller's strict parse
-      // would not, so a 1.x-only connector never sends it.
+      // Advertise what we SPEAK: 3.x only.
       tunnelProtocol: OUR_TUNNEL_PROTOCOL,
-      // The register goes out BEFORE register-ack, so we cannot yet know whether
-      // the controller speaks 3.x (`proxyId`) or only 2.x (`shimId`). Send both:
-      // each major's parser strips the field it does not know. Drop `shimId`
-      // once no 2.x controller remains (RENAME-TOOL-PROXY §4.1).
-      ...(SPEAK_MAJOR >= 2 ? { proxyId, shimId: proxyId } : {}),
+      proxyId,
       ...(currentToken ? { registrationToken: currentToken } : {}),
     });
     this.log.info(`register frame sent`);
@@ -536,9 +516,7 @@ export class TunnelWorkspace {
       log: dispatcherLog.info.bind(dispatcherLog),
       isRestarting: (name) => this.supervisor.isRestarting(name),
       isServerEnabled: (name) => this.isMcpEnabled(name),
-      // Read on every call: register-ack may upgrade it to qualified naming
-      // after the dispatcher already exists.
-      get naming() { return pendingTunnel.wireNaming; },
+      naming: pendingTunnel.wireNaming,
     }).attach();
 
     this.startTimers();
@@ -610,7 +588,6 @@ export class TunnelWorkspace {
         diffManifest(this.manifest, nextManifest),
         this.manifest,
         nextManifest,
-        this.tunnel?.wireNaming.major ?? 1,
       );
       this.manifest = nextManifest;
       this.view?.setManifest(nextManifest);

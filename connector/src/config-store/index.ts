@@ -122,11 +122,10 @@ export class ConfigStore {
       // legacy `shimId` was already carried into proxyId by readDoc).
       doc.proxyId = mintProxyId();
     }
-    // Dual-write: keep the legacy key equal to proxyId for one release, and
-    // persist a shimId -> proxyId migration the first time it is seen.
-    if (doc.shimId !== doc.proxyId) doc.shimId = doc.proxyId;
+    // A legacy `shimId` was carried into proxyId by readDoc; persist that once
+    // and drop the old key (it is no longer written).
     const raw = JSON.parse(readFileSync(path, "utf8")) as { proxyId?: unknown; shimId?: unknown };
-    if (raw.proxyId !== doc.proxyId || raw.shimId !== doc.shimId) dirty = true;
+    if (raw.proxyId !== doc.proxyId || raw.shimId !== undefined) dirty = true;
     // A pre-Phase-6 store had at most one controller, so binding its legacy
     // trusted issuer and API clients to that controller is exact, not a guess.
     if (doc.controllers[0] && adoptLegacyBindings(doc, doc.controllers[0])) dirty = true;
@@ -149,7 +148,6 @@ export class ConfigStore {
   regenerateProxyId(): Promise<string> {
     return this.mutate((doc) => {
       doc.proxyId = mintProxyId();
-      doc.shimId = doc.proxyId; // legacy key, dual-written for one release
       return doc.proxyId;
     });
   }

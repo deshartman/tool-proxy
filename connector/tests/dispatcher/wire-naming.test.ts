@@ -1,18 +1,16 @@
 import { describe, it, expect } from "vitest";
 
 import { Dispatcher } from "@connector/dispatcher.js";
-import { bareNaming, qualifiedNaming, negotiateNaming, type WireNaming } from "@connector/tunnel/naming.js";
+import { qualifiedNaming, type WireNaming } from "@connector/tunnel/naming.js";
 import type { McpServerConnection } from "@connector/servers/index.js";
 import type { ConnectorConfig } from "@connector/config.js";
 import type { TunnelClient } from "@connector/tunnel/client.js";
 import type { TunnelFrame, ToolManifest } from "@connector/tunnel/frames.js";
 
-// MULTI-PLATFORM-MCP Phase 2b. Tool and prompt names on the wire depend on the
-// session's negotiated major: bare `<server>.<name>` under 1.x, qualified
-// `<proxyId>.<server>.<name>` under 2.x. The Dispatcher is handed ONE naming per
-// session and never branches on a version itself. Pinned here: both forms
-// list and dispatch correctly, the 2.x parse keeps dots in the tool name, and a
-// name addressed to ANOTHER proxy is refused exactly like an unknown server.
+// Tool and prompt names on the wire are `<proxyId>.<server>.<name>` (protocol
+// 3.x only; the 1.x bare and 2.x forms are gone). Pinned here: names list and
+// dispatch, the parse keeps dots in the tool name, a name addressed to ANOTHER
+// proxy is refused exactly like an unknown server, and a bare name is -32602.
 
 const PROXY = "cra85py8";
 const OTHER = "k3f9x2qa";
@@ -82,17 +80,7 @@ function setup(naming: WireNaming) {
   return { rpc, calls, logs };
 }
 
-describe("1.x — bare names (unchanged)", () => {
-  it("lists and dispatches <server>.<tool>", async () => {
-    const { rpc, calls } = setup(bareNaming());
-    const list = (await rpc("tools/list", {})).result as { tools: Array<{ name: string }> };
-    expect(list.tools.map((t) => t.name)).toEqual(["crm.get_customer", "crm.get.by.phone"]);
-    await rpc("tools/call", { name: "crm.get_customer", arguments: {} });
-    expect(calls).toEqual(["crm:get_customer"]);
-  });
-});
-
-describe("2.x — qualified names", () => {
+describe("3.x — qualified names", () => {
   it("lists every tool as <proxyId>.<server>.<tool>", async () => {
     const { rpc } = setup(qualifiedNaming(PROXY));
     const list = (await rpc("tools/list", {})).result as { tools: Array<{ name: string }> };
@@ -122,7 +110,7 @@ describe("2.x — qualified names", () => {
     expect(logs.some((l) => l.includes(OTHER) && l.includes("not this proxy"))).toBe(true);
   });
 
-  it("refuses the 1.x bare form once the session is 2.x (no shape-guessing)", async () => {
+  it("refuses the bare form (no shape-guessing) (no shape-guessing)", async () => {
     const { rpc, calls } = setup(qualifiedNaming(PROXY));
     const reply = await rpc("tools/call", { name: "crm.get_customer", arguments: {} });
     expect(calls).toEqual([]);
@@ -136,30 +124,5 @@ describe("2.x — qualified names", () => {
     expect(list.prompts.map((p) => p.name)).toEqual([`${PROXY}.crm.brief`]);
     await rpc("prompts/get", { name: `${PROXY}.crm.brief`, arguments: {} });
     expect(calls).toEqual(["crm:prompt:brief"]);
-  });
-});
-
-// The cross-version compatibility matrix. The session major is
-// min(what the proxy will speak, what the controller advertised); a controller
-// that predates supportedTunnelProtocol advertises nothing and is 1.x.
-describe("negotiateNaming — the version matrix", () => {
-  const cases: Array<[string, number, { major: number } | undefined, 1 | 2]> = [
-    ["1.x proxy, 1.x controller (silent)",   1, undefined,     1],
-    ["1.x proxy, 1.x controller (says 1)",   1, { major: 1 },  1],
-    ["1.x proxy, 2.x controller",            1, { major: 2 },  1],
-    ["2.x proxy, 1.x controller (silent)",   2, undefined,     1],
-    ["2.x proxy, 1.x controller (says 1)",   2, { major: 1 },  1],
-    ["2.x proxy, 2.x controller",            2, { major: 2 },  2],
-  ];
-  it.each(cases)("%s → major %s", (_label, speak, controller, expected) => {
-    const naming = negotiateNaming(speak, controller, PROXY);
-    expect(naming.major).toBe(expected);
-    // And the form matches the major — the two can never disagree.
-    expect(naming.compose("crm", "t")).toBe(expected === 2 ? `${PROXY}.crm.t` : "crm.t");
-  });
-
-  it("only BOTH sides on 2 produces qualified names (no one-sided upgrade)", () => {
-    const qualified = cases.filter(([, s, c]) => negotiateNaming(s, c, PROXY).major === 2);
-    expect(qualified.map(([label]) => label)).toEqual(["2.x proxy, 2.x controller"]);
   });
 });

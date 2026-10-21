@@ -125,9 +125,8 @@ export interface StoreDoc {
    */
   proxyId?: string;
   /**
-   * Legacy name of `proxyId`, dual-written with the same value for one release
-   * so a rollback to a pre-rename connector keeps its identity. Read only as a
-   * fallback. Drop in the release after (RENAME-TOOL-PROXY §4.2).
+   * Legacy name of `proxyId`. Read once as a fallback so an existing store keeps
+   * its identity, then dropped on the next write; never written.
    */
   shimId?: string;
   /**
@@ -146,16 +145,11 @@ export interface StoreDoc {
   apiClients: ApiClientDoc[];
 }
 
-/** The identity under both its current and legacy key. */
-export function dualId(id: string): { proxyId: string; shimId: string } {
-  return { proxyId: id, shimId: id };
-}
-
 export function emptyDoc(keyFingerprint: string): StoreDoc {
   return {
     version: CURRENT_VERSION,
     keyFingerprint,
-    ...dualId(mintProxyId()),
+    proxyId: mintProxyId(),
     controllers: [],
     networkAccess: { enabled: false },
     trustedIssuer: null,
@@ -227,8 +221,8 @@ export function migrate(parsed: unknown, path: string): StoreDoc {
     // That is a NEW identity — only reached by a hand-edited file, never by
     // anything the connector wrote.
     // proxyId first, legacy shimId as the fallback; the value is carried
-    // verbatim. Both keys are always emitted together (dual-write).
-    ...(isProxyId(doc.proxyId) ? dualId(doc.proxyId) : isProxyId(doc.shimId) ? dualId(doc.shimId) : {}),
+    // verbatim and only proxyId is emitted.
+    ...(isProxyId(doc.proxyId) ? { proxyId: doc.proxyId } : isProxyId(doc.shimId) ? { proxyId: doc.shimId } : {}),
     controllers: Array.isArray(doc.controllers) ? doc.controllers : [],
     networkAccess: { enabled: doc.networkAccess?.enabled === true },
     trustedIssuer: doc.trustedIssuer ?? null,

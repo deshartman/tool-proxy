@@ -158,8 +158,10 @@ describe("two workspaces in one process", () => {
   it("each registers on its own tunnel with the one proxyId", () => {
     const regA = ctlA.frames.find((f) => f.type === "register")!;
     const regB = ctlB.frames.find((f) => f.type === "register")!;
-    expect(regA.shimId).toBe(store.getProxyId());
-    expect(regB.shimId).toBe(store.getProxyId());
+    expect(regA.proxyId).toBe(store.getProxyId());
+    expect(regB.proxyId).toBe(store.getProxyId());
+    expect(regA.shimId).toBeUndefined();
+    expect(regB.shimId).toBeUndefined();
     expect(regA.name).toBe("a");
     expect(regB.name).toBe("b");
   });

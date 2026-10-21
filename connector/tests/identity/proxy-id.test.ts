@@ -104,15 +104,15 @@ describe("ConfigStore proxyId lifetime", () => {
 
 // RENAME-TOOL-PROXY §4.2. A store written before the rename carries `shimId`.
 // The value must move to `proxyId` VERBATIM (it names the proxy in every tool
-// name), both keys are written for one release so a rollback keeps its id, and
-// `proxyId` is read first.
+// name). `proxyId` is read first, the legacy key is dropped on the next write
+// and never written again (hard cut to protocol 3).
 describe("ConfigStore shimId -> proxyId migration", () => {
   let fixture: StoreFixture;
   afterEach(async () => { await fixture.cleanup(); });
   const rewrite = (doc: Record<string, unknown>) => writeFileSync(fixture.path, JSON.stringify(doc));
   const readJson = () => JSON.parse(readFileSync(fixture.path, "utf8"));
 
-  it("only shimId: value preserved verbatim into proxyId, shimId kept", async () => {
+  it("only shimId: value preserved verbatim into proxyId, shimId dropped", async () => {
     fixture = await openTempStore();
     const doc = readJson();
     delete doc.proxyId;
@@ -121,10 +121,10 @@ describe("ConfigStore shimId -> proxyId migration", () => {
     const store = await fixture.reopen();
     expect(store.getProxyId()).toBe("cra85py8");
     expect(readJson().proxyId).toBe("cra85py8");
-    expect(readJson().shimId).toBe("cra85py8");
+    expect(readJson().shimId).toBeUndefined();
   });
 
-  it("only proxyId: unchanged, and shimId is dual-written to match", async () => {
+  it("only proxyId: unchanged, and no shimId is written", async () => {
     fixture = await openTempStore();
     const doc = readJson();
     delete doc.shimId;
@@ -132,10 +132,10 @@ describe("ConfigStore shimId -> proxyId migration", () => {
     rewrite(doc);
     expect((await fixture.reopen()).getProxyId()).toBe("cra85py8");
     expect(readJson().proxyId).toBe("cra85py8");
-    expect(readJson().shimId).toBe("cra85py8");
+    expect(readJson().shimId).toBeUndefined();
   });
 
-  it("neither: minted once, into both keys, and stable across reopen", async () => {
+  it("neither: minted once into proxyId only, and stable across reopen", async () => {
     fixture = await openTempStore();
     const doc = readJson();
     delete doc.shimId;
@@ -143,7 +143,8 @@ describe("ConfigStore shimId -> proxyId migration", () => {
     rewrite(doc);
     const first = (await fixture.reopen()).getProxyId();
     expect(isProxyId(first)).toBe(true);
-    expect(readJson().shimId).toBe(first);
+    expect(readJson().proxyId).toBe(first);
+    expect(readJson().shimId).toBeUndefined();
     expect((await fixture.reopen()).getProxyId()).toBe(first);
   });
 
@@ -154,14 +155,14 @@ describe("ConfigStore shimId -> proxyId migration", () => {
     doc.shimId = "abcd2345";
     rewrite(doc);
     expect((await fixture.reopen()).getProxyId()).toBe("cra85py8");
-    expect(readJson().shimId).toBe("cra85py8");
+    expect(readJson().shimId).toBeUndefined();
   });
 
-  it("regenerate writes both keys", async () => {
+  it("regenerate writes proxyId only", async () => {
     fixture = await openTempStore();
     const next = await fixture.store.regenerateProxyId();
     expect(readJson().proxyId).toBe(next);
-    expect(readJson().shimId).toBe(next);
+    expect(readJson().shimId).toBeUndefined();
   });
 
   it("a corrupt file throws and is never read as a fresh install", async () => {
