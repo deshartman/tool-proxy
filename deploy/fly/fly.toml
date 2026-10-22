@@ -19,7 +19,7 @@ primary_region = "iad"
 
 [build]
   # Two build shapes — pick ONE, comment the other:
-  #   image = "ghcr.io/twilio/tool-proxy:latest"                          # pull a published OCI image
+  #   image = "ghcr.io/twilio-demos/tool-proxy:latest"                          # pull a published OCI image
   dockerfile = "../../connector/Dockerfile"  # relative to THIS fly.toml's dir (deploy/fly/), so ../.. → repo root
   # As of 2026-07 the connector image is not published to a public registry —
   # source-build is the only working path. Flip to `image =` (and drop the

@@ -132,7 +132,7 @@ Flags:
                         "tool-proxy-<name>" (fly) or "mock-customers-<name>"
                         (fly-mock). Set this if you want a custom, non-prefixed
                         name — e.g. "tool-proxy". Ignored for non-Fly targets.
-  --image <ref>         OCI image ref (default ghcr.io/twilio/tool-proxy:latest)
+  --image <ref>         OCI image ref (default ghcr.io/twilio-demos/tool-proxy:latest)
   --controller-url <u>  IGNORED (accepted for compatibility; warns)
   --auth <a>            IGNORED (accepted for compatibility; warns)
   --out <dir>           output directory (default ./deploy/<target>)
@@ -225,7 +225,7 @@ export async function runDeployInit(argv: string[]): Promise<number> {
     const vars: ScaffoldVars = {
       name,
       appName,
-      image: values.image ?? "ghcr.io/twilio/tool-proxy:latest",
+      image: values.image ?? "ghcr.io/twilio-demos/tool-proxy:latest",
     };
 
     const outDir = resolvePath(values.out ?? DEFAULT_OUT[target]);

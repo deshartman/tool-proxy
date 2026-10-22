@@ -44,7 +44,7 @@
 
 services:
   connector:
-    image: ghcr.io/twilio/tool-proxy:${MCP_VERSION:-latest}
+    image: ghcr.io/twilio-demos/tool-proxy:${MCP_VERSION:-latest}
     env_file:
       # Optional: not required to exist so `docker compose config` can lint
       # this file in CI without a live env. In prod the operator populates

@@ -291,13 +291,13 @@ locals {
     # has none.
     #
     # Tag to match what the compose file asks for. It resolves
-    # ghcr.io/twilio/tool-proxy:$MCP_VERSION, so a bare `tool-proxy:local`
+    # ghcr.io/twilio-demos/tool-proxy:$MCP_VERSION, so a bare `tool-proxy:local`
     # tag would leave compose trying to PULL from ghcr — which issues no
     # anonymous token, so it fails with an auth error that reads as a network
     # problem. Tagging the full name makes the local image satisfy the
     # reference; Docker does not reach out for an image it already has.
     docker build -f /opt/tool-proxy/connector/Dockerfile \
-      -t ghcr.io/twilio/tool-proxy:local /opt/tool-proxy
+      -t ghcr.io/twilio-demos/tool-proxy:local /opt/tool-proxy
     # -f IS REQUIRED: deploy/compose ships docker-compose.prod.yml and
     # .dev.yml but no docker-compose.yml, so a bare `docker compose up`
     # fails with "no configuration file provided: not found".

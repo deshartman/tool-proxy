@@ -375,10 +375,10 @@ describe("terraform aws-ec2 — no IAM, no inbound surface", () => {
   });
 
   it("tags the image so compose does not try to pull it", () => {
-    // The compose file resolves ghcr.io/twilio/tool-proxy:$MCP_VERSION, and
+    // The compose file resolves ghcr.io/twilio-demos/tool-proxy:$MCP_VERSION, and
     // ghcr issues no anonymous pull token — so a bare local tag leaves compose
     // failing with an auth error that reads as a network problem.
-    expect(code).toMatch(/-t ghcr\.io\/twilio\/tool-proxy:local/);
+    expect(code).toMatch(/-t ghcr\.io\/twilio-demos\/tool-proxy:local/);
     // `-f` is REQUIRED: deploy/compose ships docker-compose.prod.yml and
     // .dev.yml but no docker-compose.yml, so a bare `docker compose up` fails
     // with "no configuration file provided". Measured on a live instance.

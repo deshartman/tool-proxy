@@ -52,7 +52,7 @@ subdir.
 - **docker-compose bind-mount** — `chown -R <mcp UID>:<mcp GID>` on
   the host directory before `docker compose up`. The `mcp` user's
   numeric UID/GID is stable across image versions once fixed; check
-  with `docker run --rm ghcr.io/twilio/tool-proxy id mcp`.
+  with `docker run --rm ghcr.io/twilio-demos/tool-proxy id mcp`.
 
 Don't relax the container's non-root stance to work around a mount
 permission issue — the non-root UID is a load-bearing security
@@ -86,7 +86,7 @@ spec:
     spec:
       containers:
         - name: connector
-          image: twilio/tool-proxy:1.0
+          image: ghcr.io/twilio-demos/tool-proxy:1.0
           volumeMounts:
             - name: customer-mcps
               mountPath: /var/lib/tool-proxy/customer-mcps
@@ -212,7 +212,7 @@ Bind-mount an EFS file system into the task via
   }],
   "containerDefinitions": [{
     "name": "connector",
-    "image": "twilio/tool-proxy:1.0",
+    "image": "ghcr.io/twilio-demos/tool-proxy:1.0",
     "mountPoints": [{
       "sourceVolume": "customer-mcps",
       "containerPath": "/var/lib/tool-proxy/customer-mcps",
@@ -237,7 +237,7 @@ properties:
     ingress: { external: false }   # inspector is loopback-only
   template:
     containers:
-      - image: twilio/tool-proxy:1.0
+      - image: ghcr.io/twilio-demos/tool-proxy:1.0
         volumeMounts:
           - volumeName: customer-mcps
             mountPath: /var/lib/tool-proxy/customer-mcps
@@ -257,7 +257,7 @@ Simplest recipe — bind-mount a host directory:
 ```yaml
 services:
   connector:
-    image: twilio/tool-proxy:1.0
+    image: ghcr.io/twilio-demos/tool-proxy:1.0
     volumes:
       - ./mcp/local:/var/lib/tool-proxy/customer-mcps:ro
     ports:

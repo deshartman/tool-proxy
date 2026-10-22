@@ -19,7 +19,7 @@ const VARS: ScaffoldVars = {
   // override with `{ ...VARS, appName: "mock-customers-prod-us-east-1" }`.
   // Non-Fly targets ignore this field — their templates use {{NAME}}.
   appName: "tool-proxy-prod-us-east-1",
-  image: "ghcr.io/twilio/tool-proxy:0.2.0",
+  image: "ghcr.io/twilio-demos/tool-proxy:0.2.0",
 };
 
 describe("render — variable substitution", () => {
@@ -71,7 +71,7 @@ describe("render — variable substitution", () => {
 
     // Substitution still has to work; assert it where it is load-bearing.
     expect(task!.content).toContain("tool-proxy-prod-us-east-1");
-    expect(task!.content).toContain("ghcr.io/twilio/tool-proxy:0.2.0");
+    expect(task!.content).toContain("ghcr.io/twilio-demos/tool-proxy:0.2.0");
   });
 
   // Stage A. Before this, every emitted manifest probed the inspector's "/" —
@@ -159,7 +159,7 @@ describe("render — variable substitution", () => {
     // {{NAME}} substitution must not touch that syntax.
     expect(bicep).toContain("tool-proxy-${connectorName}");
     expect(bicep).toContain("'prod-us-east-1'");
-    expect(bicep).toContain("'ghcr.io/twilio/tool-proxy:0.2.0'");
+    expect(bicep).toContain("'ghcr.io/twilio-demos/tool-proxy:0.2.0'");
     expect(bicep).toContain("minReplicas: 1"); // single connector — no HPA
   });
 
@@ -203,7 +203,7 @@ describe("render — variable substitution", () => {
 
     const toml = files.find((f) => f.path === "fly.toml")!;
     expect(toml.content).toContain(`app = "tool-proxy-prod-us-east-1"`);
-    expect(toml.content).toContain(`image = "ghcr.io/twilio/tool-proxy:0.2.0"`);
+    expect(toml.content).toContain(`image = "ghcr.io/twilio-demos/tool-proxy:0.2.0"`);
 
     // Load-bearing invariants — outbound-only, no scale-to-zero, no public IP.
     // If any of these regress as ACTIVE toml (not a comment mention),
@@ -345,7 +345,7 @@ describe("scaffoldTo — file writes", () => {
       // requireEnv() demands, and the image reference.
       const compose = readFileSync(join(outDir, "docker-compose.yml"), "utf8");
       expect(compose).toContain("CONNECTOR_KEY_FILE:");
-      expect(compose).toContain("ghcr.io/twilio/tool-proxy:0.2.0");
+      expect(compose).toContain("ghcr.io/twilio-demos/tool-proxy:0.2.0");
       // No unsubstituted placeholders survived.
       expect(compose).not.toMatch(/\{\{[A-Z_]+\}\}/);
       const env = readFileSync(join(outDir, ".env.example"), "utf8");

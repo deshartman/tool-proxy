@@ -10,7 +10,7 @@
 // MCP_DROPIN_DIR resolution:
 //   * Production (OCI image): /var/lib/tool-proxy/customer-mcps/
 //     Customers land Type 1 MCPs at this path via one of two supported
-//     patterns: derived image (`FROM twilio/tool-proxy` + `COPY`) or
+//     patterns: derived image (`FROM ghcr.io/twilio-demos/tool-proxy` + `COPY`) or
 //     volume mount (K8s ConfigMap / PVC, Fly volume, AWS EFS, Azure
 //     Files, docker-compose bind mount). See deploy/DERIVED-IMAGE.md
 //     and deploy/VOLUME-MOUNT.md.

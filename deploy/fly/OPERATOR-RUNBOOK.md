@@ -5,7 +5,7 @@ see the sibling [`README.md`](README.md).
 
 ## What this deploys
 
-One Fly Machine running `ghcr.io/twilio/tool-proxy:<tag>`, dialing out to a
+One Fly Machine running `ghcr.io/twilio-demos/tool-proxy:<tag>`, dialing out to a
 controller URL over WSS. No public IP, no `[[services]]`, no `[http_service]`.
 Tunnel identity, sealed creds and the registration token all live in
 `state/config.json` on a 1 GB Fly volume — sealed with libsodium under the

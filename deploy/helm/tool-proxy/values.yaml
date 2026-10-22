@@ -7,7 +7,7 @@
 # chart used to `required` them as env vars and they no longer do anything.
 
 image:
-  repository: ghcr.io/twilio/tool-proxy
+  repository: ghcr.io/twilio-demos/tool-proxy
   # C2 (security hardening) — do NOT default to `latest`. Silent
   # supply-chain drift on rebuild is a real threat class. Operators must
   # pin an explicit version tag (or better, an image digest `@sha256:...`)

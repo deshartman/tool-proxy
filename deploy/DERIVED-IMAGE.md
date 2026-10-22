@@ -15,7 +15,7 @@ build-and-push cycle — use [VOLUME-MOUNT.md](./VOLUME-MOUNT.md) for that.
 
 ## How it works
 
-The base image `twilio/tool-proxy:<tag>` bakes the connector, `tsx`, and
+The base image `ghcr.io/twilio-demos/tool-proxy:<tag>` bakes the connector, `tsx`, and
 the Twilio-authored `bundled-mcps/` tree into a runtime layer.
 Your derived image copies your Type 1 MCPs into the well-known drop-in
 path — the same path the volume-mount path bind-mounts into — and the
@@ -29,7 +29,7 @@ in [`src/dropin.ts`](../connector/src/dropin.ts)). Folder name
 ## Prerequisites
 
 - Docker or a compatible builder (Buildah, Podman, kaniko, etc.).
-- Access to pull `twilio/tool-proxy:<tag>` from your registry.
+- Access to pull `ghcr.io/twilio-demos/tool-proxy:<tag>` from your registry.
 - Somewhere to push the derived image (your registry).
 
 ## The Dockerfile
@@ -37,7 +37,7 @@ in [`src/dropin.ts`](../connector/src/dropin.ts)). Folder name
 Minimum viable derived image:
 
 ```dockerfile
-FROM twilio/tool-proxy:1.0
+FROM ghcr.io/twilio-demos/tool-proxy:1.0
 
 # Drop your Type 1 MCPs into the well-known path. Each subdirectory
 # becomes an MCP; the folder name is the server name announced on the

@@ -50,7 +50,7 @@ operator click accepts — is a load-bearing property of the design.
 
 Two ways to get folders here in a deployed connector:
 
-- **Derived image** — `FROM twilio/tool-proxy` + `COPY ./my-mcps/
+- **Derived image** — `FROM ghcr.io/twilio-demos/tool-proxy` + `COPY ./my-mcps/
   /var/lib/tool-proxy/customer-mcps/`; build and deploy your own image.
 - **Volume mount** — mount an OCI volume / K8s ConfigMap or PVC / Fly volume /
   bind mount at `/var/lib/tool-proxy/customer-mcps/`. Enables hot-reload via

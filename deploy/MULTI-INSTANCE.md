@@ -43,7 +43,7 @@ the connector's identity, so two services must never share one.
 ```yaml
 services:
   connector-a:
-    image: ghcr.io/twilio/tool-proxy:${MCP_VERSION:-latest}
+    image: ghcr.io/twilio-demos/tool-proxy:${MCP_VERSION:-latest}
     environment:
       CONNECTOR_KEY_FILE: /etc/tool-proxy/connector.key
     volumes:
@@ -52,7 +52,7 @@ services:
     restart: unless-stopped
 
   connector-b:
-    image: ghcr.io/twilio/tool-proxy:${MCP_VERSION:-latest}
+    image: ghcr.io/twilio-demos/tool-proxy:${MCP_VERSION:-latest}
     environment:
       CONNECTOR_KEY_FILE: /etc/tool-proxy/connector.key
     volumes:

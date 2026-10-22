@@ -220,7 +220,7 @@ resource "aws_iam_role_policy" "task" {
 
 # ── Registry ────────────────────────────────────────────────────────────────
 #
-# There is no published connector image — ghcr.io/twilio/tool-proxy is a
+# There is no published connector image — ghcr.io/twilio-demos/tool-proxy is a
 # placeholder and ghcr issues no anonymous pull token. You build and push your
 # own, which is what this repository exists for.
 resource "aws_ecr_repository" "connector" {

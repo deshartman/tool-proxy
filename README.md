@@ -11,7 +11,7 @@ The controller is **outside this repo**. This repo is the customer side only.
 
 ## Choose your delivery path
 
-Consume the connector as an OCI image (`ghcr.io/twilio/tool-proxy:<tag>`)
+Consume the connector as an OCI image (`ghcr.io/twilio-demos/tool-proxy:<tag>`)
 and drop your own Type 1 MCPs into a well-known path inside the container.
 Two supported patterns land at the same path, use the same discovery code,
 and reach the same running connector — pick by ergonomics:
@@ -26,7 +26,7 @@ and reach the same running connector — pick by ergonomics:
 | K8s friendliness   | Simple                                            | ConfigMap / PVC native                    |
 
 Walkthroughs:
-- [**Derived image**](deploy/DERIVED-IMAGE.md) — `FROM twilio/tool-proxy:<tag>` + `COPY ./my-mcps/ /var/lib/tool-proxy/customer-mcps/`, build, push, retarget your manifests.
+- [**Derived image**](deploy/DERIVED-IMAGE.md) — `FROM ghcr.io/twilio-demos/tool-proxy:<tag>` + `COPY ./my-mcps/ /var/lib/tool-proxy/customer-mcps/`, build, push, retarget your manifests.
 - [**Volume mount**](deploy/VOLUME-MOUNT.md) — bind-mount a host directory / K8s PVC / Fly volume / AWS EFS / Azure Files at the same path.
 
 There is no "customer runs `npm install` on their own Node server" path — the

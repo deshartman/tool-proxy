@@ -356,7 +356,7 @@ IMAGE=registry/tool-proxy:0.1.0 PUSH=1 ./scripts/build-image.sh  # multi-arch + 
 
 Customers extend the image via one of two first-class delivery paths, both landing at `MCP_DROPIN_DIR` (`/var/lib/tool-proxy/customer-mcps/`) and the same discovery code in [`src/dropin.ts`](connector/src/dropin.ts):
 
-- **Derived image** — `FROM twilio/tool-proxy:1.0` + `COPY ./my-mcps/ /var/lib/tool-proxy/customer-mcps/`, build their own image. Enterprise-friendly. Walkthrough: [deploy/DERIVED-IMAGE.md](deploy/DERIVED-IMAGE.md).
+- **Derived image** — `FROM ghcr.io/twilio-demos/tool-proxy:1.0` + `COPY ./my-mcps/ /var/lib/tool-proxy/customer-mcps/`, build their own image. Enterprise-friendly. Walkthrough: [deploy/DERIVED-IMAGE.md](deploy/DERIVED-IMAGE.md).
 - **Volume mount** — bind-mount a host / K8s PVC / Fly volume / EFS at the same path. Faster dev loop, unlocks the "Refresh local MCPs" hot-rescan feature. Walkthrough: [deploy/VOLUME-MOUNT.md](deploy/VOLUME-MOUNT.md).
 
 There is no "customer imports the npm package into their own Node service" path — the connector is a daemon, not a library.
