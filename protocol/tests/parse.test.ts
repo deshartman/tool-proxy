@@ -151,7 +151,8 @@ describe("version handshake", () => {
   it("accepts every major the package carries, refuses others, reads absent as 1.0", () => {
     expect(isSupportedPeer({ major: 1, minor: 9 })).toBe(true);
     expect(isSupportedPeer({ major: 2, minor: 0 })).toBe(true);
-    expect(isSupportedPeer({ major: 3, minor: 0 })).toBe(false);
+    expect(isSupportedPeer({ major: 3, minor: 0 })).toBe(true);
+    expect(isSupportedPeer({ major: 4, minor: 0 })).toBe(false);
     expect(isSupportedPeer(undefined)).toBe(true);
   });
 
@@ -161,13 +162,13 @@ describe("version handshake", () => {
   });
 
   it("the supported majors are exactly the schema tables parseFrame has", () => {
-    expect([...SUPPORTED_MAJORS].sort()).toEqual([1, 2]);
+    expect([...SUPPORTED_MAJORS].sort()).toEqual([1, 2, 3]);
   });
 
   it("the package carries 2.0 but a connector still SPEAKS 1.0 by default", () => {
     // Shipping the 2.x schemas and flipping what a connector sends are
     // separate steps; the connector's Phase 2b flips PROTOCOL_VERSION.
     expect(PROTOCOL_VERSION).toBe("1.0");
-    expect(LATEST_PROTOCOL_VERSION).toBe("2.0");
+    expect(LATEST_PROTOCOL_VERSION).toBe("3.0");
   });
 });

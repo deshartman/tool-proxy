@@ -117,17 +117,17 @@ async function handleGetConfig(
 ): Promise<void> {
   try {
     const row = await configStore.getController();
-    // shimId rides on both answers: it exists from the first boot, before any
+    // proxyId rides on both answers: it exists from the first boot, before any
     // controller is configured, and is not secret (it is in every tool name).
-    const shimId = configStore.getShimId();
+    const proxyId = configStore.getProxyId();
     setJsonHeaders(res);
     if (!row) {
       res.statusCode = 200;
-      res.end(JSON.stringify({ configured: false, shimId }));
+      res.end(JSON.stringify({ configured: false, proxyId }));
       return;
     }
     res.statusCode = 200;
-    res.end(JSON.stringify({ configured: true, shimId, row: rowToSummary(row) }));
+    res.end(JSON.stringify({ configured: true, proxyId, row: rowToSummary(row) }));
   } catch (err) {
     setJsonHeaders(res);
     res.statusCode = 500;
@@ -145,7 +145,7 @@ async function handleListTunnels(
   try {
     const rows = await configStore.listControllers();
     res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true, shimId: configStore.getShimId(), rows: rows.map(rowToSummary) }));
+    res.end(JSON.stringify({ ok: true, proxyId: configStore.getProxyId(), rows: rows.map(rowToSummary) }));
   } catch (err) {
     res.statusCode = 500;
     res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
@@ -285,11 +285,11 @@ async function handlePostCreds(
   const hadPriorRow = priorRow !== null;
   // The modal sends no connectorName, so an edit must keep the stored one —
   // re-deriving it renamed a registered connector, whose next register then
-  // hit name_taken. A new entry's default carries the shimId: the URL label
-  // alone is the same for every shim on one host ("127" for 127.0.0.1).
+  // hit name_taken. A new entry's default carries the proxyId: the URL label
+  // alone is the same for every proxy on one host ("127" for 127.0.0.1).
   input.connectorName = legacyConnectorName
     ?? priorRow?.connectorName
-    ?? `${defaultName}-${configStore.getShimId()}`;
+    ?? `${defaultName}-${configStore.getProxyId()}`;
   const canPreserveTunnelAuthToken = priorRow?.authMode === "static-bearer" && priorRow.tunnelAuthToken !== null;
   const canPreserveOauthClientSecret = priorRow?.authMode === "oauth2-cc" && priorRow.oauthClientSecret !== null;
 
@@ -398,13 +398,13 @@ async function handleForceReregister(
 }
 
 // POST /internal/identity/regenerate
-// Mints a new shimId — the fix for a cloned volume, where two shims share one
+// Mints a new proxyId — the fix for a cloned volume, where two proxies share one
 // identity. Operator-only: loopback (the server gate) plus CSRF (here). Every
-// procedure ref to this shim's tools breaks until the platform re-points them,
+// procedure ref to this proxy's tools breaks until the platform re-points them,
 // so the inspector confirms before calling this. Redials when a controller is
 // configured so the next register carries the new id; with no controller
 // there is nothing to redial.
-async function handleRegenerateShimId(
+async function handleRegenerateProxyId(
   req: IncomingMessage,
   res: ServerResponse,
   { configStore, cycleTunnel }: Pick<TunnelRoutesDeps, "configStore" | "cycleTunnel">
@@ -412,14 +412,14 @@ async function handleRegenerateShimId(
   if (!guardCsrf(req, res)) return;
   setJsonHeaders(res);
   try {
-    const previous = configStore.getShimId();
-    const shimId = await configStore.regenerateShimId();
-    // One shimId names this shim on EVERY tunnel, so every workspace redials.
+    const previous = configStore.getProxyId();
+    const proxyId = await configStore.regenerateProxyId();
+    // One proxyId names this proxy on EVERY tunnel, so every workspace redials.
     const rows = await configStore.listControllers();
-    if (rows.length === 1) await cycleTunnel("shim-id-regenerated");
-    else for (const row of rows) await cycleTunnel("shim-id-regenerated", row.id);
+    if (rows.length === 1) await cycleTunnel("proxy-id-regenerated");
+    else for (const row of rows) await cycleTunnel("proxy-id-regenerated", row.id);
     res.statusCode = 200;
-    res.end(JSON.stringify({ ok: true, previous, shimId }));
+    res.end(JSON.stringify({ ok: true, previous, proxyId }));
   } catch (err) {
     res.statusCode = 500;
     res.end(JSON.stringify({ ok: false, error: (err as Error).message }));
@@ -485,7 +485,7 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps) {
       handlePostCreds(req, res, deps),
     handleForceReregister: (req: IncomingMessage, res: ServerResponse) =>
       handleForceReregister(req, res, deps),
-    handleRegenerateShimId: (req: IncomingMessage, res: ServerResponse) =>
-      handleRegenerateShimId(req, res, deps),
+    handleRegenerateProxyId: (req: IncomingMessage, res: ServerResponse) =>
+      handleRegenerateProxyId(req, res, deps),
   };
 }

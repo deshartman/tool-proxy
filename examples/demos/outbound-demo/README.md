@@ -126,7 +126,7 @@ panel and pass only the token, or let the script configure it via flags:
 ./run-federated.sh --port=9091 --token="$REAL_JWT" \
   --issuer=https://your-tenant.example.com/ \
   --jwksUrl=https://your-tenant.example.com/.well-known/jwks.json \
-  --audience=mcp-connector
+  --audience=tool-proxy
 ```
 
 The token's `iss`/`aud` must match the configured issuer/audience, and the

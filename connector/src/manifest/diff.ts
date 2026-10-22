@@ -227,16 +227,13 @@ export function diffServers(prev: ToolManifest, next: ToolManifest): {
   return { addedServers, removedServers };
 }
 
-// Attach server lifecycle to a delta for a 2.x session; leave it untouched for
-// 1.x. Empty arrays are omitted so a 2.x delta with no server change is the
-// same shape as a 1.x one.
+// Attach server lifecycle to a delta. Empty arrays are omitted so a delta with
+// no server change keeps the plain shape.
 export function withServerLifecycle(
   delta: ManifestDelta,
   prev: ToolManifest,
   next: ToolManifest,
-  sessionMajor: number,
 ): ManifestDelta {
-  if (sessionMajor < 2) return delta;
   const { addedServers, removedServers } = diffServers(prev, next);
   return {
     ...delta,

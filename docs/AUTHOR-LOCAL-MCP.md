@@ -1,6 +1,6 @@
 # Author a local MCP
 
-> Drop a folder under `${MCP_DROPIN_DIR}/<name>/` — `customer-mcps/<name>/` in dev, `/var/lib/mcp-connector/customer-mcps/<name>/` in production — with one or more tool files (and optionally prompts and resources). That's it. The connector picks it up at boot — or at runtime via the **Refresh local MCPs** button.
+> Drop a folder under `${MCP_DROPIN_DIR}/<name>/` — `customer-mcps/<name>/` in dev, `/var/lib/tool-proxy/customer-mcps/<name>/` in production — with one or more tool files (and optionally prompts and resources). That's it. The connector picks it up at boot — or at runtime via the **Refresh local MCPs** button.
 >
 > No `server.ts`, no `package.json`, no `.env`, no `connector.yaml` edit.
 >
@@ -31,7 +31,7 @@ The folder name (`<name>`) becomes the MCP's name. Each file default-exports a `
 ```ts
 // customer-mcps/orders/tools/get-order.ts
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 const OutputSchema = {
   orderId: z.string(),
@@ -77,7 +77,7 @@ A `Prompt` mirrors the `Tool` interface — one module per prompt, default-expor
 ```ts
 // customer-mcps/orders/prompts/refund-summary.ts
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 
 const refundSummary: Prompt = {
   name: "refund_summary",
@@ -115,7 +115,7 @@ A `Resource` lets a procedure read read-only canonical state via `resources/read
 
 ```ts
 // customer-mcps/orders/resources/recent-orders.ts
-import type { Resource } from "@mcp-shim/connector/sdk";
+import type { Resource } from "@gtmi/toolproxy-connector/sdk";
 
 const recent: string[] = [];
 export function recordOrder(id: string): void {
@@ -277,7 +277,7 @@ The plan is to remove the `dir/.env` fallback once every customer has migrated t
 
 ## Need a third-party SDK?
 
-A drop-in folder doesn't ship a `package.json` by default. Framework deps (`zod`, `@mcp-shim/connector/sdk`) resolve up to the connector workspace's `node_modules`. If your tool needs an SDK that isn't already in the workspace (e.g. `axios`, `@salesforce/sf-cli`, `octokit`), `cd` into the folder and:
+A drop-in folder doesn't ship a `package.json` by default. Framework deps (`zod`, `@gtmi/toolproxy-connector/sdk`) resolve up to the connector workspace's `node_modules`. If your tool needs an SDK that isn't already in the workspace (e.g. `axios`, `@salesforce/sf-cli`, `octokit`), `cd` into the folder and:
 
 ```bash
 npm init -y
@@ -298,10 +298,10 @@ These are validated at boot by [src/manifest/validate.ts](../connector/src/manif
 4. **Return `structuredContent` AND `content`.** The first is the schema-typed JSON; the second is the human-readable rendering.
 5. **`envKeys` lists the env vars your tool reads.** Not optional in practice: the value is how the controller learns the key exists. The supervisor reads your MCP's `/envkeys` after spawn and puts the result in the `creds-request` frame, so an undeclared key means the controller has **no way** to offer it — the operator gets no form field, and the only route left is a connector-level env var visible to every other MCP child.
 6. **Prompts and resources don't declare `outputSchema`.** That field is tools-only. The MCP protocol's `prompts/get` and `resources/read` are typed by the prompt's `argsSchema` and the resource's `mimeType` respectively.
-8. **Read env with `envString` / `envOptional` / `envNumber`, never `??`.** All three come from `@mcp-shim/connector/sdk`. The connector-wide rule is **empty string == not set**, because `FOO=` (a blank line in a `dir/.env`, or a controller key cleared to empty) is how an operator says "leave this unset" — and `??` disagrees, since `""` is not nullish:
+8. **Read env with `envString` / `envOptional` / `envNumber`, never `??`.** All three come from `@gtmi/toolproxy-connector/sdk`. The connector-wide rule is **empty string == not set**, because `FOO=` (a blank line in a `dir/.env`, or a controller key cleared to empty) is how an operator says "leave this unset" — and `??` disagrees, since `""` is not nullish:
 
    ```ts
-   import { envString } from "@mcp-shim/connector/sdk";
+   import { envString } from "@gtmi/toolproxy-connector/sdk";
 
    const BASE = envString("MY_API_URL", "http://localhost:7400");  // "" → default
    // const BASE = process.env.MY_API_URL ?? "http://localhost:7400";  // "" → ""

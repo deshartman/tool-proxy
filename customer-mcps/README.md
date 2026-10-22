@@ -17,7 +17,7 @@ Where `hello.ts` default-exports a `Tool`:
 
 ```ts
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 const tool: Tool<{ who: string }, { greeting: string }> = {
   name: "hello",
@@ -50,10 +50,10 @@ operator click accepts — is a load-bearing property of the design.
 
 Two ways to get folders here in a deployed connector:
 
-- **Derived image** — `FROM twilio/mcp-connector` + `COPY ./my-mcps/
-  /var/lib/mcp-connector/customer-mcps/`; build and deploy your own image.
+- **Derived image** — `FROM ghcr.io/twilio-demos/tool-proxy` + `COPY ./my-mcps/
+  /var/lib/tool-proxy/customer-mcps/`; build and deploy your own image.
 - **Volume mount** — mount an OCI volume / K8s ConfigMap or PVC / Fly volume /
-  bind mount at `/var/lib/mcp-connector/customer-mcps/`. Enables hot-reload via
+  bind mount at `/var/lib/tool-proxy/customer-mcps/`. Enables hot-reload via
   the controller UI's rescan button.
 
 See [deploy/DERIVED-IMAGE.md](../deploy/DERIVED-IMAGE.md) and

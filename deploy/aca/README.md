@@ -2,11 +2,11 @@
 
 Run the connector as a Container App. Outbound-only.
 
-> `mcp-connector deploy init --target aca` renders a bicep template
+> `tool-proxy deploy init --target aca` renders a bicep template
 > with your connector name + controller URL substituted in. The
 > walkthrough below covers the reasoning behind each choice.
 >
-> `mcp-connector deploy apply --target aca` is **not yet implemented** —
+> `tool-proxy deploy apply --target aca` is **not yet implemented** —
 > apply the emitted bicep with `az deployment group create`. Only
 > `--target fly` has a full apply verb today.
 
@@ -36,10 +36,10 @@ Also: don't enable scale-to-zero. The connector must hold the WSS open. Set
 ## Recommended deploy
 
 ```bash
-RG=mcp-connector-rg
-ENV=mcp-connector-env
-APP=mcp-connector
-IMAGE=<acr>.azurecr.io/mcp-connector:0.1.0
+RG=tool-proxy-rg
+ENV=tool-proxy-env
+APP=tool-proxy
+IMAGE=<acr>.azurecr.io/tool-proxy:0.1.0
 
 az containerapp create \
   --name "$APP" \
@@ -53,8 +53,8 @@ az containerapp create \
   --secrets connector-key-b64="$(head -c 32 /dev/urandom | base64)" \
   --env-vars \
       CONNECTOR_KEY_B64=secretref:connector-key-b64 \
-      CONNECTOR_KEY_FILE=/etc/mcp-connector/connector.key \
-      CONNECTOR_CONFIG=/etc/mcp-connector/config.yaml
+      CONNECTOR_KEY_FILE=/etc/tool-proxy/connector.key \
+      CONNECTOR_CONFIG=/etc/tool-proxy/config.yaml
       # INSPECTOR_PORT defaults to 9090 (binds 127.0.0.1 only). Required for
       # any MCP using createWebhookEndpoint — disabling it (INSPECTOR_PORT=0)
       # also disables webhook ingress.
@@ -87,7 +87,7 @@ with 2Gi.
 
 ## Persist the state volume — this is mandatory
 
-`state/config.json` on `/var/lib/mcp-connector` holds the sealed tunnel bearer
+`state/config.json` on `/var/lib/tool-proxy` holds the sealed tunnel bearer
 and the registration token the controller issued. On ACA's default ephemeral
 storage the connector loses its identity on every revision restart: it asks for
 Configure Tunnel again, and the re-register collides on `name_taken` against the
@@ -96,26 +96,26 @@ suppressed and a human must click Reconnect. Unattended restart is impossible
 without a real volume.
 
 ```bash
-az storage share-rm create --storage-account <sa> --name mcp-connector-state --quota 1
+az storage share-rm create --storage-account <sa> --name tool-proxy-state --quota 1
 az containerapp env storage set --name "$ENV" --resource-group "$RG" \
-  --storage-name mcp-connector-state --azure-file-account-name <sa> \
-  --azure-file-account-key <key> --azure-file-share-name mcp-connector-state \
+  --storage-name tool-proxy-state --azure-file-account-name <sa> \
+  --azure-file-account-key <key> --azure-file-share-name tool-proxy-state \
   --access-mode ReadWrite
 ```
 
 Then attach it to the app. `az containerapp create` cannot express a volume
 mount, so this step needs the YAML/bicep form — which is what
-`mcp-connector deploy init --target aca` emits, already wired up:
+`tool-proxy deploy init --target aca` emits, already wired up:
 
 ```bash
-mcp-connector deploy init --target aca --name prod-customer \
+tool-proxy deploy init --target aca --name prod-customer \
   --out ./deploy/aca
 az deployment group create --resource-group "$RG" \
   --template-file ./deploy/aca/containerapp.bicep \
   --parameters environmentId=<managed-env-id>
 ```
 
-**Do not mount anything at `/etc/mcp-connector`.** The entrypoint decodes
+**Do not mount anything at `/etc/tool-proxy`.** The entrypoint decodes
 `CONNECTOR_KEY_B64` and writes the key file there; a read-only or shadowing
 mount breaks boot.
 
@@ -182,6 +182,6 @@ Don't enable both — the built-in loop will mask replica-level failures from yo
 `stdout` flows to Log Analytics. Query:
 ```kusto
 ContainerAppConsoleLogs_CL
-| where ContainerAppName_s == "mcp-connector"
+| where ContainerAppName_s == "tool-proxy"
 | order by TimeGenerated desc
 ```

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 // Bucket B (single-scalar) per OUTPUT-SCHEMA.md — wrap the lone string in
 // { value } so the controller-side projection target has a stable field

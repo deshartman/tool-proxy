@@ -32,7 +32,7 @@ export async function connectSse(spec: Extract<McpServerSpec, { transport: "http
   // See servers/http.ts — 'auto' negotiates 2026-07-28 where available,
   // falls back to the 2025 handshake ("support both").
   const client = new Client(
-    { name: "mcp-shim-connector", version: "0.1.0" },
+    { name: "tool-proxy", version: "0.1.0" },
     // §9.3 — autoFulfill:false: no MCP fulfiller exists (no LLM, UI-only
     // controller). An `input_required` result surfaces as a typed error from
     // callTool → dispatcher relays `tool_failed`, not a maxRounds retry spin.

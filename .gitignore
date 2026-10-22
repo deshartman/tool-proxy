@@ -36,11 +36,11 @@ __pycache__/
 **/connector.yaml
 !deploy/fly/connector.yaml
 
-# Fly.io generated fly.toml. `mcp-connector deploy init --target fly` writes
+# Fly.io generated fly.toml. `tool-proxy deploy init --target fly` writes
 # it to deploy/fly/fly.toml; the sibling fly.toml.example ships as the
 # tracked reference.
 # EXCEPTION: deploy/fly/fly.toml IS tracked — it's the Twilio-demo deploy
-# config (app = "twilio-tool-sdk") and is needed by the deploy-main.yml
+# config (app = "tool-proxy") and is needed by the deploy-main.yml
 # GitHub Action. Customer deploys still generate their own via `deploy init`.
 **/fly.toml
 !**/fly.toml.example

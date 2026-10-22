@@ -16,7 +16,7 @@ const REPO_ROOT = resolvePath(new URL("../../../", import.meta.url).pathname);
 const TF_DIR = resolvePath(REPO_ROOT, "deploy/terraform/aws-fargate");
 const TF_SCRATCH_DIR = resolvePath(TF_DIR, "examples/from-scratch");
 const TF_EC2_DIR = resolvePath(REPO_ROOT, "deploy/terraform/aws-ec2");
-const HELM_DIR = resolvePath(REPO_ROOT, "deploy/helm/mcp-connector");
+const HELM_DIR = resolvePath(REPO_ROOT, "deploy/helm/tool-proxy");
 
 // Every `required` value the chart declares, in one place so a rename touches
 // one line. A render missing any of these fails with Helm's own error, which
@@ -299,7 +299,7 @@ describe("helm chart — filesystem invariants", () => {
     // pod which cannot open its config store.
     expect(output).toContain("name: CONNECTOR_KEY_FILE");
     expect(output).toContain("CONNECTOR_KEY_B64:");
-    expect(output).toContain("mcp-connector:9.9.9-test");
+    expect(output).toContain("tool-proxy:9.9.9-test");
   });
 });
 
@@ -375,10 +375,10 @@ describe("terraform aws-ec2 — no IAM, no inbound surface", () => {
   });
 
   it("tags the image so compose does not try to pull it", () => {
-    // The compose file resolves ghcr.io/twilio/mcp-connector:$MCP_VERSION, and
+    // The compose file resolves ghcr.io/twilio-demos/tool-proxy:$MCP_VERSION, and
     // ghcr issues no anonymous pull token — so a bare local tag leaves compose
     // failing with an auth error that reads as a network problem.
-    expect(code).toMatch(/-t ghcr\.io\/twilio\/mcp-connector:local/);
+    expect(code).toMatch(/-t ghcr\.io\/twilio-demos\/tool-proxy:local/);
     // `-f` is REQUIRED: deploy/compose ships docker-compose.prod.yml and
     // .dev.yml but no docker-compose.yml, so a bare `docker compose up` fails
     // with "no configuration file provided". Measured on a live instance.
@@ -389,7 +389,7 @@ describe("terraform aws-ec2 — no IAM, no inbound surface", () => {
     // The single hardest-won line in this module. The compose file mounts the
     // key READ-ONLY, so the entrypoint cannot chown it, and the image's `mcp` is
     // uid 100. A `chmod 400` file owned by anyone else crash-loops the connector
-    // on `EACCES: permission denied, open '/etc/mcp-connector/connector.key'`.
+    // on `EACCES: permission denied, open '/etc/tool-proxy/connector.key'`.
     // Docker Desktop on macOS hides this by faking file ownership in its VM;
     // a real Linux host does not.
     expect(code).toMatch(/chown 100:101 secrets\/connector\.key/);
@@ -411,11 +411,11 @@ describe("terraform aws-ec2 — no IAM, no inbound surface", () => {
     // The compose file bind-mounts ../../customer-mcps, which a fresh clone does
     // not contain. Docker would create it root-owned and the scanner could not
     // read it.
-    expect(code).toMatch(/mkdir -p \/opt\/mcp-shim\/customer-mcps/);
+    expect(code).toMatch(/mkdir -p \/opt\/tool-proxy\/customer-mcps/);
     // uid 100, NOT 1000. The image's `mcp` user comes from Alpine's
     // `adduser -S`, which assigns a system uid. Measured on a live instance:
     // chowning to 1000 left the connector unable to read its own master key and
     // crash-looping on EACCES.
-    expect(code).toMatch(/chown 100:101 \/opt\/mcp-shim\/customer-mcps/);
+    expect(code).toMatch(/chown 100:101 \/opt\/tool-proxy\/customer-mcps/);
   });
 });

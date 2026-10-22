@@ -151,7 +151,7 @@ describe("POST /v1/outbound/calls", () => {
     let privateKey: KeyObject;
     const kid = "test-key-1";
     const issuer = "https://idp.example.com";
-    const audience = "mcp-connector";
+    const audience = "tool-proxy";
 
     function b64url(input: Buffer | string): string {
       return Buffer.from(input).toString("base64url");

@@ -5,7 +5,7 @@ import { resolveMasterKey } from "../../src/config-store/master-key.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const TEST_DIR = join(tmpdir(), "mcp-connector-master-key-test-" + Date.now());
+const TEST_DIR = join(tmpdir(), "tool-proxy-master-key-test-" + Date.now());
 
 describe("resolveMasterKey", () => {
   beforeEach(() => {

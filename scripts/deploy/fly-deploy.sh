@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Self-contained Fly.io deploy for mcp-connector.
+# Self-contained Fly.io deploy for tool-proxy.
 #
 # Runs from a fresh clone:
 #   1. Preflight: fly CLI on PATH, deploy/fly/fly.toml present
 #   2. `npm install` if node_modules is missing
 #   3. `npm run build` — incremental (tsc -b), no-op when already fresh
-#   4. `mcp-connector deploy apply --target fly` — the four idempotent Fly ops
+#   4. `tool-proxy deploy apply --target fly` — the four idempotent Fly ops
 #      (apps create, secrets set CONNECTOR_KEY_B64, volumes create state,
 #      fly deploy). Was five: `postgres create` + `attach` went away with
 #      DB-TO-FILE, and with them the only non-idempotent step.
@@ -31,7 +31,7 @@
 #
 # Prereqs (one-time, out of scope for this script):
 #   - flyctl installed and `fly auth login`ed to your Fly org
-#   - deploy/fly/fly.toml already generated via `mcp-connector deploy init`
+#   - deploy/fly/fly.toml already generated via `tool-proxy deploy init`
 #     (see deploy/fly/OPERATOR-RUNBOOK.md for the init step)
 
 set -euo pipefail
@@ -115,9 +115,9 @@ fi
 # empty string that Node's parseArgs then sees as an unexpected positional.
 # Branch on array length instead.
 if [[ ${#FILTERED_ARGS[@]} -gt 0 ]]; then
-  echo "[fly-deploy] running: mcp-connector deploy apply --target fly ${FILTERED_ARGS[*]}"
+  echo "[fly-deploy] running: tool-proxy deploy apply --target fly ${FILTERED_ARGS[*]}"
   exec node connector/dist/index.js deploy apply --target fly "${FILTERED_ARGS[@]}"
 else
-  echo "[fly-deploy] running: mcp-connector deploy apply --target fly"
+  echo "[fly-deploy] running: tool-proxy deploy apply --target fly"
   exec node connector/dist/index.js deploy apply --target fly
 fi

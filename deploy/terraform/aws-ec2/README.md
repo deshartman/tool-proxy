@@ -1,4 +1,4 @@
-# mcp-connector on EC2, reached via EC2 Instance Connect Endpoint
+# tool-proxy on EC2, reached via EC2 Instance Connect Endpoint
 
 One instance, no IAM, no inbound port from the internet.
 
@@ -87,7 +87,7 @@ and crash-loops in `requireEnv()`.
 ## First boot takes 3-5 minutes
 
 `dnf install`, a git clone, and a `docker build` all happen in user-data. Every
-step logs to `/var/log/mcp-connector-boot.log`, because a first-boot failure is
+step logs to `/var/log/tool-proxy-boot.log`, because a first-boot failure is
 otherwise invisible:
 
 ```bash
@@ -155,7 +155,7 @@ Webhooks panel's bcrypt-protected URLs.
 The key is minted **on the instance, by the instance** (`head -c 32
 /dev/urandom`), so it never crosses the network and never enters Terraform state.
 The consequence: it lives only on that root volume, alongside the sealed store at
-`/var/lib/mcp-connector/state/config.json` in a Docker named volume.
+`/var/lib/tool-proxy/state/config.json` in a Docker named volume.
 
 - **`terraform destroy`, or replacing the instance, loses both.** The operator
   re-runs Configure Tunnel, and the re-register collides on `name_taken` against

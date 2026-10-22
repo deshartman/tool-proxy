@@ -8,10 +8,10 @@ import { isStickyClose } from "../../src/tunnel/reconnect.js";
 import { FRAME_SCHEMA_MISMATCH_CLOSE } from "@gtmi/toolproxy-protocol";
 
 // A controller that ENFORCES schema validation closes the socket with 4422
-// frame_schema_mismatch when it refuses a frame. Before this fix the shim's
+// frame_schema_mismatch when it refuses a frame. Before this fix the proxy's
 // close handler ignored the close code entirely, so the reconnect policy only
 // went sticky on a register-ack ERROR — and under enforcement a refused
-// register gets no ack at all. The shim would have reconnected forever,
+// register gets no ack at all. The proxy would have reconnected forever,
 // re-sending the same invalid frame each time.
 //
 // Pinned at both seams: TunnelClient REPORTS the real close code from a real

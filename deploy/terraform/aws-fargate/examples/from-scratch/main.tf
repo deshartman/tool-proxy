@@ -1,4 +1,4 @@
-# From-scratch AWS deployment for the mcp-connector.
+# From-scratch AWS deployment for the tool-proxy.
 #
 # Creates everything an operator with nothing but an IAM account needs, then
 # calls the core module at ../.. for the connector itself.
@@ -25,7 +25,7 @@ data "aws_availability_zones" "available" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  name = "mcp-connector-${var.connector_name}"
+  name = "tool-proxy-${var.connector_name}"
 
   # EFS mount targets need one subnet per AZ the task can land in, and an EFS
   # subnet group needs at least two AZs. Two is the minimum that works.
@@ -38,7 +38,7 @@ locals {
   # dependency cycle; scoping by ARN PATTERN breaks it without widening to "*".
   # Secrets Manager appends a random 6-character suffix, hence the trailing -*.
   # The name must track the module's `aws_secretsmanager_secret.connector_key`.
-  key_secret_arn_pattern = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:mcp-connector/${var.connector_name}/connector-key-b64-*"
+  key_secret_arn_pattern = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:tool-proxy/${var.connector_name}/connector-key-b64-*"
 }
 
 # ── Network ─────────────────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ resource "aws_route_table_association" "public" {
 # tighten it by guessing at port lists.
 resource "aws_security_group" "task" {
   name        = "${local.name}-task"
-  description = "mcp-connector task: egress only, no inbound"
+  description = "tool-proxy task: egress only, no inbound"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -220,11 +220,11 @@ resource "aws_iam_role_policy" "task" {
 
 # ── Registry ────────────────────────────────────────────────────────────────
 #
-# There is no published connector image — ghcr.io/twilio/mcp-connector is a
+# There is no published connector image — ghcr.io/twilio-demos/tool-proxy is a
 # placeholder and ghcr issues no anonymous pull token. You build and push your
 # own, which is what this repository exists for.
 resource "aws_ecr_repository" "connector" {
-  name                 = "mcp-connector"
+  name                 = "tool-proxy"
   image_tag_mutability = "IMMUTABLE"
   force_delete         = var.ecr_force_delete
 

@@ -23,7 +23,7 @@ option, and give each instance the values in the table.
 | `INSPECTOR_PORT` | The dashboard and the loopback IPC that MCPs use for webhooks and controller calls | `9090` |
 | `HEALTH_PORT` | `/livez` and `/readyz`, bound on `0.0.0.0`. A second instance on the same port can't bind it, and a probe on that port would then read the **first** instance's readiness | `9100` |
 | `MCP_BASE_PORT` | The start of the auto-assigned port range for spawned MCP children. Space instances 100 apart | `7100` |
-| `CONNECTOR_STATE_DIR` | Holds `config.json` (the sealed tunnel credentials and the connector's identity) and, under `controllers/`, every MCP's state — agentic-memory's included. Two instances sharing it would share one identity | `/var/lib/mcp-connector/state` |
+| `CONNECTOR_STATE_DIR` | Holds `config.json` (the sealed tunnel credentials and the connector's identity) and, under `controllers/`, every MCP's state — agentic-memory's included. Two instances sharing it would share one identity | `/var/lib/tool-proxy/state` |
 | `CONNECTOR_KEY_FILE` | The master key that seals `config.json`. Sharing one is allowed; one per instance is recommended | — |
 
 **If `HEALTH_PORT` is set explicitly and already taken, the connector exits at boot**
@@ -43,21 +43,21 @@ the connector's identity, so two services must never share one.
 ```yaml
 services:
   connector-a:
-    image: ghcr.io/twilio/mcp-connector:${MCP_VERSION:-latest}
+    image: ghcr.io/twilio-demos/tool-proxy:${MCP_VERSION:-latest}
     environment:
-      CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
+      CONNECTOR_KEY_FILE: /etc/tool-proxy/connector.key
     volumes:
-      - state-a:/var/lib/mcp-connector
-      - ./secrets/connector-a.key:/etc/mcp-connector/connector.key:ro
+      - state-a:/var/lib/tool-proxy
+      - ./secrets/connector-a.key:/etc/tool-proxy/connector.key:ro
     restart: unless-stopped
 
   connector-b:
-    image: ghcr.io/twilio/mcp-connector:${MCP_VERSION:-latest}
+    image: ghcr.io/twilio-demos/tool-proxy:${MCP_VERSION:-latest}
     environment:
-      CONNECTOR_KEY_FILE: /etc/mcp-connector/connector.key
+      CONNECTOR_KEY_FILE: /etc/tool-proxy/connector.key
     volumes:
-      - state-b:/var/lib/mcp-connector
-      - ./secrets/connector-b.key:/etc/mcp-connector/connector.key:ro
+      - state-b:/var/lib/tool-proxy
+      - ./secrets/connector-b.key:/etc/tool-proxy/connector.key:ro
     restart: unless-stopped
 
 volumes:
@@ -82,8 +82,8 @@ a second instance alongside the default one:
 INSPECTOR_PORT=9091 \
 HEALTH_PORT=9301 \
 MCP_BASE_PORT=7200 \
-CONNECTOR_STATE_DIR=/var/lib/mcp-connector-b/state \
-CONNECTOR_KEY_FILE=/etc/mcp-connector-b/connector.key \
+CONNECTOR_STATE_DIR=/var/lib/tool-proxy-b/state \
+CONNECTOR_KEY_FILE=/etc/tool-proxy-b/connector.key \
 node dist/index.js start
 ```
 
@@ -107,7 +107,7 @@ before binding, so it skips a taken port rather than failing, but stay within
 
 ## Checking an instance
 
-`node dist/index.js doctor` (inside the image) or `mcp-connector doctor` reports:
+`node dist/index.js doctor` (inside the image) or `tool-proxy doctor` reports:
 
 - **`health-port` warn, "held by a connector":** either this instance is
   already running, or another instance on the host has its `HEALTH_PORT`. Every

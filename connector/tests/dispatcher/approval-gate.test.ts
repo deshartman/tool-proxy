@@ -1,3 +1,4 @@
+import { qualifiedNaming } from "@connector/tunnel/naming.js";
 import { describe, it, expect, vi } from "vitest";
 
 import { Dispatcher } from "@connector/dispatcher.js";
@@ -9,6 +10,8 @@ import type { TunnelClient } from "@connector/tunnel/client.js";
 import type { TunnelFrame, WebhookFrame } from "@connector/tunnel/frames.js";
 import type { McpSupervisor } from "@connector/mcp-supervisor.js";
 import type { Logger } from "@connector/logger.js";
+
+const PROXY = "cra85py8";
 
 // The tunnel dispatcher used to check only that a server EXISTED
 // (servers.get), never that the controller had approved it. The manifest
@@ -88,6 +91,7 @@ function setup(approved: Set<string>) {
     tunnel: tunnel as unknown as TunnelClient,
     log: () => undefined,
     isServerEnabled: (name) => !gated.has(name) || approved.has(name),
+    naming: qualifiedNaming(PROXY),
   }).attach();
 
   const rpc = async (method: string, params: Record<string, unknown>) => {
@@ -101,8 +105,8 @@ function setup(approved: Set<string>) {
 }
 
 const PER_SERVER_ROUTES: Array<[string, Record<string, unknown>]> = [
-  ["tools/call", { name: "dropin.t", arguments: {} }],
-  ["prompts/get", { name: "dropin.p", arguments: {} }],
+  ["tools/call", { name: `${PROXY}.dropin.t`, arguments: {} }],
+  ["prompts/get", { name: `${PROXY}.dropin.p`, arguments: {} }],
   ["resources/read", { uri: "dropin://r", serverName: "dropin" }],
   ["resources/read", { uri: "dropin://r" }], // scheme fallback
   ["resources/subscribe", { uri: "dropin://r", serverName: "dropin" }],
@@ -121,8 +125,8 @@ describe("Dispatcher — approval gate", () => {
 
   it("replies the same kind an absent server gets (no existence oracle)", async () => {
     const { rpc } = setup(new Set());
-    const gatedReply = await rpc("tools/call", { name: "dropin.t", arguments: {} });
-    const absentReply = await rpc("tools/call", { name: "nope.t", arguments: {} });
+    const gatedReply = await rpc("tools/call", { name: `${PROXY}.dropin.t`, arguments: {} });
+    const absentReply = await rpc("tools/call", { name: `${PROXY}.nope.t`, arguments: {} });
     expect(gatedReply.error?.data?.kind).toBe(absentReply.error?.data?.kind);
   });
 
@@ -135,7 +139,7 @@ describe("Dispatcher — approval gate", () => {
 
   it("leaves un-gated servers reachable while the gated one is not approved", async () => {
     const { rpc, calls } = setup(new Set());
-    const reply = await rpc("tools/call", { name: "bundled.t", arguments: {} });
+    const reply = await rpc("tools/call", { name: `${PROXY}.bundled.t`, arguments: {} });
     expect(reply.error).toBeUndefined();
     expect(calls).toEqual(["bundled:callTool"]);
   });
@@ -143,7 +147,7 @@ describe("Dispatcher — approval gate", () => {
   it("omits an unapproved server from aggregate prompts/list and resources/list", async () => {
     const { rpc } = setup(new Set());
     const prompts = (await rpc("prompts/list", {})).result as { prompts: Array<{ name: string }> };
-    expect(prompts.prompts.map((p) => p.name)).toEqual(["bundled.p"]);
+    expect(prompts.prompts.map((p) => p.name)).toEqual([`${PROXY}.bundled.p`]);
     const resources = (await rpc("resources/list", {})).result as { resources: Array<{ uri: string }> };
     expect(resources.resources.map((r) => r.uri)).toEqual(["bundled://r"]);
   });

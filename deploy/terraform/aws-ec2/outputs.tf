@@ -45,18 +45,18 @@ output "ssh_in" {
 }
 
 output "run_command" {
-  description = "Non-interactive command template. Needs open_dashboard_step1 running and a key sent. Read /var/log/mcp-connector-boot.log first if the container is not up, and /var/log/cloud-init-output.log if user-data itself failed."
+  description = "Non-interactive command template. Needs open_dashboard_step1 running and a key sent. Read /var/log/tool-proxy-boot.log first if the container is not up, and /var/log/cloud-init-output.log if user-data itself failed."
   value       = "ssh -i <key> -p 2222 ec2-user@127.0.0.1 '<command>'"
 }
 
 output "check_boot" {
   description = "First-boot provisioning takes ~5-8 minutes (dnf, git clone, docker build). Run through the step-1 tunnel until it prints the container as running."
-  value       = "ssh -i <key> -p 2222 ec2-user@127.0.0.1 'sudo tail -30 /var/log/mcp-connector-boot.log'"
+  value       = "ssh -i <key> -p 2222 ec2-user@127.0.0.1 'sudo tail -30 /var/log/tool-proxy-boot.log'"
 }
 
 output "doctor" {
   description = "The verification gate. Read the config-store line: 'will be created at boot' before Configure Tunnel, 'valid, key matches' after. The inspector-port FAIL is doctor probing the port the connector itself holds — a known self-detection quirk, not a deployment fault."
-  value       = "ssh -i <key> -p 2222 ec2-user@127.0.0.1 'sudo sh -c \"cd /opt/mcp-shim/deploy/compose && docker compose -f docker-compose.prod.yml exec -T connector node dist/index.js doctor\"'"
+  value       = "ssh -i <key> -p 2222 ec2-user@127.0.0.1 'sudo sh -c \"cd /opt/tool-proxy/deploy/compose && docker compose -f docker-compose.prod.yml exec -T connector node dist/index.js doctor\"'"
 }
 
 output "no_inbound_surface" {

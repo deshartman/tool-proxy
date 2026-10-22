@@ -20,7 +20,7 @@ export async function connectHttp(spec: Extract<McpServerSpec, { transport: "htt
   // when the upstream supports it, falling back to the 2025 initialize
   // handshake otherwise ("support both"). The probe is a cheap HTTP request.
   const client = new Client(
-    { name: "mcp-shim-connector", version: "0.1.0" },
+    { name: "tool-proxy", version: "0.1.0" },
     // §9.3 — autoFulfill:false: there is no MCP fulfiller in this system (no
     // LLM, UI-only controller). An `input_required` result then surfaces as a
     // typed error from callTool → the dispatcher relays it as `tool_failed`,

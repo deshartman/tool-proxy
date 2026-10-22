@@ -1,18 +1,18 @@
-# Fly.io deployment — mcp-connector
+# Fly.io deployment — tool-proxy
 
 Operator runbook. For customer-facing narrative (why Fly.io, topology, backups)
 see the sibling [`README.md`](README.md).
 
 ## What this deploys
 
-One Fly Machine running `ghcr.io/twilio/mcp-connector:<tag>`, dialing out to a
+One Fly Machine running `ghcr.io/twilio-demos/tool-proxy:<tag>`, dialing out to a
 controller URL over WSS. No public IP, no `[[services]]`, no `[http_service]`.
 Tunnel identity, sealed creds and the registration token all live in
 `state/config.json` on a 1 GB Fly volume — sealed with libsodium under the
 master key from `CONNECTOR_KEY_B64`. **There is no database app.** That volume
 is therefore not belt-and-braces; it is the connector's identity.
 
-Reach the inspector with `./scripts/fly-inspector.sh mcp-connector-<CUSTOMER>`.
+Reach the inspector with `./scripts/fly-inspector.sh tool-proxy-<CUSTOMER>`.
 `fly proxy` alone returns 403 — it arrives from the mesh address rather than
 loopback. See ["Open the inspector"](#open-the-inspector) below.
 
@@ -40,8 +40,8 @@ Two commands. That's all most operators need:
 
 ```bash
 # From the repo root:
-mcp-connector deploy init --target fly --name acme-prod --yes
-mcp-connector deploy apply --target fly
+tool-proxy deploy init --target fly --name acme-prod --yes
+tool-proxy deploy apply --target fly
 ```
 
 `init` writes `fly.toml` at the repo root. `apply` runs the five Fly
@@ -72,7 +72,7 @@ sed -i.bak 's/<CUSTOMER>/acme-prod/g' deploy/fly/fly.toml && rm deploy/fly/fly.t
 Or use the scaffold CLI (writes to `deploy/fly/` by default):
 
 ```bash
-mcp-connector deploy init --target fly --name acme-prod --yes
+tool-proxy deploy init --target fly --name acme-prod --yes
 ```
 
 ### 2. Create the Fly app (no deploy yet)
@@ -94,16 +94,16 @@ default `DATABASE_URL` name. Both the step and the foot-gun are gone.)
 # 32 raw bytes → base64. Save the base64 somewhere safe (e.g. 1Password);
 # rotating requires the value again.
 KEY_B64=$(head -c 32 /dev/urandom | base64)
-fly secrets set CONNECTOR_KEY_B64="$KEY_B64" --app mcp-connector-acme-prod
+fly secrets set CONNECTOR_KEY_B64="$KEY_B64" --app tool-proxy-acme-prod
 ```
 
-The entrypoint decodes this into `/etc/mcp-connector/connector.key` at boot.
+The entrypoint decodes this into `/etc/tool-proxy/connector.key` at boot.
 See `connector/entrypoint.sh` for the decode logic.
 
 ### 4. Create the state volume
 
 ```bash
-fly volumes create state --region iad --size 1 --app mcp-connector-acme-prod
+fly volumes create state --region iad --size 1 --app tool-proxy-acme-prod
 ```
 
 **This volume is load-bearing, not belt-and-braces.** It holds
@@ -131,7 +131,7 @@ tail -f /tmp/fly-deploy.log
 ```
 
 First deploy takes ~2 minutes (image pull + volume attach + Machine start).
-`fly logs -a mcp-connector-acme-prod` should show:
+`fly logs -a tool-proxy-acme-prod` should show:
 
 ```
 authToken: "…"    # or "oauth2 (clientId=…)" — depending on posture
@@ -147,7 +147,7 @@ Tunnel step. That's expected.
 One command, from a checkout of this repo:
 
 ```bash
-./scripts/fly-inspector.sh mcp-connector-acme-prod
+./scripts/fly-inspector.sh tool-proxy-acme-prod
 ```
 
 It starts a relay inside the Machine (the Inspector is loopback-only and
@@ -173,7 +173,7 @@ Save. Inspector transitions `closed` → `connecting` → **`open`** (green pill
 
 ```bash
 # Runs the doctor preflight inside the Machine — exit 0 = all green.
-fly ssh console -a mcp-connector-acme-prod -C "sh -c 'cd /app/connector && node dist/index.js doctor'"
+fly ssh console -a tool-proxy-acme-prod -C "sh -c 'cd /app/connector && node dist/index.js doctor'"
 ```
 
 You should also see in the inspector:
@@ -296,7 +296,7 @@ a 24 h grace window. No connector-side action needed unless you want to force
 the pickup:
 
 ```bash
-fly machine restart --app mcp-connector-acme-prod $(fly machines list -a mcp-connector-acme-prod -j | jq -r '.[0].id')
+fly machine restart --app tool-proxy-acme-prod $(fly machines list -a tool-proxy-acme-prod -j | jq -r '.[0].id')
 ```
 
 ### Optional: `crm` drop-in + mock-backend Postgres store
@@ -324,11 +324,11 @@ Three pieces to stand up:
    `fly secrets set` in step 2 is only needed if you are pointing at a Postgres
    you already run. `<DB-APP>` below refers to whichever Postgres you used.
 
-2. **Deploy `twilio-tool-sdk-mock` (or your own name) as a private-only Fly app.**
+2. **Deploy `tool-proxy-mock` (or your own name) as a private-only Fly app.**
    Scaffold the fly.toml + Dockerfile:
 
    ```bash
-   mcp-connector deploy init --target fly-mock --name <SLUG> \
+   tool-proxy deploy init --target fly-mock --name <SLUG> \
      --app-name <MOCK-APP> --yes
    fly apps create <MOCK-APP> --org <YOUR-ORG>
 
@@ -379,7 +379,7 @@ The durability question it was answering still exists, in a smaller form.
 `state/config.json` holds the sealed bearer and the registration token, so:
 
 ```bash
-VOL=$(fly volumes list -a mcp-connector-acme-prod -j | jq -r '.[] | select(.name=="state") | .id')
+VOL=$(fly volumes list -a tool-proxy-acme-prod -j | jq -r '.[] | select(.name=="state") | .id')
 fly volumes snapshots list "$VOL"      # Fly snapshots daily, retains 5 days
 fly volumes snapshots create "$VOL"    # on demand, e.g. before an upgrade
 ```

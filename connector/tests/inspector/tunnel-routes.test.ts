@@ -42,7 +42,7 @@ describe("tunnel routes", () => {
   describe("GET /internal/tunnel/config", () => {
     it("returns {configured: false} when no row exists", async () => {
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
       } as unknown as ConfigStore;
 
@@ -58,8 +58,8 @@ describe("tunnel routes", () => {
       await routes.handleGetConfig(req, res);
 
       expect(res._status).toBe(200);
-      // shimId exists from first boot, before any controller is configured.
-      expect(JSON.parse(res._body)).toEqual({ configured: false, shimId: "abcd2345" });
+      // proxyId exists from first boot, before any controller is configured.
+      expect(JSON.parse(res._body)).toEqual({ configured: false, proxyId: "abcd2345" });
     });
 
     it("returns TunnelConfigSummary with hasTunnelAuthToken: true for static-bearer row", async () => {
@@ -83,7 +83,7 @@ describe("tunnel routes", () => {
       };
 
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(mockRow),
       } as unknown as ConfigStore;
 
@@ -146,7 +146,7 @@ describe("tunnel routes", () => {
       };
 
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(mockRow),
       } as unknown as ConfigStore;
 
@@ -180,7 +180,7 @@ describe("tunnel routes", () => {
 
     it("returns 500 on DB error", async () => {
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockRejectedValue(new Error("connection lost")),
       } as unknown as ConfigStore;
 
@@ -224,7 +224,7 @@ describe("tunnel routes", () => {
       };
 
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),  // INSERT: no prior row
         upsertController: vi.fn().mockResolvedValue(mockRow),
         deleteController: vi.fn(),
@@ -279,7 +279,7 @@ describe("tunnel routes", () => {
       const updatedRow: ControllerRow = { ...priorRow, tunnelAuthToken: "new-token" };
 
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(priorRow),  // UPDATE: prior row exists
         upsertController: vi.fn().mockResolvedValue(updatedRow),
         deleteController: vi.fn(),
@@ -333,7 +333,7 @@ describe("tunnel routes", () => {
       };
 
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
         upsertController: vi.fn().mockResolvedValue(mockRow),
         deleteController: vi.fn(),
@@ -388,7 +388,7 @@ describe("tunnel routes", () => {
 
       const deleteController = vi.fn().mockResolvedValue(true);
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),  // INSERT case
         upsertController: vi.fn().mockResolvedValue(mockRow),
         deleteController,
@@ -439,7 +439,7 @@ describe("tunnel routes", () => {
 
       const deleteController = vi.fn();
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(priorRow),  // UPDATE case
         upsertController: vi.fn().mockResolvedValue({ ...priorRow, tunnelAuthToken: "new-token" }),
         deleteController,
@@ -537,7 +537,7 @@ describe("tunnel routes", () => {
 
     it("INSERT: returns 400 when static-bearer is missing tunnelAuthToken (no prior row to preserve)", async () => {
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
       } as unknown as ConfigStore;
 
@@ -566,7 +566,7 @@ describe("tunnel routes", () => {
 
     it("INSERT: returns 400 when oauth2-cc is missing plaintext oauth fields (no prior row to preserve)", async () => {
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
       } as unknown as ConfigStore;
 
@@ -599,7 +599,7 @@ describe("tunnel routes", () => {
 
     it("INSERT: returns 400 when oauth2-cc is missing only oauthClientSecret (no prior row to preserve)", async () => {
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
       } as unknown as ConfigStore;
 
@@ -668,7 +668,7 @@ describe("tunnel routes", () => {
       it("static-bearer + same authMode + blank token → 200 (upsert omits tunnelAuthToken; SQL preserves it)", async () => {
         const upsertController = vi.fn().mockResolvedValue({ ...priorStaticRow, name: "Convo Agent Renamed" });
         const mockStore = {
-          getShimId: () => "abcd2345",
+          getProxyId: () => "abcd2345",
           getController: vi.fn().mockResolvedValue(priorStaticRow),
           upsertController,
           deleteController: vi.fn(),
@@ -707,7 +707,7 @@ describe("tunnel routes", () => {
       it("oauth2-cc + same authMode + blank clientSecret → 200 (upsert omits oauthClientSecret)", async () => {
         const upsertController = vi.fn().mockResolvedValue(priorOauthRow);
         const mockStore = {
-          getShimId: () => "abcd2345",
+          getProxyId: () => "abcd2345",
           getController: vi.fn().mockResolvedValue(priorOauthRow),
           upsertController,
           deleteController: vi.fn(),
@@ -739,7 +739,7 @@ describe("tunnel routes", () => {
 
       it("authMode switch (oauth2-cc → static-bearer) + blank token → 400 (no matching prior secret to preserve)", async () => {
         const mockStore = {
-          getShimId: () => "abcd2345",
+          getProxyId: () => "abcd2345",
           getController: vi.fn().mockResolvedValue(priorOauthRow),
           upsertController: vi.fn(),
           deleteController: vi.fn(),
@@ -768,7 +768,7 @@ describe("tunnel routes", () => {
 
     it("returns 500 on DB error during upsert", async () => {
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
         upsertController: vi.fn().mockRejectedValue(new Error("DB write failed")),
         deleteController: vi.fn(),
@@ -802,7 +802,7 @@ describe("tunnel routes", () => {
   describe("POST /internal/tunnel/force-reregister", () => {
     it("returns 409 when no row exists", async () => {
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(null),
       } as unknown as ConfigStore;
 
@@ -848,7 +848,7 @@ describe("tunnel routes", () => {
       const cycleTunnel = vi.fn().mockResolvedValue(undefined);
 
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockResolvedValue(mockRow),
         clearRegistrationToken,
       } as unknown as ConfigStore;
@@ -873,7 +873,7 @@ describe("tunnel routes", () => {
 
     it("returns 500 on DB error", async () => {
       const mockStore = {
-        getShimId: () => "abcd2345",
+        getProxyId: () => "abcd2345",
         getController: vi.fn().mockRejectedValue(new Error("DB error")),
       } as unknown as ConfigStore;
 
@@ -962,7 +962,7 @@ describe("POST /internal/tunnel/creds — URL normalization integrated", () => {
   it("stores the normalized (stripped) URL when the operator pastes the full WS endpoint", async () => {
     let upsertedUrl: string | undefined;
     const mockStore = {
-      getShimId: () => "abcd2345",
+      getProxyId: () => "abcd2345",
       getController: vi.fn().mockResolvedValue(null),
       upsertController: vi.fn().mockImplementation(async (input: ControllerInput) => {
         upsertedUrl = input.controllerUrl;

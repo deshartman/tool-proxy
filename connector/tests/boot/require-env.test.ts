@@ -12,7 +12,7 @@ import { requireEnv } from "../../src/boot/require-env.js";
 
 describe("requireEnv — preflight", () => {
   const validEnv = (): NodeJS.ProcessEnv => ({
-    CONNECTOR_KEY_FILE: "/etc/mcp-connector/connector.key",
+    CONNECTOR_KEY_FILE: "/etc/tool-proxy/connector.key",
   });
 
   it("returns cleanly when the master key path is set", () => {
@@ -36,7 +36,7 @@ describe("requireEnv — preflight", () => {
   // reintroduces the requirement by reflex.
   it("ignores a leftover POSTGRES_URL entirely", () => {
     const env: NodeJS.ProcessEnv = {
-      CONNECTOR_KEY_FILE: "/etc/mcp-connector/connector.key",
+      CONNECTOR_KEY_FILE: "/etc/tool-proxy/connector.key",
       POSTGRES_URL: "postgres://mcp:pass@localhost:5432/mcp",
     };
     expect(() => requireEnv(env)).not.toThrow();
@@ -56,7 +56,7 @@ describe("requireEnv — preflight", () => {
 
 describe("requireEnv — CONNECTOR_CONFIG default", () => {
   const withKey = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
-    CONNECTOR_KEY_FILE: "/etc/mcp-connector/connector.key",
+    CONNECTOR_KEY_FILE: "/etc/tool-proxy/connector.key",
     ...extra,
   });
 

@@ -1,4 +1,4 @@
-# mcp-connector — Fly.io deployment (reference; see ./README.md).
+# tool-proxy — Fly.io deployment (reference; see ./README.md).
 #
 # **Copy this file to the REPO ROOT as `fly.toml`**, not to this folder.
 # Fly's build context is locked to the fly.toml's directory (no
@@ -8,9 +8,9 @@
 # with "Dockerfile not found" at deploy time.
 #
 # See CODE-DEPLOY design record §B1 for the full analysis. The
-# scaffold CLI (`mcp-connector deploy init --target fly`) writes to
+# scaffold CLI (`tool-proxy deploy init --target fly`) writes to
 # `.` by default for this reason. To then actually deploy, use
-# `mcp-connector deploy apply --target fly` (creates the app, mints the
+# `tool-proxy deploy apply --target fly` (creates the app, mints the
 # master key, provisions the state volume, and runs
 # `fly deploy` — idempotent, safe to re-run).
 #
@@ -19,11 +19,11 @@
 #
 #   - No [[services]] and no [http_service] block. The connector is
 #     outbound-only; the inspector on 127.0.0.1:9090 is reachable via
-#     `fly proxy 9090:9090 -a mcp-connector-<CUSTOMER>`, NOT a public
+#     `fly proxy 9090:9090 -a tool-proxy-<CUSTOMER>`, NOT a public
 #     service. Publishing 9090 would leak the bcrypt-protected webhook
 #     URLs the inspector renders.
 #
-#   - fly ips list -a mcp-connector-<CUSTOMER> MUST return no rows. Do
+#   - fly ips list -a tool-proxy-<CUSTOMER> MUST return no rows. Do
 #     not run `fly ips allocate-v4` or `-v6` on this app.
 #
 #   - Machines with no [[services]] don't get auto-stopped by Fly's
@@ -35,16 +35,16 @@
 #     controller's dup-name guard 409s a second registration under the
 #     same name. Multi-replica is a future workstream.
 
-app = "mcp-connector-<CUSTOMER>"
+app = "tool-proxy-<CUSTOMER>"
 primary_region = "iad"
 
 [build]
   # Pin a specific tag in production; :latest is fine for demos.
-  image = "ghcr.io/twilio/mcp-connector:latest"
+  image = "ghcr.io/twilio-demos/tool-proxy:latest"
 
 [env]
-  CONNECTOR_KEY_FILE = "/etc/mcp-connector/connector.key"
-  CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
+  CONNECTOR_KEY_FILE = "/etc/tool-proxy/connector.key"
+  CONNECTOR_CONFIG = "/etc/tool-proxy/config.yaml"
   INSPECTOR_PORT = "9090"
   # Bind on all IPv6 interfaces so `fly proxy` can reach the inspector via
   # Fly's private mesh. Loopback-only (default 127.0.0.1) isn't reachable
@@ -59,7 +59,7 @@ primary_region = "iad"
 
 [[mounts]]
   source = "state"
-  destination = "/var/lib/mcp-connector"
+  destination = "/var/lib/tool-proxy"
 
 [[vm]]
   cpu_kind = "shared"

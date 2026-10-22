@@ -1,6 +1,6 @@
-# mcp-connector Terraform module — AWS Fargate
+# tool-proxy Terraform module — AWS Fargate
 
-Deploys a single-replica Fargate service running the mcp-connector.
+Deploys a single-replica Fargate service running the tool-proxy.
 
 ## Prerequisites (out of scope for this module)
 
@@ -22,7 +22,7 @@ identity on every task restart.
 
 ```hcl
 module "connector" {
-  source = "github.com/twilio/mcp-shim//deploy/terraform/aws-fargate?ref=main"
+  source = "github.com/deshartman/tool-proxy//deploy/terraform/aws-fargate?ref=main"
 
   connector_name     = "prod-us-east-1"
   region             = "us-east-1"

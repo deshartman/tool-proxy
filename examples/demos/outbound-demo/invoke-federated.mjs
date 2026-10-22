@@ -84,7 +84,7 @@ if (typeof to !== "string" || typeof agentId !== "string" || typeof channelId !=
 
 // Federated identity. In stub mode these default; with a real IdP, pass them.
 const issuer = flags.issuer ?? "https://demo-idp.local/outbound-federated";
-const audience = flags.audience ?? "mcp-connector-outbound-demo";
+const audience = flags.audience ?? "tool-proxy-outbound-demo";
 const kid = "outbound-demo-key";
 
 console.log(`About to ${action} (FEDERATED / RS256 bearer):`);

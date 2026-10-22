@@ -10,7 +10,7 @@
 // Not an OS boundary, by decision (D15): every workspace runs as the same uid,
 // so any child can read any workspace's directory. 0700 keeps the files off
 // other uids and out of a careless volume snapshot; it does not separate
-// siblings. A shim owner who needs that runs separate instances (Phase 3).
+// siblings. A proxy owner who needs that runs separate instances (Phase 3).
 
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";

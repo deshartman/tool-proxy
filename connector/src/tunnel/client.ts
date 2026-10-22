@@ -2,7 +2,7 @@ import WebSocket, { type RawData, type ClientOptions } from "ws";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import type { InboundTunnelFrame, TunnelFrame } from "./frames.js";
 import { parseFrame, type ProtocolVersion } from "@gtmi/toolproxy-protocol";
-import { bareNaming, type WireNaming } from "./naming.js";
+import type { WireNaming } from "./naming.js";
 import { resolveProxy, type ProxyDecision } from "./proxy.js";
 
 export type WsState = "connecting" | "open" | "closed";
@@ -43,12 +43,9 @@ export class TunnelClient {
   // The controller's tunnel protocol, once register-ack reports it. Absent →
   // parse strictly. A newer minor of our major is then parsed tolerantly.
   peerProtocol?: ProtocolVersion;
-  // How tool/prompt names look on THIS connection (Phase 2b). Starts on the
-  // bare 1.x form and is upgraded at register-ack when both sides speak 2.
-  // Lives on the connection because it belongs to it: the dispatcher and the
-  // manifest-delta sender read it from here, and a reconnect is a new client,
-  // so it re-negotiates from scratch.
-  wireNaming: WireNaming = bareNaming();
+  // How tool/prompt names look on THIS connection. Set by the workspace right
+  // after construction (3.x only), before the first frame can arrive.
+  wireNaming!: WireNaming;
 
   private ws?: WebSocket;
   private opened = false;

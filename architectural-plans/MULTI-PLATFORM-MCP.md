@@ -102,7 +102,7 @@ These go in `connector/tests/dispatcher/approval-gate.test.ts`:
 
 ### 2.2 The package
 
-- **Name and location.** `@mcp-shim/tunnel-protocol`, a new workspace package at `protocol/` in this repo. It is the second workspace, next to `connector/`. This is the one deliberate exception to "npm workspaces, one package" (CLAUDE.md §Workspace shape). The connector stays private, while the protocol package is **publishable**, because the platform must consume it.
+- **Name and location.** `@gtmi/toolproxy-protocol`, a new workspace package at `protocol/` in this repo. It is the second workspace, next to `connector/`. This is the one deliberate exception to "npm workspaces, one package" (CLAUDE.md §Workspace shape). The connector stays private, while the protocol package is **publishable**, because the platform must consume it.
 - **Contents:** Zod schemas only, plus the TypeScript types derived from them (`z.infer`). There is no runtime logic beyond `parseInbound(direction, text)` and the version helpers in §2.4. The package has no dependency on the connector, and the connector depends on it.
 - **Source of truth.** The Zod schemas are the authority. `docs/MCP-PROTOCOL.md` remains the prose explanation and links each section to the schema export. A doc that disagrees with the schema is a doc bug.
 - **Distribution.** It is published to the internal npm registry with semver that tracks `tunnelProtocol` (§2.4): the package's major.minor equals the protocol's major.minor, and its patch is for schema fixes that change no wire shape. The platform pins a range. A git dependency was rejected (fragile SHA pinning, and it builds on install); see platform plan §8.1.
@@ -462,7 +462,7 @@ This follows the "docs before merge" rule.
 | Phase | Need |
 |---|---|
 | 0 | Nothing. This is a shim-only fix, and the platform never sends calls for unapproved servers today |
-| 1 | Adopt `@mcp-shim/tunnel-protocol`, replacing `platform:mcp/frames.ts`. Validate inbound with it under §2.3's rules. Send `supportedTunnelProtocol` on every `register-ack`, and refuse an unsupported major with `unsupported_tunnel_protocol`. Gain the manifest fields the shim already sends (`prompts`, `resources`, `resourceTemplates`, `capabilities`, `envKeys`, and the delta's prompt/resource arrays) |
+| 1 | Adopt `@gtmi/toolproxy-protocol`, replacing `platform:mcp/frames.ts`. Validate inbound with it under §2.3's rules. Send `supportedTunnelProtocol` on every `register-ack`, and refuse an unsupported major with `unsupported_tunnel_protocol`. Gain the manifest fields the shim already sends (`prompts`, `resources`, `resourceTemplates`, `capabilities`, `envKeys`, and the delta's prompt/resource arrays) |
 | 1 (interim) | A contract test diffing frame-type sets until the package lands |
 | 2 | Compose names with the package's `qualifyToolName`; stop prepending `<author>.` at `qualify()` (D8, D11) |
 | 2 | Key `reconcileOrg` on the manifest's `author` field, not on the `customer_` / `twilio_` / `sendgrid_` name prefixes (`platform:bootstrap/buildTerminator.ts:69-72`, D11) |

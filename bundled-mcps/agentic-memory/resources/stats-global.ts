@@ -1,4 +1,4 @@
-import type { Resource } from "@mcp-shim/connector/sdk";
+import type { Resource } from "@gtmi/toolproxy-connector/sdk";
 import { store } from "../state.js";
 
 // Static resource — global counts for the whole mock. Useful for demos:

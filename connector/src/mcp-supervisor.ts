@@ -49,7 +49,7 @@
 //      Computed ONCE at module load. Walks ancestors of this module's
 //      import.meta.url and joins every node_modules with the platform
 //      delimiter. Required when MCP_DROPIN_DIR lives OUTSIDE the repo
-//      (prod: /var/lib/mcp-connector/customer-mcps/; dev: /tmp paths) —
+//      (prod: /var/lib/tool-proxy/customer-mcps/; dev: /tmp paths) —
 //      otherwise the child crashes with "Cannot find module 'zod'".
 //      Don't move to boot path or per-spawn recompute — import.meta.url
 //      doesn't change at runtime; the closure capture is intentional.
@@ -89,7 +89,7 @@ const TSX_BIN = join(dirname(requireFromHere.resolve("tsx/package.json")), "dist
 // Drop-in framework deps (zod, the SDK) are hoisted to the workspace root
 // `node_modules`. When MCP_DROPIN_DIR is INSIDE the repo, Node's parent-dir
 // climb finds them. When the dir lives elsewhere (production: a mounted
-// /var/lib/mcp-connector/customer-mcps/; dev: a /tmp path), the climb yields
+// /var/lib/tool-proxy/customer-mcps/; dev: a /tmp path), the climb yields
 // nothing and the child crashes with "Cannot find module 'zod'".
 //
 // Fix: pass NODE_PATH to spawned drop-in children pointing at every
@@ -874,7 +874,7 @@ export class McpSupervisor {
     if (dropin) {
       env.DROPIN_DIR = dir;
       env.DROPIN_NAME = spec.name;
-      // Make framework deps (zod, @mcp-shim/connector/sdk) resolvable from
+      // Make framework deps (zod, @gtmi/toolproxy-connector/sdk) resolvable from
       // a drop-in folder that sits OUTSIDE the connector's repo tree. See
       // computeDropinNodePath() above for the rationale.
       env.NODE_PATH = DROPIN_NODE_PATH;

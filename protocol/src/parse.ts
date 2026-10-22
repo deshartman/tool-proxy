@@ -1,6 +1,6 @@
 // Version-aware frame parsing — the "tight" half of decision D7.
 //
-// The rule (shim plan §2.3):
+// The rule (Tool Proxy plan §2.3):
 //   * Same minor as us, or an unknown peer → STRICT. An unknown field or an
 //     unknown frame type is rejected. That is what catches drift between two
 //     peers that claim the same protocol.
@@ -19,6 +19,7 @@
 import { z } from "zod";
 import * as v1 from "./schemas-v1.js";
 import * as v2 from "./schemas-v2.js";
+import * as v3 from "./schemas-v3.js";
 import type { ConnectorFrame, ControllerFrame } from "./types.js";
 import { PROTOCOL_VERSION, isCompatible, parseVersion, type ProtocolVersion } from "./version.js";
 
@@ -49,8 +50,8 @@ function schemaMap(schemas: readonly AnySchema[]): Map<string, AnySchema> {
   return map;
 }
 
-// One schema table per protocol MAJOR. A 2.x peer is parsed against the 2.x
-// table, a 1.x peer (or one that sent no version) against the 1.x table — the
+// One schema table per protocol MAJOR. A 3.x peer is parsed against the 3.x
+// table, a 2.x peer against the 2.x table, a 1.x peer (or one that sent no version) against the 1.x table — the
 // negotiated-major model agreed with the platform.
 const BY_MAJOR: Record<number, Record<Direction, Map<string, AnySchema>>> = {
   1: {
@@ -60,6 +61,10 @@ const BY_MAJOR: Record<number, Record<Direction, Map<string, AnySchema>>> = {
   2: {
     "connector-to-controller": schemaMap(v2.CONNECTOR_FRAME_SCHEMAS as unknown as AnySchema[]),
     "controller-to-connector": schemaMap(v2.CONTROLLER_FRAME_SCHEMAS as unknown as AnySchema[]),
+  },
+  3: {
+    "connector-to-controller": schemaMap(v3.CONNECTOR_FRAME_SCHEMAS as unknown as AnySchema[]),
+    "controller-to-connector": schemaMap(v3.CONTROLLER_FRAME_SCHEMAS as unknown as AnySchema[]),
   },
 };
 

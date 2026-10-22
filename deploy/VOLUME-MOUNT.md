@@ -18,7 +18,7 @@ speed — use [DERIVED-IMAGE.md](./DERIVED-IMAGE.md) for that.
 
 ## The mount point
 
-`/var/lib/mcp-connector/customer-mcps/` — this is `PROD_DEFAULT` in
+`/var/lib/tool-proxy/customer-mcps/` — this is `PROD_DEFAULT` in
 [`src/dropin.ts`](../connector/src/dropin.ts). Each
 subdirectory is one MCP; the folder name is the server name.
 
@@ -52,7 +52,7 @@ subdir.
 - **docker-compose bind-mount** — `chown -R <mcp UID>:<mcp GID>` on
   the host directory before `docker compose up`. The `mcp` user's
   numeric UID/GID is stable across image versions once fixed; check
-  with `docker run --rm ghcr.io/twilio/mcp-connector id mcp`.
+  with `docker run --rm ghcr.io/twilio-demos/tool-proxy id mcp`.
 
 Don't relax the container's non-root stance to work around a mount
 permission issue — the non-root UID is a load-bearing security
@@ -72,24 +72,24 @@ metadata:
 data:
   hello-tools-hello.ts: |
     import { z } from "zod";
-    import type { Tool } from "@mcp-shim/connector/sdk";
+    import type { Tool } from "@gtmi/toolproxy-connector/sdk";
     const hello: Tool = { /* ... */ };
     export default hello;
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-connector
+  name: tool-proxy
 spec:
   replicas: 1
   template:
     spec:
       containers:
         - name: connector
-          image: twilio/mcp-connector:1.0
+          image: ghcr.io/twilio-demos/tool-proxy:1.0
           volumeMounts:
             - name: customer-mcps
-              mountPath: /var/lib/mcp-connector/customer-mcps
+              mountPath: /var/lib/tool-proxy/customer-mcps
               readOnly: true
       volumes:
         - name: customer-mcps
@@ -158,10 +158,10 @@ tarball-extracts into an `emptyDir` at pod-start is the simplest shape:
             - -c
             - |
               curl -fsSL https://internal.example.com/customer-mcps.tar.gz \
-                | tar -xzf - -C /var/lib/mcp-connector/customer-mcps
+                | tar -xzf - -C /var/lib/tool-proxy/customer-mcps
           volumeMounts:
             - name: customer-mcps
-              mountPath: /var/lib/mcp-connector/customer-mcps
+              mountPath: /var/lib/tool-proxy/customer-mcps
       volumes:
         - name: customer-mcps
           emptyDir: {}
@@ -181,7 +181,7 @@ path](./DERIVED-IMAGE.md) is usually simpler on Fly specifically.
 # fly.toml
 [[mounts]]
   source = "customer_mcps"
-  destination = "/var/lib/mcp-connector/customer-mcps"
+  destination = "/var/lib/tool-proxy/customer-mcps"
 ```
 
 Provision + populate:
@@ -190,7 +190,7 @@ Provision + populate:
 fly volumes create customer_mcps --size 1 --region <region> -a <app>
 fly deploy -a <app>
 fly ssh sftp shell -a <app>
-# put -r my-mcps /var/lib/mcp-connector/customer-mcps
+# put -r my-mcps /var/lib/tool-proxy/customer-mcps
 ```
 
 After every SFTP change, click **Refresh local MCPs** in the controller
@@ -212,10 +212,10 @@ Bind-mount an EFS file system into the task via
   }],
   "containerDefinitions": [{
     "name": "connector",
-    "image": "twilio/mcp-connector:1.0",
+    "image": "ghcr.io/twilio-demos/tool-proxy:1.0",
     "mountPoints": [{
       "sourceVolume": "customer-mcps",
-      "containerPath": "/var/lib/mcp-connector/customer-mcps",
+      "containerPath": "/var/lib/tool-proxy/customer-mcps",
       "readOnly": true
     }]
   }]
@@ -237,10 +237,10 @@ properties:
     ingress: { external: false }   # inspector is loopback-only
   template:
     containers:
-      - image: twilio/mcp-connector:1.0
+      - image: ghcr.io/twilio-demos/tool-proxy:1.0
         volumeMounts:
           - volumeName: customer-mcps
-            mountPath: /var/lib/mcp-connector/customer-mcps
+            mountPath: /var/lib/tool-proxy/customer-mcps
     volumes:
       - name: customer-mcps
         storageType: AzureFile
@@ -257,9 +257,9 @@ Simplest recipe — bind-mount a host directory:
 ```yaml
 services:
   connector:
-    image: twilio/mcp-connector:1.0
+    image: ghcr.io/twilio-demos/tool-proxy:1.0
     volumes:
-      - ./mcp/local:/var/lib/mcp-connector/customer-mcps:ro
+      - ./mcp/local:/var/lib/tool-proxy/customer-mcps:ro
     ports:
       - "127.0.0.1:9090:9090"   # inspector loopback-only, do NOT bridge to 0.0.0.0
 ```
@@ -272,13 +272,13 @@ loop of any deployment target.
 
 ```bash
 # Kubernetes
-kubectl exec deploy/mcp-connector -- ls /var/lib/mcp-connector/customer-mcps
+kubectl exec deploy/tool-proxy -- ls /var/lib/tool-proxy/customer-mcps
 
 # Fly
-fly ssh console -a <app> -C 'ls /var/lib/mcp-connector/customer-mcps'
+fly ssh console -a <app> -C 'ls /var/lib/tool-proxy/customer-mcps'
 
 # docker-compose
-docker compose exec connector ls /var/lib/mcp-connector/customer-mcps
+docker compose exec connector ls /var/lib/tool-proxy/customer-mcps
 
 # Fargate — one-shot task with the same image + volume, or check via
 # Session Manager on a bastion that mounts the same EFS path.
@@ -331,21 +331,21 @@ test/deploy/volume-mount/            # gitignored
 ### fly.toml (relevant excerpts)
 
 ```toml
-app = "mcp-shim-volume-test"
+app = "tool-proxy-volume-test"
 primary_region = "iad"
 
 [env]
-  CONNECTOR_CONFIG = "/etc/mcp-connector/config.yaml"
+  CONNECTOR_CONFIG = "/etc/tool-proxy/config.yaml"
   INSPECTOR_PORT = "9090"
   INSPECTOR_BIND_ADDR = "::"
 
 # Mount the volume AT the drop-in path — this is the whole point.
 [[mounts]]
   source = "customer_mcps"
-  destination = "/var/lib/mcp-connector/customer-mcps"
+  destination = "/var/lib/tool-proxy/customer-mcps"
 
 [[files]]
-  guest_path = "/etc/mcp-connector/config.yaml"
+  guest_path = "/etc/tool-proxy/config.yaml"
   local_path = "connector.yaml"
 
 [[vm]]
@@ -361,20 +361,20 @@ primary_region = "iad"
 
 ```bash
 # 1. Base image (from this repo's root)
-IMAGE=mcp-connector:local-npm-pivot PLATFORMS=linux/amd64 ./scripts/build-image.sh
+IMAGE=tool-proxy:local-npm-pivot PLATFORMS=linux/amd64 ./scripts/build-image.sh
 
 # 2. Fly app + secrets + volume
 cd test/deploy/volume-mount
-fly apps create mcp-shim-volume-test --org personal
+fly apps create tool-proxy-volume-test --org personal
 fly secrets set \
   CONTROLLER_URL="$CONTROLLER_URL" \
-  CONNECTOR_NAME=mcp-shim-volume-test \
+  CONNECTOR_NAME=tool-proxy-volume-test \
   TUNNEL_AUTH_TOKEN="$TUNNEL_AUTH_TOKEN" \
-  -a mcp-shim-volume-test
-fly volumes create customer_mcps --size 1 --region iad -a mcp-shim-volume-test -y
+  -a tool-proxy-volume-test
+fly volumes create customer_mcps --size 1 --region iad -a tool-proxy-volume-test -y
 
 # 3. Deploy the base image (no derived layer — customer MCPs land via volume)
-fly deploy --local-only --image mcp-connector:local-npm-pivot -a mcp-shim-volume-test
+fly deploy --local-only --image tool-proxy:local-npm-pivot -a tool-proxy-volume-test
 ```
 
 Boot log shows 0 MCPs (volume is empty), tunnel connected, register-ack OK.
@@ -385,11 +385,11 @@ Fly's SFTP shim doesn't support recursive `put` or `mkdir`, so pre-create
 the target directory with a one-shot SSH command, then upload each file.
 
 ```bash
-fly ssh console -a mcp-shim-volume-test \
-  -C 'mkdir -p /var/lib/mcp-connector/customer-mcps/hello-volume/tools'
+fly ssh console -a tool-proxy-volume-test \
+  -C 'mkdir -p /var/lib/tool-proxy/customer-mcps/hello-volume/tools'
 
-fly ssh sftp shell -a mcp-shim-volume-test <<'EOF'
-put hello-volume/tools/hello.ts /var/lib/mcp-connector/customer-mcps/hello-volume/tools/hello.ts
+fly ssh sftp shell -a tool-proxy-volume-test <<'EOF'
+put hello-volume/tools/hello.ts /var/lib/tool-proxy/customer-mcps/hello-volume/tools/hello.ts
 EOF
 ```
 
@@ -408,7 +408,7 @@ inspector route — on Fly that means a relay, not just `fly proxy` (see
 
 ```bash
 # Terminal 1 — leave running; prints the URL and its port.
-./scripts/fly-inspector.sh mcp-shim-volume-test
+./scripts/fly-inspector.sh tool-proxy-volume-test
 
 # Terminal 2 — use the port it printed.
 curl -sS -X POST http://localhost:9099/mcp/rescan-local
@@ -423,11 +423,11 @@ approves. In the connector logs you'll see the child spawn and the
 ### Upload second MCP (world-late) and rescan hot
 
 ```bash
-fly ssh console -a mcp-shim-volume-test \
-  -C 'mkdir -p /var/lib/mcp-connector/customer-mcps/world-late/tools'
+fly ssh console -a tool-proxy-volume-test \
+  -C 'mkdir -p /var/lib/tool-proxy/customer-mcps/world-late/tools'
 
-fly ssh sftp shell -a mcp-shim-volume-test <<'EOF'
-put world-late/tools/world.ts /var/lib/mcp-connector/customer-mcps/world-late/tools/world.ts
+fly ssh sftp shell -a tool-proxy-volume-test <<'EOF'
+put world-late/tools/world.ts /var/lib/tool-proxy/customer-mcps/world-late/tools/world.ts
 EOF
 
 curl -sS -X POST http://localhost:9090/mcp/rescan-local
@@ -440,7 +440,7 @@ reconciled correctly against the already-spawned entry.
 ### Verify from logs
 
 ```bash
-fly logs -a mcp-shim-volume-test --no-tail | grep -E \
+fly logs -a tool-proxy-volume-test --no-tail | grep -E \
   'spawning MCP child|mcp-discovered emitted|local-mcps rescan applied'
 ```
 
@@ -463,7 +463,7 @@ Both children keep running; no machine restart between uploads.
 ### Cleanup
 
 ```bash
-fly apps destroy mcp-shim-volume-test -y
+fly apps destroy tool-proxy-volume-test -y
 ```
 
 The volume goes with the app.

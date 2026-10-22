@@ -1,20 +1,18 @@
 import { describe, it, expect } from "vitest";
 
 import { Dispatcher } from "@connector/dispatcher.js";
-import { bareNaming, qualifiedNaming, negotiateNaming, type WireNaming } from "@connector/tunnel/naming.js";
+import { qualifiedNaming, type WireNaming } from "@connector/tunnel/naming.js";
 import type { McpServerConnection } from "@connector/servers/index.js";
 import type { ConnectorConfig } from "@connector/config.js";
 import type { TunnelClient } from "@connector/tunnel/client.js";
 import type { TunnelFrame, ToolManifest } from "@connector/tunnel/frames.js";
 
-// MULTI-PLATFORM-MCP Phase 2b. Tool and prompt names on the wire depend on the
-// session's negotiated major: bare `<server>.<name>` under 1.x, qualified
-// `<shimId>.<server>.<name>` under 2.x. The Dispatcher is handed ONE naming per
-// session and never branches on a version itself. Pinned here: both forms
-// list and dispatch correctly, the 2.x parse keeps dots in the tool name, and a
-// name addressed to ANOTHER shim is refused exactly like an unknown server.
+// Tool and prompt names on the wire are `<proxyId>.<server>.<name>` (protocol
+// 3.x only; the 1.x bare and 2.x forms are gone). Pinned here: names list and
+// dispatch, the parse keeps dots in the tool name, a name addressed to ANOTHER
+// proxy is refused exactly like an unknown server, and a bare name is -32602.
 
-const SHIM = "cra85py8";
+const PROXY = "cra85py8";
 const OTHER = "k3f9x2qa";
 
 class FakeTunnel {
@@ -82,84 +80,49 @@ function setup(naming: WireNaming) {
   return { rpc, calls, logs };
 }
 
-describe("1.x — bare names (unchanged)", () => {
-  it("lists and dispatches <server>.<tool>", async () => {
-    const { rpc, calls } = setup(bareNaming());
+describe("3.x — qualified names", () => {
+  it("lists every tool as <proxyId>.<server>.<tool>", async () => {
+    const { rpc } = setup(qualifiedNaming(PROXY));
     const list = (await rpc("tools/list", {})).result as { tools: Array<{ name: string }> };
-    expect(list.tools.map((t) => t.name)).toEqual(["crm.get_customer", "crm.get.by.phone"]);
-    await rpc("tools/call", { name: "crm.get_customer", arguments: {} });
-    expect(calls).toEqual(["crm:get_customer"]);
-  });
-});
-
-describe("2.x — qualified names", () => {
-  it("lists every tool as <shimId>.<server>.<tool>", async () => {
-    const { rpc } = setup(qualifiedNaming(SHIM));
-    const list = (await rpc("tools/list", {})).result as { tools: Array<{ name: string }> };
-    expect(list.tools.map((t) => t.name)).toEqual([`${SHIM}.crm.get_customer`, `${SHIM}.crm.get.by.phone`]);
+    expect(list.tools.map((t) => t.name)).toEqual([`${PROXY}.crm.get_customer`, `${PROXY}.crm.get.by.phone`]);
   });
 
   it("dispatches a qualified name to the right server and tool", async () => {
-    const { rpc, calls } = setup(qualifiedNaming(SHIM));
-    const reply = await rpc("tools/call", { name: `${SHIM}.crm.get_customer`, arguments: {} });
+    const { rpc, calls } = setup(qualifiedNaming(PROXY));
+    const reply = await rpc("tools/call", { name: `${PROXY}.crm.get_customer`, arguments: {} });
     expect(reply.error).toBeUndefined();
     expect(calls).toEqual(["crm:get_customer"]);
   });
 
   it("keeps further dots in the TOOL name (the two-step parse)", async () => {
-    const { rpc, calls } = setup(qualifiedNaming(SHIM));
-    await rpc("tools/call", { name: `${SHIM}.crm.get.by.phone`, arguments: {} });
+    const { rpc, calls } = setup(qualifiedNaming(PROXY));
+    await rpc("tools/call", { name: `${PROXY}.crm.get.by.phone`, arguments: {} });
     expect(calls).toEqual(["crm:get.by.phone"]);
   });
 
-  it("refuses a name addressed to ANOTHER shim — same reply as an unknown server, and logged", async () => {
-    const { rpc, calls, logs } = setup(qualifiedNaming(SHIM));
+  it("refuses a name addressed to ANOTHER proxy — same reply as an unknown server, and logged", async () => {
+    const { rpc, calls, logs } = setup(qualifiedNaming(PROXY));
     const foreign = await rpc("tools/call", { name: `${OTHER}.crm.get_customer`, arguments: {} });
-    const unknown = await rpc("tools/call", { name: `${SHIM}.nope.get_customer`, arguments: {} });
+    const unknown = await rpc("tools/call", { name: `${PROXY}.nope.get_customer`, arguments: {} });
     expect(calls).toEqual([]);
     expect(foreign.error?.data?.kind).toBe("tool_not_found");
     expect(foreign.error?.data?.kind).toBe(unknown.error?.data?.kind); // no existence oracle
-    expect(logs.some((l) => l.includes(OTHER) && l.includes("not this shim"))).toBe(true);
+    expect(logs.some((l) => l.includes(OTHER) && l.includes("not this proxy"))).toBe(true);
   });
 
-  it("refuses the 1.x bare form once the session is 2.x (no shape-guessing)", async () => {
-    const { rpc, calls } = setup(qualifiedNaming(SHIM));
+  it("refuses the bare form (no shape-guessing) (no shape-guessing)", async () => {
+    const { rpc, calls } = setup(qualifiedNaming(PROXY));
     const reply = await rpc("tools/call", { name: "crm.get_customer", arguments: {} });
     expect(calls).toEqual([]);
     expect(reply.error?.code).toBe(-32602);
-    expect(reply.error?.message).toContain("${shimId}.${server}.${tool}");
+    expect(reply.error?.message).toContain("${proxyId}.${server}.${tool}");
   });
 
   it("qualifies prompt names the same way", async () => {
-    const { rpc, calls } = setup(qualifiedNaming(SHIM));
+    const { rpc, calls } = setup(qualifiedNaming(PROXY));
     const list = (await rpc("prompts/list", {})).result as { prompts: Array<{ name: string }> };
-    expect(list.prompts.map((p) => p.name)).toEqual([`${SHIM}.crm.brief`]);
-    await rpc("prompts/get", { name: `${SHIM}.crm.brief`, arguments: {} });
+    expect(list.prompts.map((p) => p.name)).toEqual([`${PROXY}.crm.brief`]);
+    await rpc("prompts/get", { name: `${PROXY}.crm.brief`, arguments: {} });
     expect(calls).toEqual(["crm:prompt:brief"]);
-  });
-});
-
-// The cross-version compatibility matrix. The session major is
-// min(what the shim will speak, what the controller advertised); a controller
-// that predates supportedTunnelProtocol advertises nothing and is 1.x.
-describe("negotiateNaming — the version matrix", () => {
-  const cases: Array<[string, number, { major: number } | undefined, 1 | 2]> = [
-    ["1.x shim, 1.x controller (silent)",   1, undefined,     1],
-    ["1.x shim, 1.x controller (says 1)",   1, { major: 1 },  1],
-    ["1.x shim, 2.x controller",            1, { major: 2 },  1],
-    ["2.x shim, 1.x controller (silent)",   2, undefined,     1],
-    ["2.x shim, 1.x controller (says 1)",   2, { major: 1 },  1],
-    ["2.x shim, 2.x controller",            2, { major: 2 },  2],
-  ];
-  it.each(cases)("%s → major %s", (_label, speak, controller, expected) => {
-    const naming = negotiateNaming(speak, controller, SHIM);
-    expect(naming.major).toBe(expected);
-    // And the form matches the major — the two can never disagree.
-    expect(naming.compose("crm", "t")).toBe(expected === 2 ? `${SHIM}.crm.t` : "crm.t");
-  });
-
-  it("only BOTH sides on 2 produces qualified names (no one-sided upgrade)", () => {
-    const qualified = cases.filter(([, s, c]) => negotiateNaming(s, c, SHIM).major === 2);
-    expect(qualified.map(([label]) => label)).toEqual(["2.x shim, 2.x controller"]);
   });
 });

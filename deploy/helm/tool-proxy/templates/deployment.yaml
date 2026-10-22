@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "mcp-connector.fullname" . }}
+  name: {{ include "tool-proxy.fullname" . }}
   labels:
-    {{- include "mcp-connector.labels" . | nindent 4 }}
+    {{- include "tool-proxy.labels" . | nindent 4 }}
 spec:
   # Single replica by design. The connector persists registrationToken to
   # a PVC; a second replica would open its own tunnel and trip the
@@ -11,11 +11,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "mcp-connector.selectorLabels" . | nindent 6 }}
+      {{- include "tool-proxy.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "mcp-connector.selectorLabels" . | nindent 8 }}
+        {{- include "tool-proxy.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets:
@@ -34,7 +34,7 @@ spec:
               # Optional yaml. Nothing in this chart mounts it; loadConfig
               # tolerates the file being absent, and the only shape that still
               # needs an entry is a hand-written Type 1 MCP.
-              value: /etc/mcp-connector/config.yaml
+              value: /etc/tool-proxy/config.yaml
             - name: HEALTH_PORT
               # Orchestrator probes, on their own tiny server bound 0.0.0.0 with
               # exactly two GET routes. The inspector CANNOT be probed: it binds
@@ -56,10 +56,10 @@ spec:
               # The bytes arrive as CONNECTOR_KEY_B64 via envFrom below; the
               # entrypoint decodes to this path at 0400 and unsets the variable
               # before dropping privileges.
-              value: /etc/mcp-connector/connector.key
+              value: /etc/tool-proxy/connector.key
           envFrom:
             - secretRef:
-                name: {{ include "mcp-connector.fullname" . }}-auth
+                name: {{ include "tool-proxy.fullname" . }}-auth
           ports:
             - name: inspector
               containerPort: 9090
@@ -105,8 +105,8 @@ spec:
             # entrypoint.sh creates and chowns the state/ subdirectory while it
             # is still root. See DEFAULT_STATE_DIR in src/config-store/store-file.ts.
             - name: state
-              mountPath: /var/lib/mcp-connector
+              mountPath: /var/lib/tool-proxy
       volumes:
         - name: state
           persistentVolumeClaim:
-            claimName: {{ include "mcp-connector.fullname" . }}-state
+            claimName: {{ include "tool-proxy.fullname" . }}-state

@@ -59,7 +59,7 @@ terraform output -raw build_and_push   # prints the two commands below, filled i
 ```bash
 aws ecr get-login-password --region <region> \
   | docker login --username AWS --password-stdin <acct>.dkr.ecr.<region>.amazonaws.com
-IMAGE=<acct>.dkr.ecr.<region>.amazonaws.com/mcp-connector:0.1.0 PUSH=1 ./scripts/build-image.sh
+IMAGE=<acct>.dkr.ecr.<region>.amazonaws.com/tool-proxy:0.1.0 PUSH=1 ./scripts/build-image.sh
 ```
 
 `build-image.sh` is the script CI uses, so local and CI images are built

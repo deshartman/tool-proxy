@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 import { ChannelSchema } from "../schemas.js";
 
 // Compose the prompt an agent uses AT THE END of a session to produce the

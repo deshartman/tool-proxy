@@ -11,7 +11,7 @@
 //
 // CONNECTOR_CONFIG defaults to `./connector.yaml` (resolved from CWD). Same
 // with `.env`: `import "dotenv/config"` at the entrypoint reads from CWD. So a
-// customer running `npx mcp-connector start` from their project directory
+// customer running `npx tool-proxy start` from their project directory
 // picks up `.env` + `connector.yaml` next to their `package.json` with no
 // flags. Override CONNECTOR_CONFIG only when the yaml lives elsewhere.
 //

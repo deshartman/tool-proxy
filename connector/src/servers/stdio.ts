@@ -30,7 +30,7 @@ export async function connectStdio(
   // probe via client.connect(transport, { prior: { kind: "legacy" } }). Not
   // needed today — connect happens once per spawn, not per request.
   const client = new Client(
-    { name: "mcp-shim-connector", version: "0.1.0" },
+    { name: "tool-proxy", version: "0.1.0" },
     // §9.3 — autoFulfill:false: no MCP fulfiller exists (no LLM, UI-only
     // controller). An `input_required` result surfaces as a typed error from
     // callTool → dispatcher relays `tool_failed`, not a maxRounds retry spin.

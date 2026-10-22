@@ -180,7 +180,7 @@ export interface TunnelRouteHandlers {
   handleRemoveTunnel?: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
   handlePostCreds: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
   handleForceReregister: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
-  handleRegenerateShimId: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+  handleRegenerateProxyId: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 }
 
 export function guardCsrf(req: IncomingMessage, res: ServerResponse): boolean {
@@ -1400,7 +1400,7 @@ export function startInspector(port: number, inspector: Inspector, opts?: { netw
     }
     if (path === "/internal/identity/regenerate" && req.method === "POST") {
       if (inspector.tunnelRoutes) {
-        return inspector.tunnelRoutes.handleRegenerateShimId(req, res);
+        return inspector.tunnelRoutes.handleRegenerateProxyId(req, res);
         return;
       }
       res.statusCode = 404; res.end(); return;

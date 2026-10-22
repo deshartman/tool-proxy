@@ -6,11 +6,11 @@ needed for the tunnel itself.
 > **Skip the copy-paste below** if you use Terraform — the module at
 > [`deploy/terraform/aws-fargate/`](../../deploy/terraform/aws-fargate/README.md)
 > emits the same shape and manages log group + Secrets Manager slot + task
-> definition + service. Alternatively `mcp-connector deploy init
+> definition + service. Alternatively `tool-proxy deploy init
 > --target fargate` renders a hand-editable `task-definition.json` with
 > your name and controller URL substituted in.
 >
-> `mcp-connector deploy apply --target fargate` is **not yet implemented** —
+> `tool-proxy deploy apply --target fargate` is **not yet implemented** —
 > apply the manifest with `aws ecs register-task-definition && aws ecs
 > update-service` (or Terraform). Only `--target fly` has a full apply verb
 > today.
@@ -42,14 +42,14 @@ for exposing the inspector UI (separate concern, see below).
 
 ```jsonc
 {
-  "family": "mcp-connector",
+  "family": "tool-proxy",
   "requiresCompatibilities": ["FARGATE"],
   "networkMode": "awsvpc",
   "cpu": "256",
   "memory": "512",
   "containerDefinitions": [{
     "name": "connector",
-    "image": "<account>.dkr.ecr.<region>.amazonaws.com/mcp-connector:0.1.0",
+    "image": "<account>.dkr.ecr.<region>.amazonaws.com/tool-proxy:0.1.0",
     "essential": true,
     "secrets": [
       // Pick the one matching your Tunnel Security row's type:
@@ -59,7 +59,7 @@ for exposing the inspector UI (separate concern, see below).
       // { "name": "OAUTH_CLIENT_SECRET", "valueFrom": "arn:...:secret:oauth-secret" }
     ],
     "environment": [
-      { "name": "CONNECTOR_CONFIG", "value": "/etc/mcp-connector/config.yaml" },
+      { "name": "CONNECTOR_CONFIG", "value": "/etc/tool-proxy/config.yaml" },
       { "name": "CONNECTOR_NAME",   "value": "prod-customer" },
       // For OAuth 2.0, add: { "name": "OAUTH_TOKEN_URL", "value": "https://controller.example.com/oauth2/token" }
       // INSPECTOR_PORT defaults to 9090 and binds to 127.0.0.1 only — keep
@@ -69,11 +69,11 @@ for exposing the inspector UI (separate concern, see below).
       { "name": "INSPECTOR_PORT",   "value": "9090" }
     ],
     "mountPoints": [
-      { "containerPath": "/etc/mcp-connector", "sourceVolume": "config" }
+      { "containerPath": "/etc/tool-proxy", "sourceVolume": "config" }
     ],
     "logConfiguration": {
       "logDriver": "awslogs",
-      "options": { "awslogs-group": "/ecs/mcp-connector", "awslogs-region": "us-east-1", "awslogs-stream-prefix": "connector" }
+      "options": { "awslogs-group": "/ecs/tool-proxy", "awslogs-region": "us-east-1", "awslogs-stream-prefix": "connector" }
     }
   }],
   "volumes": [
@@ -82,7 +82,7 @@ for exposing the inspector UI (separate concern, see below).
 }
 ```
 
-Mount the YAML at `/etc/mcp-connector/config.yaml`. For a Secrets Manager
+Mount the YAML at `/etc/tool-proxy/config.yaml`. For a Secrets Manager
 secret, use a small init container or sidecar that writes the secret into
 the shared volume; or build a derived image with the YAML baked in and use
 `${TUNNEL_AUTH_TOKEN:-}` / `${CONNECTOR_NAME:-}` interpolation at runtime.

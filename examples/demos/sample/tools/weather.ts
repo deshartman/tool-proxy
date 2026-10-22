@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 // Public, key-less Australian weather. Two-step now that we accept a city name:
 //   1. geocode city -> {lat, lon} (Open-Meteo geocoding, AU-filtered)
@@ -10,7 +10,7 @@ import type { Tool } from "@mcp-shim/connector/sdk";
 // 3s budget per HTTP call: 2 sequential * 3s = 6s under a raised tool
 // budget (met.no often responds in <1s; the ceiling is only for stalls).
 const REQ_TIMEOUT_MS = 3000;
-const USER_AGENT = "mcp-shim-sample (https://github.com/twilio/mcp-shim)";
+const USER_AGENT = "tool-proxy-sample (https://github.com/deshartman/tool-proxy)";
 
 async function fetchJson(url: string): Promise<unknown> {
   const ctl = new AbortController();

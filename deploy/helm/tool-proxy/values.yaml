@@ -1,4 +1,4 @@
-# Default values for the mcp-connector chart. Override these on
+# Default values for the tool-proxy chart. Override these on
 # `helm install --set` or a values.yaml file.
 #
 # Note what is NOT here: connector name, controller URL, and auth posture.
@@ -7,7 +7,7 @@
 # chart used to `required` them as env vars and they no longer do anything.
 
 image:
-  repository: ghcr.io/twilio/mcp-connector
+  repository: ghcr.io/twilio-demos/tool-proxy
   # C2 (security hardening) — do NOT default to `latest`. Silent
   # supply-chain drift on rebuild is a real threat class. Operators must
   # pin an explicit version tag (or better, an image digest `@sha256:...`)
@@ -36,7 +36,7 @@ resources:
     memory: 2Gi
 
 # Persistent volume for the sealed config store at
-# /var/lib/mcp-connector/state/config.json, plus the bundled agentic-memory
+# /var/lib/tool-proxy/state/config.json, plus the bundled agentic-memory
 # MCP's state file. ReadWriteOnce is sufficient — the chart hardcodes
 # replicas: 1 by design.
 #

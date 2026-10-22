@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 import { store } from "../state.js";
 
 // Assist a merge decision: dump both identities' aliases + resolved bags so

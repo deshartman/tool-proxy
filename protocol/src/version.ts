@@ -1,4 +1,4 @@
-// The tunnel protocol version, and the handshake rule (shim plan §2.4).
+// The tunnel protocol version, and the handshake rule (Tool Proxy plan §2.4).
 //
 // PROTOCOL_VERSION is what this package speaks, as "<major>.<minor>". It is
 // carried on the wire as `register.tunnelProtocol` (connector → controller);
@@ -16,13 +16,13 @@
 // `tunnelProtocol` at all is a 1.x peer that predates the field.
 //
 // PROTOCOL_VERSION is what a connector built on this package SPEAKS by default.
-// It stays "1.0" in 2.0.0 of the package on purpose: shipping the 2.x schemas
+// It stays "1.0" in 3.0.0 of the package on purpose: shipping the 2.x schemas
 // and flipping what a connector sends are separate steps (the connector's
 // Phase 2b flips it, after a live 1.x ⇄ 2.x test). LATEST_PROTOCOL_VERSION is
 // the newest major.minor whose schemas this package carries.
 
 export const PROTOCOL_VERSION = "1.0";
-export const LATEST_PROTOCOL_VERSION = "2.0";
+export const LATEST_PROTOCOL_VERSION = "3.0";
 
 export interface ProtocolVersion {
   major: number;
@@ -74,4 +74,16 @@ export function isCompatible(
 export function peerVersionFromRegister(tunnelProtocol: unknown): ProtocolVersion | undefined {
   if (tunnelProtocol === undefined) return { major: 1, minor: 0 };
   return parseVersion(tunnelProtocol);
+}
+
+// The version a session runs at: min(ours, the peer's advertised max). A peer
+// that advertises nothing (a controller that predates register-ack's
+// `supportedTunnelProtocol`) is 1.0, so a 3.x speaker produces the exact 1.x
+// wire for it, the exact 2.x wire (`shimId`) for a peer whose max is 2.x, and
+// the 3.x wire (`proxyId`) only when the peer advertises 3.x. Majors compare
+// first; within one major the lower minor wins.
+export function negotiateVersion(ours: ProtocolVersion, peerMax: ProtocolVersion | undefined): ProtocolVersion {
+  if (!peerMax) return { major: 1, minor: 0 };
+  if (peerMax.major !== ours.major) return peerMax.major < ours.major ? peerMax : ours;
+  return { major: ours.major, minor: Math.min(ours.minor, peerMax.minor) };
 }

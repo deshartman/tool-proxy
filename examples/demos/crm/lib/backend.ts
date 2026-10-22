@@ -12,7 +12,7 @@
 // supervisor restarts the child on every creds-update / session-creds paste, so
 // a new value arrives as a fresh process rather than as a mutation of this one
 // (see docs/AUTHOR-LOCAL-MCP.md "In-process state is a cache, not the truth").
-import { envString } from "@mcp-shim/connector/sdk";
+import { envString } from "@gtmi/toolproxy-connector/sdk";
 
 export const MOCK_URL = envString("MOCK_CUSTOMERS_URL", "http://localhost:7400");
 

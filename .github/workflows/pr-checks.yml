@@ -65,4 +65,4 @@ jobs:
       # picks up the repo-root vitest.config.ts. `--passWithNoTests` matches the
       # package.json script; harmless in CI where tests always exist.
       - name: Test (vitest)
-        run: npm test --workspace=@mcp-shim/connector
+        run: npm test --workspace=@gtmi/toolproxy-connector

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 
 // Session-opening prompt: pull the caller's record + recent history so the
 // agent can greet them with context rather than asking them to re-identify.

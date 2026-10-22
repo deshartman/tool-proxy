@@ -1,5 +1,5 @@
 {
-  "name": "@mcp-shim/connector",
+  "name": "@gtmi/toolproxy-connector",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "bin": {
-    "mcp-connector": "dist/index.js"
+    "tool-proxy": "dist/index.js"
   },
   "exports": {
     ".": "./dist/index.js",
@@ -29,7 +29,7 @@
     "test:watch": "vitest --root .."
   },
   "dependencies": {
-    "@gtmi/toolproxy-protocol": "~2.0.0",
+    "@gtmi/toolproxy-protocol": "~3.0.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/core": "^2.0.0",
     "@modelcontextprotocol/node": "^2.0.0",

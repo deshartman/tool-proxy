@@ -1,4 +1,4 @@
-# @mcp-shim/connector
+# @gtmi/toolproxy-connector
 
 Customer-side connector per `MCP-TUNNEL.md` (held outside this repo).
 
@@ -45,7 +45,7 @@ The WS handshake is gated by per-tunnel auth that the controller mints. Before b
 
 ### Configure tunnel creds
 
-Tunnel identity lives in a sealed JSON file on the state volume (`${CONNECTOR_STATE_DIR}/config.json`, default `/var/lib/mcp-connector/state/`), each secret sealed at rest with libsodium. The operator pastes creds via the inspector UI — no shell edits, no restart on rotation. There is no env-var alternative: an earlier `CONNECTOR_CREDS_SOURCE=env` mode was removed, and `CONNECTOR_KEY_FILE` is now the **only** env var the connector requires at boot (`POSTGRES_URL` went with the database).
+Tunnel identity lives in a sealed JSON file on the state volume (`${CONNECTOR_STATE_DIR}/config.json`, default `/var/lib/tool-proxy/state/`), each secret sealed at rest with libsodium. The operator pastes creds via the inspector UI — no shell edits, no restart on rotation. There is no env-var alternative: an earlier `CONNECTOR_CREDS_SOURCE=env` mode was removed, and `CONNECTOR_KEY_FILE` is now the **only** env var the connector requires at boot (`POSTGRES_URL` went with the database).
 
 ```bash
 # from repo root
@@ -63,7 +63,7 @@ cp .env.example .env
 #
 # start-connector.sh sets CONNECTOR_STATE_DIR to .local/state-<port> for you.
 # It has to: the connector's own default is the production path
-# /var/lib/mcp-connector/state, which an unprivileged dev user cannot create.
+# /var/lib/tool-proxy/state, which an unprivileged dev user cannot create.
 
 # Copy the yaml example — mcp_servers + policy blocks only (a legacy
 # tunnel: block is never read; leave it in place harmless, or delete).
@@ -103,7 +103,7 @@ Drop a folder under `customer-mcps/<name>/tools/` with one or more tool files. T
 ```ts
 // customer-mcps/my-mcp/tools/echo.ts
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 const echo: Tool = {
   name: "echo",
@@ -133,7 +133,7 @@ For more depth — env precedence, `Refresh local MCPs`, the third-party-SDK cas
 
 For **bundled multi-service MCPs** (Twilio-shipped, hand-written), prefer a service-first folder layout (`<service>/{tools,prompts,resources}/` under the bundle root) over a flat `tools/` tree. Customer drop-ins stay flat.
 
-`MCP_DROPIN_DIR` defaults to `/var/lib/mcp-connector/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `customer-mcps/`. Folders that *do* have a `server.ts` or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative (legacy escape hatch; new MCPs should use the drop-in shape).
+`MCP_DROPIN_DIR` defaults to `/var/lib/tool-proxy/customer-mcps/` in production. In development, `scripts/start-connector.sh` exports it pointing at `customer-mcps/`. Folders that *do* have a `server.ts` or *do* appear in `connector.yaml` are skipped — yaml entries and hand-written `server.ts` files stay authoritative (legacy escape hatch; new MCPs should use the drop-in shape).
 
 #### Refresh without a restart
 
@@ -258,7 +258,7 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 | `public/` | inspector UI assets (HTML/JS/CSS) |
 | `package.json` | metadata + the `bin` entry |
 | `node_modules/` (production only) | `npm prune --omit=dev` in the build stage; includes `tsx` (used by the spawner) |
-| `/var/lib/mcp-connector/customer-mcps/` | Type 1 source folders; the spawner runs `tsx /var/lib/mcp-connector/customer-mcps/<name>/server.ts` for entries with `dir:` set |
+| `/var/lib/tool-proxy/customer-mcps/` | Type 1 source folders; the spawner runs `tsx /var/lib/tool-proxy/customer-mcps/<name>/server.ts` for entries with `dir:` set |
 | `/app/bundled-mcps/` | Twilio-authored Type 1 drop-in folders, auto-discovered at boot |
 
 ## Run standalone
@@ -266,14 +266,14 @@ The compiled `dist/index.js` is the entrypoint, with a shebang. Subcommands:
 ```bash
 # Inside a container the entrypoint is `node dist/index.js`. Mount your config:
 docker run --rm \
-  -v "$PWD/connector.yaml:/etc/mcp-connector/config.yaml:ro" \
+  -v "$PWD/connector.yaml:/etc/tool-proxy/config.yaml:ro" \
   -e TUNNEL_AUTH_TOKEN=ts_... \
   -e CONNECTOR_NAME=my-customer \
   -e CONTROLLER_URL=https://controller.example.com \
   # CONNECTOR_NAME must match the MCP Tunnel row's Name on the controller (case-sensitive) — that's the connectors-table row this WS binds to, distinct from the Tunnel Security row that owns the bearer.
   # tunnel.name comes from connector.yaml; first boot mints a connectors row, restart reconnects via state file
   -p 9090:9090 \
-  mcp-connector:0.1.0 start
+  tool-proxy:0.1.0 start
 
 # Or directly:
 CONNECTOR_CONFIG=./connector.yaml \

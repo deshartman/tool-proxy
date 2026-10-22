@@ -88,7 +88,7 @@ async function bootFromDb(): Promise<void> {
   // ── Health endpoints (§5.7) ───────────────────────────────────────────
   // /readyz aggregates across workspaces. A workspace's TUNNEL does not gate
   // readiness — under D5 one tenant's controller outage must not take the
-  // shim out of rotation for the others — EXCEPT that zero workspaces stays
+  // proxy out of rotation for the others — EXCEPT that zero workspaces stays
   // `tunnel_not_open`, which keeps "a fresh deploy is deliberately not ready".
   const healthState = (): HealthState => workspacesHealth(true, [...workspaces.values()]);
   const healthServer = startHealthServer({

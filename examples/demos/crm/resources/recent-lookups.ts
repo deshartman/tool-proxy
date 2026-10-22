@@ -1,4 +1,4 @@
-import type { Resource } from "@mcp-shim/connector/sdk";
+import type { Resource } from "@gtmi/toolproxy-connector/sdk";
 
 // In-process tracker of recently-looked-up customer phones. `get_customer`
 // and `get_recent` push into this on every successful lookup; the resource

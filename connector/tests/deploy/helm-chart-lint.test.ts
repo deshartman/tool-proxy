@@ -23,7 +23,7 @@ import { parse as parseYaml } from "yaml";
 //     that catches the whole class.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CHART = join(__dirname, "../../../deploy/helm/mcp-connector");
+const CHART = join(__dirname, "../../../deploy/helm/tool-proxy");
 
 /** Go-template nesting depth at each line, counting if/range/with as open. */
 function depthAt(text: string, needle: string): number {

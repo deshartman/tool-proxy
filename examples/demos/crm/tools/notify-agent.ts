@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
-import { createLogger } from "@mcp-shim/connector/sdk";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import { createLogger } from "@gtmi/toolproxy-connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 
 // Internal-message dispatcher for notifying the assigned technician about a
 // reschedule. Pure mock — there is no real internal-comms backend. The tool

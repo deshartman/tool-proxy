@@ -32,8 +32,8 @@
 // failures. Raise the timeout (or narrow with identifier/channel) instead.
 
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
-import { callControllerApi } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
+import { callControllerApi } from "@gtmi/toolproxy-connector/sdk";
 
 const InputSchema = {
   identifier: z.string().optional().describe("Case-insensitive SUBSTRING on alias values — may match several identities"),

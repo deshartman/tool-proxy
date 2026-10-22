@@ -9,8 +9,8 @@
 // the flow — injection takes an opaque identityId, never an address.
 
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
-import { callControllerApi } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
+import { callControllerApi } from "@gtmi/toolproxy-connector/sdk";
 
 // Mirrors the controller's memory.inject_context params literally — keep in
 // step with docs/CONTROLLER-ACTIONS.md §memory.inject_context in the

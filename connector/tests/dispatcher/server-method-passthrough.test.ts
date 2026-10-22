@@ -1,3 +1,4 @@
+import { qualifiedNaming } from "@connector/tunnel/naming.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
@@ -9,6 +10,8 @@ import type { Tool, Prompt, Resource } from "@connector/sdk/index.js";
 import type { ConnectorConfig } from "@connector/config.js";
 import type { TunnelClient } from "@connector/tunnel/client.js";
 import type { TunnelFrame, ToolManifest } from "@connector/tunnel/frames.js";
+
+const PROXY = "cra85py8";
 
 // End-to-end Workstream A round-trip. Boot a real Type 1 SDK server with
 // tools + prompts + resources; connect a real SDK Client; wrap in
@@ -149,6 +152,7 @@ describe("dispatcher server-method passthrough", () => {
       servers,
       getManifest: () => manifest,
       tunnel: tunnel as unknown as TunnelClient,
+    naming: qualifiedNaming(PROXY),
     });
     dispatcher.attach();
   });
@@ -182,7 +186,7 @@ describe("dispatcher server-method passthrough", () => {
     const reply = tunnel.replyFor(1);
     expect(reply.error).toBeUndefined();
     const tools = (reply.result as { tools: Array<{ name: string }> }).tools;
-    expect(tools.map((t) => t.name)).toEqual(["demo.ping"]);
+    expect(tools.map((t) => t.name)).toEqual([`${PROXY}.demo.ping`]);
   });
 
   it("prompts/list aggregates and namespaces by server", async () => {
@@ -190,12 +194,12 @@ describe("dispatcher server-method passthrough", () => {
     const reply = await waitForReply(2);
     expect(reply.error).toBeUndefined();
     const prompts = (reply.result as { prompts: Array<{ name: string; description?: string }> }).prompts;
-    expect(prompts.map((p) => p.name)).toEqual(["demo.greeting"]);
+    expect(prompts.map((p) => p.name)).toEqual([`${PROXY}.demo.greeting`]);
     expect(prompts[0].description).toBe("Friendly greeting prompt");
   });
 
   it("prompts/get round-trips messages from the server", async () => {
-    send({ id: 3, method: "prompts/get", params: { name: "demo.greeting", arguments: { who: "Ada" } } });
+    send({ id: 3, method: "prompts/get", params: { name: `${PROXY}.demo.greeting`, arguments: { who: "Ada" } } });
     const reply = await waitForReply(3);
     expect(reply.error).toBeUndefined();
     const result = reply.result as { messages: Array<{ role: string; content: { type: string; text: string } }> };
@@ -204,7 +208,7 @@ describe("dispatcher server-method passthrough", () => {
   });
 
   it("prompts/get rejects unqualified names with -32602", () => {
-    send({ id: 4, method: "prompts/get", params: { name: "greeting" } });
+    send({ id: 4, method: "prompts/get", params: { name: `${PROXY}.greeting` } });
     const reply = tunnel.replyFor(4);
     expect(reply.error?.code).toBe(-32602);
   });
@@ -250,7 +254,7 @@ describe("dispatcher server-method passthrough", () => {
   });
 
   it("completion/complete requires params.serverName", () => {
-    send({ id: 10, method: "completion/complete", params: { ref: { type: "ref/prompt", name: "greeting" } } });
+    send({ id: 10, method: "completion/complete", params: { ref: { type: "ref/prompt", name: `${PROXY}.greeting` } } });
     const reply = tunnel.replyFor(10);
     expect(reply.error?.code).toBe(-32602);
     expect(reply.error?.message).toContain("serverName");

@@ -1,5 +1,5 @@
 # Fly deploy — connector config delivered into the Machine via [[files]] in
-# fly.toml (guest_path /etc/mcp-connector/config.yaml).
+# fly.toml (guest_path /etc/tool-proxy/config.yaml).
 #
 # The drop-in scanner auto-discovers every Twilio-authored MCP from
 # /app/bundled-mcps/ (agentic-memory plus the demo drop-ins the image ships),

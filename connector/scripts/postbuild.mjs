@@ -1,5 +1,5 @@
 // Prepend `#!/usr/bin/env node` + chmod +x on dist/index.js so it can run
-// directly as the `mcp-connector` bin. tsc strips/ignores shebangs in source,
+// directly as the `tool-proxy` bin. tsc strips/ignores shebangs in source,
 // so we patch the compiled output. This runs after `tsc -b`.
 //
 // The template-copy loop that used to live here (propagating .env.example +

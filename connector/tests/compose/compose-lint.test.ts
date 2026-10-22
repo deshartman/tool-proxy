@@ -85,7 +85,7 @@ describe("docker-compose.prod.yml", () => {
     const contents = readFileSync(COMPOSE_PATH, "utf8");
     // Encryption key must be RO — libsodium's crypto_secretbox reads it
     // once at boot, no legitimate reason to allow container writes.
-    expect(contents).toMatch(/connector\.key:\/etc\/mcp-connector\/connector\.key:ro/);
+    expect(contents).toMatch(/connector\.key:\/etc\/tool-proxy\/connector\.key:ro/);
   });
 
   it("persists the state volume that now holds the sealed identity", () => {
@@ -94,7 +94,7 @@ describe("docker-compose.prod.yml", () => {
     // the sealed bearer and the registration token. A tmpfs or a missing
     // mount would send the operator back through Configure Tunnel on every
     // restart, and collide on `name_taken` at the controller.
-    expect(contents).toMatch(/^\s*-\s*state:\/var\/lib\/mcp-connector\s*$/m);
+    expect(contents).toMatch(/^\s*-\s*state:\/var\/lib\/tool-proxy\s*$/m);
     expect(contents).toMatch(/^volumes:/m);
   });
 

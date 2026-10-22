@@ -18,7 +18,7 @@ Set these only when the default doesn't match your infrastructure.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CONNECTOR_CONFIG` | `/etc/mcp-connector/config.yaml` | Path to `connector.yaml` — legacy dev knob. Customers using the derived-image or volume-mount delivery paths don't author this file anymore; controller push + drop-in scanners cover every MCP entry. |
+| `CONNECTOR_CONFIG` | `/etc/tool-proxy/config.yaml` | Path to `connector.yaml` — legacy dev knob. Customers using the derived-image or volume-mount delivery paths don't author this file anymore; controller push + drop-in scanners cover every MCP entry. |
 | `INSPECTOR_PORT` | `9090` | The loopback-only inspector UI. Set `0` to disable entirely. **Never expose to a public LB** — the Webhooks panel surfaces bcrypt-protected URLs by design. |
 | `INSPECTOR_BIND_ADDR` | `127.0.0.1` | Where the inspector binds. Loopback set: `127.0.0.1` / `::1` / `localhost`. Any other value REQUIRES `INSPECTOR_ALLOW_NONLOOPBACK=1` also be set — the connector otherwise refuses to boot. Prevents a silent typo from exposing copy-able webhook URLs. |
 | `INSPECTOR_ALLOW_NONLOOPBACK` | (unset) | Explicit opt-in for non-loopback `INSPECTOR_BIND_ADDR`. Set to `1` for Fly.io deployments using `::` behind the WireGuard mesh (with `fly ips list` empty), where it makes the **machine API** (`/oauth/token`, `/v1/*`) reachable for the controller over `.internal` DNS. It does NOT make the operator dashboard reachable — that requires a loopback caller regardless of bind; see `scripts/fly-inspector.sh`. Do NOT set on any host with a public IP allocated. |
@@ -32,14 +32,14 @@ runtime, not env-var/restart-driven — a deliberate choice so onboarding
 never requires a redeploy. There is no admin login or session concept at
 all; the operator dashboard stays loopback-only unconditionally.
 | `MCP_BUNDLED_DIR` | `/app/bundled-mcps` | Where the connector's boot scanner discovers Twilio-shipped MCPs. Baked at image-build time; override only when extending the image via volume mount rather than derived-image `COPY`. |
-| `MCP_DROPIN_DIR` | `/var/lib/mcp-connector/customer-mcps` | Where the connector discovers customer-authored Type 1 drop-ins. The derived-image + volume-mount delivery paths both land content here. |
+| `MCP_DROPIN_DIR` | `/var/lib/tool-proxy/customer-mcps` | Where the connector discovers customer-authored Type 1 drop-ins. The derived-image + volume-mount delivery paths both land content here. |
 | `MCP_DROPIN_ALLOW_SYMLINK_ESCAPE` | unset (enforced) | **Dev only.** Set to `1` to let a drop-in folder resolve outside `MCP_DROPIN_DIR` via a symlink. Enforced by default so a symlink committed into a read-only production mount cannot point discovery at a writable path — the reviewed artifact would then run unreviewed code with no diff showing it. `scripts/start-connector.sh` sets it because the documented dev workflow symlinks `examples/demos/<name>` into `customer-mcps/<name>`. **Never set this in a deployed container.** |
 | `MCP_BASE_PORT` | `7100` | Starting port for the auto-assignment probe for Type 1 drop-in child processes. Bump to avoid collision with anything else in the container's network namespace. |
 | `MCP_READINESS_TIMEOUT_MS` | `15000` | How long the supervisor waits for a spawned MCP child's port to accept a connection before it gives up and marks the entry `permanently-failed`. Bump on slower hardware or when many drop-ins boot in sequence (tsx cold-starts compound per-child). Under db mode the failed entry surfaces in the inspector's MCP Status panel; siblings keep booting either way (supervisor's log-and-continue). |
 | `LOG_LEVEL` | `info` | Pino level. `debug` for verbose troubleshooting; `warn` in prod if you want quieter logs. |
 | `CONNECTOR_VERSION` | `dev` | Version string surfaced in the manifest and boot log. CI stamps this at build time. |
 | `HEALTH_PORT` | `9100` | Port for the orchestrator health endpoints, `/livez` and `/readyz`, on their own tiny server bound **`0.0.0.0`**. Set `0` to disable. **Not 9091**: `scripts/start-connector.sh <port>` uses that as a second *inspector* port for the multi-instance dev workflow, so a 9091 default would collide with the documented way of running two connectors. This is the one deliberately non-loopback listener in the connector — it serves exactly two GET routes that disclose a boolean and a reason string, and nothing else. `/livez` never consults the tunnel; `/readyz` does. |
-| `CONNECTOR_STATE_DIR` | `/var/lib/mcp-connector/state` | Directory holding `config.json`, the sealed config store. **Dev and tests only** — `scripts/start-connector.sh` gives each multi-instance port its own directory, the job `POSTGRES_SCHEMA` used to do. Operators never set it; the container default is correct, and it is a SUBDIRECTORY of the volume on purpose (`entrypoint.sh` chowns it to `mcp` while the volume root stays root-owned). |
+| `CONNECTOR_STATE_DIR` | `/var/lib/tool-proxy/state` | Directory holding `config.json`, the sealed config store. **Dev and tests only** — `scripts/start-connector.sh` gives each multi-instance port its own directory, the job `POSTGRES_SCHEMA` used to do. Operators never set it; the container default is correct, and it is a SUBDIRECTORY of the volume on purpose (`entrypoint.sh` chowns it to `mcp` while the volume root stays root-owned). |
 
 ### Multi-instance dev mode (`start-connector.sh <port>`)
 
@@ -49,7 +49,7 @@ When you pass a port arg to the dev launcher, five variables are auto-derived so
 |---|---|
 | `INSPECTOR_PORT` | `<port>` (CLI arg always wins over `.env`) |
 | `MCP_BASE_PORT` | `7100 + (<port> - 9090) × 100` (spacing avoids drop-in child port collisions across instances) |
-| `CONNECTOR_STATE_DIR` | `.local/state-<port>` under the repo root. Per-port so instances don't share a config store. The connector's own default is the production path `/var/lib/mcp-connector/state`, which an unprivileged dev user cannot create — which is why the script must set this. |
+| `CONNECTOR_STATE_DIR` | `.local/state-<port>` under the repo root. Per-port so instances don't share a config store. The connector's own default is the production path `/var/lib/tool-proxy/state`, which an unprivileged dev user cannot create — which is why the script must set this. |
 | `HEALTH_PORT` | `9100` for port `9090`; `9300 + (<port> - 9090)` otherwise. Kept out of the inspector range so a later instance's dashboard port can't land on an earlier one's health port. Without it every instance binds 9100 and a probe reads the first instance's readiness |
 | `AGENTIC_MEMORY_STATE_PATH` | `.local/agentic-memory-<port>/.state.json`, `.env`-overrideable. Superseded under the connector by `MCP_STATE_DIR` (which nests in `CONNECTOR_STATE_DIR`, already per-port); still exported for agentic-memory run on its own |
 

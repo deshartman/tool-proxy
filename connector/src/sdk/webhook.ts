@@ -6,7 +6,7 @@
 // endpoint on the controller side; you get a stable URL plus a stream of
 // events delivered locally via the inspector loopback.
 //
-//   import { createWebhookEndpoint } from "@mcp-shim/connector/sdk";
+//   import { createWebhookEndpoint } from "@gtmi/toolproxy-connector/sdk";
 //
 //   const cb = await createWebhookEndpoint({ mcp: "twilio" });
 //   cb.on("callback", ({ body, queryParameters, headers }) => {

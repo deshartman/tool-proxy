@@ -18,7 +18,7 @@
 // Timestamps are ISO strings on disk and Date objects in memory, because
 // that is what the pg driver handed callers and every caller expects it.
 
-import { isShimId, mintShimId } from "../identity/shim-id.js";
+import { isProxyId, mintProxyId } from "../identity/proxy-id.js";
 import {
   closeSync,
   existsSync,
@@ -55,7 +55,7 @@ export const CURRENT_VERSION = 1;
  * directory to that loop is the whole fix; do not "simplify" this back to the
  * volume root, and do not chown the root instead.
  */
-export const DEFAULT_STATE_DIR = "/var/lib/mcp-connector/state";
+export const DEFAULT_STATE_DIR = "/var/lib/tool-proxy/state";
 
 export const STATE_FILENAME = "config.json";
 
@@ -115,7 +115,7 @@ export interface StoreDoc {
   /** SHA-256 hex of the master key. Was the `encryption_meta` table. */
   keyFingerprint: string;
   /**
-   * This shim's own identity — see identity/shim-id.ts. Minted once by
+   * This proxy's own identity — see identity/proxy-id.ts. Minted once by
    * emptyDoc; a store written before the field existed is back-filled by
    * ConfigStore.open. Optional in the type only so migrate() can tell the two
    * apart: it is always present after open().
@@ -123,9 +123,14 @@ export interface StoreDoc {
    * Deliberately NOT a version bump: an older connector reading a store that
    * carries it ignores the field, so a rollback keeps working.
    */
+  proxyId?: string;
+  /**
+   * Legacy name of `proxyId`. Read once as a fallback so an existing store keeps
+   * its identity, then dropped on the next write; never written.
+   */
   shimId?: string;
   /**
-   * One entry per controller this shim dials; each is one TunnelWorkspace
+   * One entry per controller this proxy dials; each is one TunnelWorkspace
    * (MULTI-PLATFORM-MCP Phase 6), identified by its `id`. An array from day
    * one, so Phase 6 needed no reshape here.
    */
@@ -144,7 +149,7 @@ export function emptyDoc(keyFingerprint: string): StoreDoc {
   return {
     version: CURRENT_VERSION,
     keyFingerprint,
-    shimId: mintShimId(),
+    proxyId: mintProxyId(),
     controllers: [],
     networkAccess: { enabled: false },
     trustedIssuer: null,
@@ -215,7 +220,9 @@ export function migrate(parsed: unknown, path: string): StoreDoc {
     // A malformed id is dropped rather than trusted, so open() re-mints it.
     // That is a NEW identity — only reached by a hand-edited file, never by
     // anything the connector wrote.
-    ...(isShimId(doc.shimId) ? { shimId: doc.shimId } : {}),
+    // proxyId first, legacy shimId as the fallback; the value is carried
+    // verbatim and only proxyId is emitted.
+    ...(isProxyId(doc.proxyId) ? { proxyId: doc.proxyId } : isProxyId(doc.shimId) ? { proxyId: doc.shimId } : {}),
     controllers: Array.isArray(doc.controllers) ? doc.controllers : [],
     networkAccess: { enabled: doc.networkAccess?.enabled === true },
     trustedIssuer: doc.trustedIssuer ?? null,
@@ -263,7 +270,7 @@ export function writeDocAtomic(path: string, doc: StoreDoc): void {
  * volume, already chowned to `mcp` by entrypoint.sh before it drops privileges.
  *
  * The raw mkdir error is unhelpful outside a container: an unprivileged user
- * running the connector directly gets `EACCES ... mkdir /var/lib/mcp-connector`
+ * running the connector directly gets `EACCES ... mkdir /var/lib/tool-proxy`
  * with no hint that the location is configurable. Name the knob instead —
  * scripts/start-connector.sh sets it, so this fires for someone running
  * `node dist/index.js` by hand.

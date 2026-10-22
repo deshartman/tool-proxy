@@ -10,9 +10,9 @@ The Fly.io target has the tightest end-to-end story — two CLI commands
 create the app, mint the master key, provision state, and deploy:
 
 ```bash
-mcp-connector deploy init  --target fly \
+tool-proxy deploy init  --target fly \
   --name prod-us-east-1 --app-name my-connector --yes
-mcp-connector deploy apply --target fly
+tool-proxy deploy apply --target fly
 ```
 
 For docker-compose (single VM):
@@ -33,12 +33,12 @@ demo's mock-backend Postgres, unrelated to the connector) and **no**
 `docker-compose.yml`, so a bare `docker compose up -d` there fails with
 `no configuration file provided: not found`. Measured on a fresh clone.
 
-`mcp-connector deploy init --target compose --out <dir>` is the alternative: it
+`tool-proxy deploy init --target compose --out <dir>` is the alternative: it
 writes a `docker-compose.yml`, so bare `docker compose` commands work in **that**
 directory. Don't point it at `deploy/compose` — you would end up with two compose
 files whose differences are invisible at the command line.
 
-`node dist/index.js doctor`, **not** `mcp-connector doctor`: the image's
+`node dist/index.js doctor`, **not** `tool-proxy doctor`: the image's
 WORKDIR is `/app/connector` and the workspace bin link at
 `/app/node_modules/.bin` is not on `PATH`, so the bare name fails with
 `not found`.
@@ -64,7 +64,7 @@ carrying still sets any of them, it predates those changes.
 
 1. Build and push the OCI image:
    ```bash
-   IMAGE=your-registry/mcp-connector:0.1.0 PUSH=1 ./scripts/build-image.sh
+   IMAGE=your-registry/tool-proxy:0.1.0 PUSH=1 ./scripts/build-image.sh
    ```
    (Multi-arch: `linux/amd64,linux/arm64`.)
 2. Mint a 32-byte master key into your cloud's secret manager, as a file mount
@@ -122,7 +122,7 @@ inspector — for the manifest shapes themselves, prefer `deploy init`
 
 - [AWS Fargate](./terraform/README.md) — Terraform module reference at [`terraform/aws-fargate/`](./terraform/aws-fargate/README.md).
 - [Azure Container Apps](./aca/README.md)
-- [GCP GKE](./helm/README.md) — Helm chart reference at [`helm/mcp-connector/`](./helm/mcp-connector/README.md).
+- [GCP GKE](./helm/README.md) — Helm chart reference at [`helm/tool-proxy/`](./helm/tool-proxy/README.md).
 - [Fly.io](./fly/README.md) — operator runbook at [`fly/OPERATOR-RUNBOOK.md`](./fly/OPERATOR-RUNBOOK.md). Cheapest path for demos; ships private-mock deploy alongside the connector.
 
 ## Your cloud isn't listed?

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prompt } from "@mcp-shim/connector/sdk";
+import type { Prompt } from "@gtmi/toolproxy-connector/sdk";
 
 // Walks the caller-facing agent through the booking / reschedule flow.
 // check_availability accepts an omitted `start` (defaults to current UTC

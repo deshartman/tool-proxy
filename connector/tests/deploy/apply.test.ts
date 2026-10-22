@@ -12,7 +12,7 @@ import { applyFly, runDeployApply, type SpawnFn } from "../../src/deploy/apply.j
 // `spawn` parameter. Tests supply a scripted fake that returns different
 // canned responses per (command, args) pattern.
 
-const FLY_TOML_CONTENT = `app = "twilio-tool-sdk"
+const FLY_TOML_CONTENT = `app = "tool-proxy"
 primary_region = "iad"
 
 [build]
@@ -103,7 +103,7 @@ describe("applyFly — preflight", () => {
     const { spawn } = makeSpawn([
       { match: isFlyCmd("version"), response: { status: 0 } },
       // apps list — return with the app already existing so we skip creates
-      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"tool-proxy"},{"Name":"tool-proxy-db"}]` } },
       // secrets list — return with the key already set
       { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64      abc      2026-07-23\n" } },
       // volumes list — return with state volume already present
@@ -160,7 +160,7 @@ describe("applyFly — happy path", () => {
       c.args.includes("create") || c.args[1] === "set" || c.args[0] === "deploy"
     );
     expect(mutations).toHaveLength(4);
-    expect(mutations[0].args).toEqual(["apps", "create", "twilio-tool-sdk"]);
+    expect(mutations[0].args).toEqual(["apps", "create", "tool-proxy"]);
     expect(mutations[1].args[0]).toBe("secrets");
     expect(mutations[1].args[1]).toBe("set");
     expect(mutations[2].args.slice(0, 3)).toEqual(["volumes", "create", "state"]);
@@ -184,7 +184,7 @@ describe("applyFly — happy path", () => {
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const { spawn } = makeSpawn([
       { match: isFlyCmd("version"), response: { status: 0 } },
-      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"tool-proxy"},{"Name":"tool-proxy-db"}]` } },
       { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64  x\n" } },
       { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
     ]);
@@ -194,7 +194,7 @@ describe("applyFly — happy path", () => {
     const stdoutText = stdoutSpy.mock.calls.map((c) => c[0]).join("");
     // One command, with the app name substituted — the relay/proxy pair and
     // its teardown live in the script, not in this block.
-    expect(stdoutText).toContain("./scripts/fly-inspector.sh twilio-tool-sdk");
+    expect(stdoutText).toContain("./scripts/fly-inspector.sh tool-proxy");
     // The operator must be told why `fly proxy` alone fails, or the 403 reads
     // as a broken Inspector and they go looking in the wrong place.
     expect(stdoutText).toContain("forbidden: loopback only");
@@ -208,7 +208,7 @@ describe("applyFly — happy path", () => {
     // "Next steps" heading — makes the block scannable.
     expect(stdoutText).toContain("Next steps");
     // Post-deploy invariant check must be mentioned.
-    expect(stdoutText).toContain("fly ips list -a twilio-tool-sdk");
+    expect(stdoutText).toContain("fly ips list -a tool-proxy");
     // Port collisions are handled by the script (it probes both sides), so
     // this block no longer needs to teach a fallback command.
     vi.restoreAllMocks();
@@ -278,7 +278,7 @@ describe("applyFly — idempotency", () => {
     const { spawn, calls } = makeSpawn([
       { match: isFlyCmd("version"), response: { status: 0 } },
       // App already exists in the list
-      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"tool-proxy"},{"Name":"tool-proxy-db"}]` } },
       { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64  x\n" } },
       { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
     ]);
@@ -317,7 +317,7 @@ describe("applyFly — deploy failure propagation", () => {
     // of the actual deploy outcome, failed deploys would look green.
     const { spawn } = makeSpawn([
       { match: isFlyCmd("version"), response: { status: 0 } },
-      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"twilio-tool-sdk"},{"Name":"twilio-tool-sdk-db"}]` } },
+      { match: isFlyCmd("apps"), response: { stdout: `[{"Name":"tool-proxy"},{"Name":"tool-proxy-db"}]` } },
       { match: isFlyCmd("secrets"), response: { stdout: "CONNECTOR_KEY_B64  x\n" } },
       { match: isFlyCmd("volumes"), response: { stdout: `[{"Name":"state"}]` } },
       { match: (c) => c.args[0] === "deploy", response: { status: 42 } },
@@ -364,7 +364,7 @@ describe("runDeployApply (CLI parsing)", () => {
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const code = await runDeployApply(["--help"]);
     expect(code).toBe(0);
-    expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining("mcp-connector deploy apply"));
+    expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining("tool-proxy deploy apply"));
     vi.restoreAllMocks();
   });
 });

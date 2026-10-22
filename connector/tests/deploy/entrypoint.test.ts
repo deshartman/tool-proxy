@@ -119,7 +119,7 @@ describe("entrypoint.sh", () => {
   });
 });
 
-// The state volume is mounted OVER /var/lib/mcp-connector at runtime, which
+// The state volume is mounted OVER /var/lib/tool-proxy at runtime, which
 // discards the Dockerfile's `mkdir -p customer-mcps` + `chown -R mcp:mcp` on
 // that path. Fly mounts it root:root 0755; a K8s PVC and a raw EFS mount do
 // the same. The connector then runs as mcp against a root-owned directory and
@@ -204,7 +204,7 @@ describe("entrypoint.sh — state volume provisioning", () => {
   it("runs the provisioning BEFORE dropping privileges", () => {
     // chown needs root. After the su-exec line this would be dead code that
     // still looks correct in review.
-    const provision = script.indexOf('state_dir="/var/lib/mcp-connector"');
+    const provision = script.indexOf('state_dir="/var/lib/tool-proxy"');
     const drop = script.indexOf("exec su-exec");
     expect(provision).toBeGreaterThan(-1);
     expect(drop).toBeGreaterThan(-1);
@@ -217,7 +217,7 @@ describe("entrypoint.sh — state volume provisioning", () => {
     // volume or plant a drop-in for the next boot. A `chown -R` on the root
     // would also rewrite a customer's read-only customer-mcps bind mount.
     // Comment lines are excluded: the block's own comment QUOTES the
-    // Dockerfile's `chown -R mcp:mcp /var/lib/mcp-connector` to explain why
+    // Dockerfile's `chown -R mcp:mcp /var/lib/tool-proxy` to explain why
     // re-provisioning is needed, and matching that would fail spuriously.
     const code = script
       .split("\n")
@@ -230,7 +230,7 @@ describe("entrypoint.sh — state volume provisioning", () => {
     // A pre-provisioned or read-only mount is a valid setup, so both commands
     // must have a fallback rather than inheriting `set -e`.
     const block = script.slice(
-      script.indexOf('state_dir="/var/lib/mcp-connector"'),
+      script.indexOf('state_dir="/var/lib/tool-proxy"'),
       script.indexOf("exec su-exec"),
     );
     const guarded = block.split("\n").filter((l) => /mkdir -p|chown mcp:mcp/.test(l));
@@ -240,5 +240,70 @@ describe("entrypoint.sh — state volume provisioning", () => {
       expect(block).toContain("|| echo");
     }
     expect(block).toMatch(/2>\/dev\/null/);
+  });
+});
+
+// RENAME-TOOL-PROXY 4.3: the one intentional residue of the old name. A volume
+// still mounted at /var/lib/mcp-connector must not be orphaned by the upgrade.
+// The script hardcodes both paths, so the test runs a copy rewritten to a temp
+// root.
+describe("entrypoint.sh — legacy state path bridge", () => {
+  const run = (setup: (root: string) => void) => {
+    const dir = mkdtempSync(join(tmpdir(), "entrypoint-legacy-"));
+    const root = join(dir, "root");
+    mkdirSync(root);
+    scaffoldStubExec(dir);
+    setup(root);
+    const rewritten = readFileSync(SCRIPT, "utf8")
+      .replaceAll("/var/lib/mcp-connector", `${root}/old`)
+      .replaceAll("/var/lib/tool-proxy", `${root}/new`);
+    const script = join(dir, "entrypoint.sh");
+    writeFileSync(script, rewritten, { mode: 0o755 });
+    const res = spawnSync("sh", [script, "start"], {
+      cwd: dir,
+      env: { PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}` },
+      encoding: "utf8",
+    });
+    return { dir, root, res };
+  };
+
+  it("links the new path to a populated legacy path and warns loudly", () => {
+    const { dir, root, res } = run((r) => {
+      mkdirSync(join(r, "old/state"), { recursive: true });
+      writeFileSync(join(r, "old/state/config.json"), "{}");
+    });
+    try {
+      expect(res.status, res.stderr).toBe(0);
+      expect(res.stderr).toMatch(/WARNING.*legacy path.*Remount/);
+      expect(existsSync(join(root, "new/state/config.json"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does nothing when the new path already holds data", () => {
+    const { dir, root, res } = run((r) => {
+      mkdirSync(join(r, "old"), { recursive: true });
+      writeFileSync(join(r, "old/config.json"), "old");
+      mkdirSync(join(r, "new/state"), { recursive: true });
+      writeFileSync(join(r, "new/state/config.json"), "new");
+    });
+    try {
+      expect(res.status, res.stderr).toBe(0);
+      expect(res.stderr).not.toMatch(/legacy path/);
+      expect(readFileSync(join(root, "new/state/config.json"), "utf8")).toBe("new");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is silent when there is no legacy path", () => {
+    const { dir, res } = run(() => {});
+    try {
+      expect(res.status, res.stderr).toBe(0);
+      expect(res.stderr).not.toMatch(/legacy path/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -42,7 +42,7 @@ if (result.ok) {
 the paths of the offending fields, never field values. Frames carry credentials
 and tool arguments, so values must not end up in logs.
 
-## Tool names (protocol 2.x)
+## Tool names (protocol 2.x, frozen)
 
 In 2.x every tool is named `<shimId>.<server>.<tool>`. Server and tool names
 travel **bare** inside descriptors; both sides compose and parse the qualified
@@ -62,6 +62,30 @@ server, and the tool keeps any further dots. That is unambiguous only because
 shimIds and server names never contain a dot, and the 2.x schemas enforce that
 wherever a server name appears.
 
+## Tool names (protocol 3.x)
+
+3.x renames the identity `shimId` to `proxyId` (the product is now Tool Proxy).
+The id rule is unchanged: 8 lowercase Crockford base32 characters. Every tool is
+named `<proxyId>.<server>.<tool>`, with the same two-step parse:
+
+```ts
+import { qualifyProxyToolName, parseQualifiedProxyToolName } from "@gtmi/toolproxy-protocol";
+
+qualifyProxyToolName("k3f9x2qa", "crm", "get_customer"); // "k3f9x2qa.crm.get_customer"
+parseQualifiedProxyToolName("k3f9x2qa.crm.get.customer");
+// → { proxyId: "k3f9x2qa", server: "crm", tool: "get.customer" }
+```
+
+The 3.x `register` frame carries `proxyId` and `tunnelProtocol: "3.0"`; it is the
+only schema that differs from 2.x (`v3` re-exports the rest unchanged). The 1.x
+and 2.x schemas, including `shimId`, `SHIM_ID_RE`, `isShimId`, `shimIdSchema`,
+`qualifyToolName` and `parseQualifiedToolName`, are frozen and still exported:
+they exist so a controller can still parse an older proxy's frames. The Tool
+Proxy itself speaks 3.x only and does not negotiate down; a controller that
+wants to refuse older proxies answers their `register` with
+`unsupported_tunnel_protocol`. A qualified name looks the same in 2.x and 3.x;
+the register's `tunnelProtocol`, not the string, says which id field it uses.
+
 ## Versioning
 
 The tunnel protocol is versioned `<major>.<minor>`, exported as
@@ -78,10 +102,10 @@ controller echoes its supported range as
 This keeps additive changes deployable without upgrading both sides at once,
 while still catching drift between peers that claim the same version.
 
-**Majors are negotiated, not hard-cut.** This package carries the schemas for
-majors 1 and 2, and `parseFrame` uses the peer's major (from
+**Majors are chosen by the peer.** This package carries the schemas for
+majors 1, 2 and 3, and `parseFrame` uses the peer's major (from
 `register.tunnelProtocol`; absent means 1.0). A controller on this package can
-therefore serve 1.x and 2.x connectors at once. `isSupportedPeer(peer)` says
+therefore serve several majors at once, or refuse the ones it does not want. `isSupportedPeer(peer)` says
 whether a peer's major is one the package can parse.
 
 `PROTOCOL_VERSION` is what a connector built on this package speaks by default,

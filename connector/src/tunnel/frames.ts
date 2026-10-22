@@ -138,6 +138,8 @@ export interface RegisterFrame {
   // "<major>.<minor>" — @gtmi/toolproxy-protocol's PROTOCOL_VERSION. Absent
   // from connectors that predate it; a controller reads that as 1.x.
   tunnelProtocol?: string;
+  // This proxy's identity (3.x).
+  proxyId?: string;
 }
 
 // Some controllers send register-ack back on the first register frame. This
@@ -417,7 +419,7 @@ export interface McpDiscoveredFrame {
   author: string;
   // How it got here. "bundled" = shipped in the image; "dropin" = a customer
   // folder under MCP_DROPIN_DIR; "yaml" = a connector.yaml entry. Type 2
-  // (controller-pushed) MCPs are never gated, so never appear. Pre-2c shims
+  // (controller-pushed) MCPs are never gated, so never appear. Pre-2c connectors
   // sent the literal "local" for drop-ins; controllers accept it as "dropin".
   source: "bundled" | "dropin" | "yaml";
   // Set only for demos (an `.example` marker in the MCP's folder), so the

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { EpisodeSchema, ExternalIdSchema } from "../schemas.js";
 import { store } from "../state.js";
 import type { Episode } from "../state.js";

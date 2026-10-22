@@ -3,7 +3,7 @@
 //
 // Server names are a routing key on the wire: an inbound name is split on its
 // FIRST dot (dispatcher.ts), and under tunnel protocol 2.0 tool names become
-// `<shimId>.<server>.<tool>`, parsed id → server → tool. A dot inside a server
+// `<proxyId>.<server>.<tool>`, parsed id → server → tool. A dot inside a server
 // name makes that parse ambiguous, so no source may produce one. Tool names
 // may still contain dots: the tool is whatever remains after the server.
 //

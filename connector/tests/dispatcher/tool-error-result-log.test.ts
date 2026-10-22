@@ -1,3 +1,4 @@
+import { qualifiedNaming } from "@connector/tunnel/naming.js";
 import { describe, it, expect } from "vitest";
 
 import { Dispatcher } from "@connector/dispatcher.js";
@@ -5,6 +6,8 @@ import type { McpServerConnection } from "@connector/servers/index.js";
 import type { ConnectorConfig } from "@connector/config.js";
 import type { TunnelClient } from "@connector/tunnel/client.js";
 import type { TunnelFrame } from "@connector/tunnel/frames.js";
+
+const PROXY = "cra85py8";
 
 // Surfaced 2026-08-14 while answering a controller-side session about a voice
 // procedure. A child MCP that rejects its arguments does NOT throw: the MCP SDK
@@ -77,6 +80,7 @@ async function dispatch(result: unknown): Promise<{ logLines: string[]; sent: Tu
     getManifest: () => ({ connectorId: "", environment: "test", version: "test", servers: [] }),
     tunnel: tunnel as unknown as TunnelClient,
     log: (line) => logLines.push(line),
+    naming: qualifiedNaming(PROXY),
   }).attach();
 
   tunnel.onframe?.({
@@ -85,7 +89,7 @@ async function dispatch(result: unknown): Promise<{ logLines: string[]; sent: Tu
       jsonrpc: "2.0",
       id: "req1",
       method: "tools/call",
-      params: { name: "flaky.echo", arguments: {} },
+      params: { name: `${PROXY}.flaky.echo`, arguments: {} },
     },
   } as TunnelFrame);
   // Yield until the dispatcher's async path has run.

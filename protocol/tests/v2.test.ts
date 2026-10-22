@@ -135,9 +135,9 @@ describe("negotiated majors", () => {
   });
 
   it("refuses a major the package carries no schemas for", () => {
-    const r = parseFrame("connector-to-controller", JSON.stringify({ type: "heartbeat", ts: 1 }), { peer: { major: 3, minor: 0 } });
+    const r = parseFrame("connector-to-controller", JSON.stringify({ type: "heartbeat", ts: 1 }), { peer: { major: 4, minor: 0 } });
     expect(r).toMatchObject({ ok: false });
-    if (!r.ok && !r.ignored) expect(r.error).toMatch(/major 3/);
+    if (!r.ok && !r.ignored) expect(r.error).toMatch(/major 4/);
   });
 
   it("tolerates a newer 2.x minor, and a newer 1.x minor, independently", () => {

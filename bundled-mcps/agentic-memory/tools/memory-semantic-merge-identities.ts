@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { ExternalIdSchema, ISO_DATETIME } from "../schemas.js";
 import type { HydrationReference } from "../state.js";
 import { commitOrError, store } from "../state.js";

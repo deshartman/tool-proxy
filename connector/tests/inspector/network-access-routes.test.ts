@@ -203,7 +203,7 @@ describe("POST /internal/network-access/clients — auto-enable on first add", (
   // time (when no API client ever flipped network_access.enabled) also
   // enables non-loopback + rebinds, mirroring handleAddClient.
   describe("Federated trusted-issuer config", () => {
-    const sample = { issuer: "https://idp.example.com", jwksUrl: "https://idp.example.com/jwks", audience: "mcp-connector" };
+    const sample = { issuer: "https://idp.example.com", jwksUrl: "https://idp.example.com/jwks", audience: "tool-proxy" };
 
     it("GET with no config set → { ok:true, config:null }", async () => {
       const res = await getTrustedIssuer();

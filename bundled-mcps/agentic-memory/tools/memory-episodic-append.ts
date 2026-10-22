@@ -1,7 +1,7 @@
 import { z } from "zod";
-import type { Tool } from "@mcp-shim/connector/sdk";
+import type { Tool } from "@gtmi/toolproxy-connector/sdk";
 import { ChannelSchema, ExternalIdSchema, ISO_DATETIME, MAX_EPISODES_PER_IDENTITY, SummarySchema } from "../schemas.js";
-import { createLogger } from "@mcp-shim/connector/sdk";
+import { createLogger } from "@gtmi/toolproxy-connector/sdk";
 import { episodeId } from "../id.js";
 import { commitOrError, store } from "../state.js";
 import { toolError } from "../errors.js";

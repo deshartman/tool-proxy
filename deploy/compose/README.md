@@ -17,7 +17,7 @@ Two compose files ship here, and they are unrelated:
 
 Copy `.env.example` → `.env` — the only thing in it is the image tag. The
 connector needs exactly one secret, the master key, mounted as a file at
-`/etc/mcp-connector/connector.key`:
+`/etc/tool-proxy/connector.key`:
 
 ```bash
 mkdir -p secrets

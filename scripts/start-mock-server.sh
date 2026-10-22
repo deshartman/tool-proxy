@@ -20,7 +20,7 @@ trap cleanup EXIT INT TERM
 MOCK_DIR="$ROOT/examples/mock-backend"
 ENV_FILE="$MOCK_DIR/.env"
 COMPOSE_FILE="$ROOT/deploy/compose/docker-compose.dev.yml"
-DEV_PG_CONTAINER="mcp-shim-postgres"
+DEV_PG_CONTAINER="tool-proxy-postgres"
 DEV_MOCK_PG_URL="postgres://mcp:mcp-dev-password@localhost:5433/crm"
 
 if [ -f "$ENV_FILE" ]; then

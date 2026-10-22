@@ -9,7 +9,7 @@
 // §"v1.4 — Controller API calls (Twilio-bundled only)" for the wire
 // contract.
 //
-//   import { callControllerApi } from "@mcp-shim/connector/sdk";
+//   import { callControllerApi } from "@gtmi/toolproxy-connector/sdk";
 //
 //   const result = await callControllerApi("memory.inject_context", { agentId, identityId, event });
 //

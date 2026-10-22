@@ -114,7 +114,7 @@ beforeAll(async () => {
   // proves envKeys travel through the discovery cache too.
   mkdirSync(join(dropinRoot, "keyed", "tools"), { recursive: true });
   writeFileSync(join(dropinRoot, "keyed", "tools", "ping.ts"), [
-    'import type { Tool } from "@mcp-shim/connector/sdk";',
+    'import type { Tool } from "@gtmi/toolproxy-connector/sdk";',
     'export const ping: Tool = {',
     '  name: "ping",',
     '  envKeys: ["KEYED_API_TOKEN"],',
@@ -217,7 +217,7 @@ describe("lazy spawn (§5.3)", () => {
     expect(running(wsA)).toBe("running");
     expect(running(wsB)).toBe("stopped");
 
-    const reply = await rpc(ctlA, "tools/call", { name: `${fixture.store.getShimId()}.sample.uuid`, arguments: {} });
+    const reply = await rpc(ctlA, "tools/call", { name: `${fixture.store.getProxyId()}.sample.uuid`, arguments: {} });
     expect(reply.error).toBeUndefined();
     // The freshly started child gets its creds-request, as a boot-time child would.
     expect(ctlA.frames.filter((f) => f.type === "creds-request" && f.mcp === "sample").length).toBeGreaterThan(0);
@@ -247,7 +247,7 @@ describe("lazy spawn (§5.3)", () => {
 // controller's Refresh describes NEW folders without starting them and
 // re-describes folders whose code CHANGED.
 const pingTool = (name: string, envKey: string) => [
-  'import type { Tool } from "@mcp-shim/connector/sdk";',
+  'import type { Tool } from "@gtmi/toolproxy-connector/sdk";',
   `export const t: Tool = {`,
   `  name: "${name}",`,
   `  envKeys: ["${envKey}"],`,

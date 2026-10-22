@@ -111,7 +111,7 @@ the **Federated JWT** sub-section: fill in three fields —
   e.g. `https://idp.example.com/.well-known/jwks.json`. Keys are cached for
   5 minutes, so a rotation at your IdP is picked up automatically.
 - **Audience (`aud`)** — the `aud` claim the connector requires, e.g.
-  `mcp-connector`.
+  `tool-proxy`.
 
 None of the three are secret (they're public IdP metadata), so they're shown
 verbatim, not redacted. Click **Save**. Just like adding your first API

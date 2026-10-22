@@ -1,5 +1,5 @@
 #!/bin/sh
-# mcp-connector runtime entrypoint.
+# tool-proxy runtime entrypoint.
 #
 # On platforms whose secret store is env-only (Fly.io, Azure Container Apps,
 # any KMS-as-env shape), the 32-byte master key arrives as $CONNECTOR_KEY_B64.
@@ -14,7 +14,7 @@
 
 set -eu
 
-key_file="${CONNECTOR_KEY_FILE:-/etc/mcp-connector/connector.key}"
+key_file="${CONNECTOR_KEY_FILE:-/etc/tool-proxy/connector.key}"
 
 if [ -n "${CONNECTOR_KEY_B64:-}" ]; then
   mkdir -p "$(dirname "$key_file")"
@@ -27,8 +27,8 @@ fi
 # Re-establish what the connector needs ON the state volume, while we are
 # still root and before the su-exec below drops to mcp.
 #
-# The Dockerfile already does `mkdir -p /var/lib/mcp-connector/customer-mcps`
-# and `chown -R mcp:mcp /var/lib/mcp-connector` — but a volume mounted AT that
+# The Dockerfile already does `mkdir -p /var/lib/tool-proxy/customer-mcps`
+# and `chown -R mcp:mcp /var/lib/tool-proxy` — but a volume mounted AT that
 # path SHADOWS the image directory, so none of it survives. Fly mounts the
 # volume `uid: 0, gid: 0, chmod 0755`; a K8s PVC and a raw EFS mount behave the
 # same way. (A docker-compose *named* volume is the exception — Docker seeds it
@@ -58,7 +58,31 @@ fi
 # boot, and a customer's read-only bind-mount of customer-mcps/ must not be
 # rewritten. Both commands are therefore tolerant: on a read-only mount they
 # warn and boot continues, because a pre-provisioned mount is a valid setup.
-state_dir="/var/lib/mcp-connector"
+state_dir="/var/lib/tool-proxy"
+
+# LEGACY BRIDGE (RENAME-TOOL-PROXY 4.3) -- the one intentional residue of the
+# old name. Before the rename the volume was mounted at /var/lib/mcp-connector.
+# An operator who upgrades the image without moving the mount would otherwise
+# boot onto an empty state dir and lose config.json (and with it the proxyId and
+# registration token). If the legacy path holds data and the new one holds
+# nothing but empty directories, point the new path at the old one and say so
+# loudly. Every step tolerates failure (set -eu must not kill boot).
+legacy_dir="/var/lib/mcp-connector"
+if [ -d "$legacy_dir" ] && [ -n "$(ls -A "$legacy_dir" 2>/dev/null)" ] \
+   && [ ! -L "$state_dir" ] \
+   && { [ ! -e "$state_dir" ] || [ -z "$(find "$state_dir" -mindepth 1 ! -type d 2>/dev/null | head -n 1)" ]; }; then
+  echo "[entrypoint] WARNING: state found at legacy path $legacy_dir. Remount your volume at $state_dir -- the old path is deprecated and will stop being bridged." >&2
+  if [ -e "$state_dir" ]; then
+    find "$state_dir" -depth -mindepth 1 -type d -empty -delete 2>/dev/null || true
+    rmdir "$state_dir" 2>/dev/null || true
+  fi
+  if [ ! -e "$state_dir" ]; then
+    ln -s "$legacy_dir" "$state_dir" 2>/dev/null \
+      || echo "[entrypoint] warn: cannot link $state_dir -> $legacy_dir; state at the legacy path will NOT be used" >&2
+  else
+    echo "[entrypoint] warn: $state_dir is a mount point or not empty; cannot bridge from $legacy_dir" >&2
+  fi
+fi
 if [ -d "$state_dir" ]; then
   for d in agentic-memory customer-mcps state; do
     if [ ! -d "$state_dir/$d" ]; then

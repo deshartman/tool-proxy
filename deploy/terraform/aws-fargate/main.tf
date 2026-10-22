@@ -1,4 +1,4 @@
-# AWS Fargate deployment for the mcp-connector.
+# AWS Fargate deployment for the tool-proxy.
 #
 # What this module owns:
 #   - CloudWatch log group for the task's stdout.
@@ -21,7 +21,7 @@
 # count/for_each on networking is where Terraform modules rot.
 
 resource "aws_cloudwatch_log_group" "connector" {
-  name              = "/ecs/mcp-connector-${var.connector_name}"
+  name              = "/ecs/tool-proxy-${var.connector_name}"
   retention_in_days = var.log_retention_days
 }
 
@@ -34,7 +34,7 @@ resource "aws_cloudwatch_log_group" "connector" {
 # Tunnel modal and sealed into the state volume under this key. There is no
 # env-var form of tunnel identity, so this module needs no posture input.
 resource "aws_secretsmanager_secret" "connector_key" {
-  name        = "mcp-connector/${var.connector_name}/connector-key-b64"
+  name        = "tool-proxy/${var.connector_name}/connector-key-b64"
   description = "Base64 32-byte libsodium master key sealing the connector's config store (${var.connector_name})."
 }
 
@@ -53,11 +53,11 @@ resource "aws_secretsmanager_secret" "connector_key" {
 # upgrade.
 
 resource "aws_efs_file_system" "state" {
-  creation_token = "mcp-connector-${var.connector_name}-state"
+  creation_token = "tool-proxy-${var.connector_name}-state"
   encrypted      = true
 
   tags = {
-    Name = "mcp-connector-${var.connector_name}-state"
+    Name = "tool-proxy-${var.connector_name}-state"
   }
 }
 
@@ -75,7 +75,7 @@ resource "aws_efs_access_point" "state" {
   }
 
   root_directory {
-    path = "/mcp-connector-${var.connector_name}"
+    path = "/tool-proxy-${var.connector_name}"
 
     creation_info {
       owner_uid   = 1000
@@ -88,8 +88,8 @@ resource "aws_efs_access_point" "state" {
 # NFS from the task's security group only. EFS is reachable on 2049 from
 # anything that can route to the mount target, so this is the boundary.
 resource "aws_security_group" "efs" {
-  name        = "mcp-connector-${var.connector_name}-efs"
-  description = "NFS from the mcp-connector task to its state filesystem"
+  name        = "tool-proxy-${var.connector_name}-efs"
+  description = "NFS from the tool-proxy task to its state filesystem"
   vpc_id      = var.vpc_id
 
   ingress {
@@ -112,7 +112,7 @@ resource "aws_efs_mount_target" "state" {
 }
 
 resource "aws_ecs_task_definition" "connector" {
-  family                   = "mcp-connector-${var.connector_name}"
+  family                   = "tool-proxy-${var.connector_name}"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   # Measured floor is 493 MB: the connector plus the four bundled MCPs, where
@@ -136,8 +136,8 @@ resource "aws_ecs_task_definition" "connector" {
       # internally: the entrypoint does not EXPORT its default, so leaving this
       # unset writes the key and then fails the preflight.
       environment = [
-        { name = "CONNECTOR_CONFIG", value = "/etc/mcp-connector/config.yaml" },
-        { name = "CONNECTOR_KEY_FILE", value = "/etc/mcp-connector/connector.key" },
+        { name = "CONNECTOR_CONFIG", value = "/etc/tool-proxy/config.yaml" },
+        { name = "CONNECTOR_KEY_FILE", value = "/etc/tool-proxy/connector.key" },
         { name = "INSPECTOR_PORT", value = "9090" },
         # Orchestrator probes, bound 0.0.0.0 with two GET-only routes. 9100
         # avoids 9091, which the multi-instance dev script uses as a second
@@ -152,12 +152,12 @@ resource "aws_ecs_task_definition" "connector" {
           valueFrom = aws_secretsmanager_secret.connector_key.arn
         }
       ]
-      # One mount. There is deliberately NO mount at /etc/mcp-connector: the
+      # One mount. There is deliberately NO mount at /etc/tool-proxy: the
       # entrypoint writes the decoded key there, so a read-only or shadowing
       # mount breaks boot. This module used to mount an ephemeral `config`
       # volume over exactly that path.
       mountPoints = [
-        { containerPath = "/var/lib/mcp-connector", sourceVolume = "state" }
+        { containerPath = "/var/lib/tool-proxy", sourceVolume = "state" }
       ]
       # Probes /readyz on HEALTH_PORT, which returns 503 until the tunnel is
       # open — so ECS stops counting a connector healthy when it has no
@@ -209,7 +209,7 @@ resource "aws_ecs_task_definition" "connector" {
 }
 
 resource "aws_ecs_service" "connector" {
-  name            = "mcp-connector-${var.connector_name}"
+  name            = "tool-proxy-${var.connector_name}"
   cluster         = var.cluster_arn
   task_definition = aws_ecs_task_definition.connector.arn
   # Single replica by design — the connector is stateful (its sealed identity

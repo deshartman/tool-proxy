@@ -67,7 +67,7 @@ broken connector rather than a broken deployment:
    Tunnel after every restart, and the re-register collides on `name_taken` — which is sticky, so
    auto-reconnect is suppressed and a human must click Reconnect. Unattended recovery is impossible.
    This is why `fargate` uses EFS, `aca` needs Azure Files, and Helm needs a PVC.
-2. **Nothing may mount over `/etc/mcp-connector`.** The entrypoint decodes `CONNECTOR_KEY_B64` and
+2. **Nothing may mount over `/etc/tool-proxy`.** The entrypoint decodes `CONNECTOR_KEY_B64` and
    *writes* the key file there. A read-only ConfigMap or an ephemeral volume at that path breaks boot
    — it is what killed the old `gke` manifests.
 
@@ -84,7 +84,7 @@ Run these before asking the operator anything, so the questions you ask are the 
 actually still open:
 
 ```bash
-git rev-parse --show-toplevel          # must be the mcp-shim repo root; every path below is relative to it
+git rev-parse --show-toplevel          # must be the tool-proxy repo root; every path below is relative to it
 node connector/dist/index.js version   # if this fails, run: npm install && npm run build
 ```
 
@@ -101,7 +101,7 @@ and let the operator accept it.
 | 1 | **Platform?** | `fly` for a demo or the fastest path; `compose` for a single VM they already own; Helm for Kubernetes; Terraform `aws-fargate` for a from-zero AWS deploy; `fargate` (`deploy init`) only if they already have VPC + cluster + roles; `aca` for Azure. Say which ones are unverified |
 | 2 | **Connector name?** | No default. Must match the controller's Tunnel Security row **Name**, case-sensitive. A mismatch surfaces only as HTTP 401 at the WS upgrade — the worst failure shape available, so confirm the spelling explicitly |
 | 3 | **Controller URL?** | No default. **HTTPS root only.** Ask it, but do NOT pass it to `deploy init` — that flag is ignored now and warns. The URL is typed into the Configure Tunnel modal in Step 4, which strips a trailing `/mcp-tunnel` itself |
-| 4 | **Fly app name?** (`fly` only) | Defaults to `mcp-connector-<name>`. Ask only if they want a custom one |
+| 4 | **Fly app name?** (`fly` only) | Defaults to `tool-proxy-<name>`. Ask only if they want a custom one |
 | 5 | **Region?** (`fly` only) | Comes from `fly.toml`'s `primary_region`; ask if generating fresh |
 
 Do **not** ask about: auth posture, bearer tokens, OAuth client IDs, a database, or the image tag.
@@ -198,9 +198,9 @@ fly ssh console -a <app> -C "node /app/connector/dist/index.js doctor --json"
 docker compose exec connector node dist/index.js doctor --json
 ```
 
-**Invoke it as `node dist/index.js`, not `mcp-connector`.** The image sets `WORKDIR /app/connector`
-and the entrypoint execs `node dist/index.js "$@"`; there is no `mcp-connector` on `PATH`. The npm
-workspace bin link does exist at `/app/node_modules/.bin/mcp-connector`, but that directory isn't on
+**Invoke it as `node dist/index.js`, not `tool-proxy`.** The image sets `WORKDIR /app/connector`
+and the entrypoint execs `node dist/index.js "$@"`; there is no `tool-proxy` on `PATH`. The npm
+workspace bin link does exist at `/app/node_modules/.bin/tool-proxy`, but that directory isn't on
 `PATH`, so the bare name fails with `not found`. (`deploy/README.md` and the compose target's
 generated appendix both used to print the bare-name form; both are fixed as of DB-TO-FILE.)
 
@@ -238,7 +238,7 @@ differently:
 |---|---|
 | `fly` | `./scripts/fly-inspector.sh <app>` |
 | `compose` | **NOT `localhost:9090`** — the connector binds loopback inside the container, so the host cannot reach it and no port mapping helps (measured: a published port is refused; a wide bind answers 403). Use `ssh -L 9090:127.0.0.1:9090 <vm-host>` for a VM, or run the connector directly rather than containerised when you need a browser locally |
-| K8s | `kubectl port-forward deploy/mcp-connector 9090:9090` |
+| K8s | `kubectl port-forward deploy/tool-proxy 9090:9090` |
 | Fargate | ECS Exec + SSM port forwarding |
 | ACA | `az containerapp exec` |
 

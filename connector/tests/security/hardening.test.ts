@@ -24,8 +24,8 @@ const DOCKERFILE     = readFileSync(join(ROOT, "connector/Dockerfile"), "utf8");
 const ENTRYPOINT     = readFileSync(join(ROOT, "connector/entrypoint.sh"), "utf8");
 const DOCKERIGNORE   = readFileSync(join(ROOT, ".dockerignore"), "utf8");
 const COMPOSE_PROD   = readFileSync(join(ROOT, "deploy/compose/docker-compose.prod.yml"), "utf8");
-const HELM_VALUES    = readFileSync(join(ROOT, "deploy/helm/mcp-connector/values.yaml"), "utf8");
-const HELM_DEPLOY    = readFileSync(join(ROOT, "deploy/helm/mcp-connector/templates/deployment.yaml"), "utf8");
+const HELM_VALUES    = readFileSync(join(ROOT, "deploy/helm/tool-proxy/values.yaml"), "utf8");
+const HELM_DEPLOY    = readFileSync(join(ROOT, "deploy/helm/tool-proxy/templates/deployment.yaml"), "utf8");
 const INSPECTOR_SRC  = readFileSync(join(ROOT, "connector/src/inspector/server.ts"), "utf8");
 const SUPERVISOR_SRC = readFileSync(join(ROOT, "connector/src/mcp-supervisor.ts"), "utf8");
 const SDK_WEBHOOK    = readFileSync(join(ROOT, "connector/src/sdk/webhook.ts"), "utf8");
@@ -135,7 +135,7 @@ describe("docker-compose.prod.yml — inspector loopback + no inline credentials
       expect(text, `${label}: key path assigned as a value`)
         .not.toMatch(/CONNECTOR_KEY_B64\s*[:=]/);
       expect(text, `${label}: no key mount`)
-        .toMatch(/connector\.key:\/etc\/mcp-connector\/connector\.key:ro/);
+        .toMatch(/connector\.key:\/etc\/tool-proxy\/connector\.key:ro/);
     }
     // And the retired DSN plumbing is gone from both.
     expect(COMPOSE_PROD).not.toMatch(/POSTGRES/);
@@ -165,7 +165,7 @@ describe("F3 — CSRF guard on inspector state-changing routes", () => {
 // F4 was retired with env-mode removal. The registration token lives in the
 // sealed config store, which DB-TO-FILE moved from a Postgres row back to a
 // FILE — but not the same file and not in the same shape: it is
-// /var/lib/mcp-connector/state/config.json, written 0600, with every
+// /var/lib/tool-proxy/state/config.json, written 0600, with every
 // credential inside it sealed by libsodium under the master key. The thing F4
 // protected against was a PLAINTEXT token on disk, and that remains absent.
 // .dockerignore still excludes any leftover .connector-state.json on an
